@@ -1,0 +1,63 @@
+"""Market data tools and workflows."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from typing import Any, List
+
+import ccxt.async_support as ccxt
+from pydantic import BaseModel
+from temporalio import activity, workflow
+
+
+class MarketTick(BaseModel):
+    """Ticker payload sent to child workflows."""
+
+    exchange: str
+    symbol: str
+    data: dict[str, Any]
+
+
+@activity.defn
+async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
+    """Return the latest ticker for ``symbol`` from ``exchange``."""
+    exchange_cls = getattr(ccxt, exchange)
+    client = exchange_cls()
+    try:
+        data = await client.fetch_ticker(symbol)
+        return MarketTick(exchange=exchange, symbol=symbol, data=data).model_dump()
+    finally:
+        await client.close()
+
+
+@workflow.defn
+class SubscribeCEXStream:
+    """Periodically fetch tickers and broadcast them to children."""
+
+    @workflow.run
+    async def run(
+        self,
+        exchange: str,
+        symbols: List[str],
+        interval_sec: int = 1,
+        max_cycles: int | None = 3600,
+    ) -> None:
+        cycles = 0
+        while True:
+            for symbol in symbols:
+                ticker = await workflow.execute_activity(
+                    fetch_ticker,
+                    exchange,
+                    symbol,
+                    schedule_to_close_timeout=timedelta(seconds=10),
+                )
+                await workflow.signal_child_workflows("market_tick", ticker)
+            cycles += 1
+            if max_cycles is not None and cycles >= max_cycles:
+                await workflow.continue_as_new(
+                    exchange=exchange,
+                    symbols=symbols,
+                    interval_sec=interval_sec,
+                    max_cycles=max_cycles,
+                )
+            await workflow.sleep(interval_sec)

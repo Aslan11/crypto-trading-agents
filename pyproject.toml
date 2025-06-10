@@ -12,6 +12,7 @@ dependencies = [
     "mcp>=1.9.3",
     "pydantic>=2.11.5",
     "python-dotenv>=1.1.0",
+    "web3>=6.0.0",
     "temporalio>=1.12.0",
     "uvicorn>=0.34.3",
     "pandas>=2.2.2",

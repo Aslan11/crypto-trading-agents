@@ -15,7 +15,10 @@ from concurrent.futures import ThreadPoolExecutor
 from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
-from temporalio.worker.workflow_sandbox import UnsandboxedWorkflowRunner
+# Import UnsandboxedWorkflowRunner from temporalio.worker to ensure
+# compatibility with latest Temporal SDK versions where the class is exported
+# directly from the worker package.
+from temporalio.worker import UnsandboxedWorkflowRunner
 
 
 def _add_project_root_to_path() -> None:

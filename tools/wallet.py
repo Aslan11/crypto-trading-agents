@@ -9,7 +9,6 @@ from typing import Dict
 from pydantic import BaseModel
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
-from web3 import Web3
 
 
 class SignedTx(BaseModel):
@@ -32,6 +31,8 @@ async def build_signed_tx(raw_tx: dict, private_key: str) -> dict:
 @activity.defn
 async def send_tx(signed_hex: str, rpc_url: str) -> str:
     """Broadcast a signed transaction and wait for confirmation."""
+    from web3 import Web3
+
     w3 = Web3(Web3.HTTPProvider(rpc_url))
     tx_hash = w3.eth.send_raw_transaction(
         bytes.fromhex(signed_hex[2:]) if signed_hex.startswith("0x") else bytes.fromhex(signed_hex)

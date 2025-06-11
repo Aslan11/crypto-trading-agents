@@ -104,7 +104,7 @@ def _prepare_args(wf: Callable[..., Any], payload: dict[str, Any]) -> list[Any]:
 
 @asynccontextmanager
 async def lifespan(app: FastMCP):
-    global workflows
+    global workflows, client
     await get_temporal_client()
     workflows = _discover_workflows()
     logger.info("Discovered %d workflows", len(workflows))

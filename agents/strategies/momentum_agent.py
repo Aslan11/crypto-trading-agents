@@ -20,7 +20,7 @@ def _add_project_root_to_path() -> None:
         sys.path.insert(0, str(root))
 
 _add_project_root_to_path()
-from agents.feature_engineering_agent import subscribe_vectors
+from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
 
 
 logger = logging.getLogger(__name__)

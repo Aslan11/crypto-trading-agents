@@ -20,7 +20,7 @@ def _add_project_root_to_path() -> None:
 
 
 _add_project_root_to_path()
-from tools.feature_engineering import ComputeFeatureVector
+from tools.feature_engineering import ComputeFeatureVector  # noqa: E402
 
 __all__ = ["get_latest_vector", "subscribe_vectors", "main"]
 

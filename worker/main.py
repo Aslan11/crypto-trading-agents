@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
-from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 # Import UnsandboxedWorkflowRunner from temporalio.worker to ensure

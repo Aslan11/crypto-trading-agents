@@ -70,7 +70,7 @@ class ComputeFeatureVector:
     """Build a feature vector from recent ``market_tick`` signals."""
 
     @workflow.run
-    async def run(self, symbol: str, window_sec: int = 60) -> dict:
+    async def run(self, symbol: str, window_sec: int = 60) -> dict | None:
         """Gather tick history and compute indicators.
 
         Parameters
@@ -79,6 +79,11 @@ class ComputeFeatureVector:
             Market symbol whose ticks should be considered.
         window_sec:
             How many seconds back to fetch ``market_tick`` signals.
+
+        Returns
+        -------
+        dict | None
+            Feature vector dictionary or ``None`` if no ticks are available.
         """
         since = workflow.now() - timedelta(seconds=window_sec)
         ticks: List[dict] = []
@@ -89,6 +94,9 @@ class ComputeFeatureVector:
                 if isinstance(tick, dict) and tick.get("symbol") == symbol:
                     data = tick.get("data", {})
                     ticks.append(data)
+
+        if not ticks:
+            return None
 
         return await workflow.execute_activity(
             compute_indicators,

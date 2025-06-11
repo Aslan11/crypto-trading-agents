@@ -6,7 +6,6 @@ import os
 from datetime import timedelta
 from typing import Dict
 
-from eth_account import Account
 from pydantic import BaseModel
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
@@ -21,6 +20,8 @@ class SignedTx(BaseModel):
 @activity.defn
 async def build_signed_tx(raw_tx: dict, private_key: str) -> dict:
     """Sign ``raw_tx`` with ``private_key`` and return hex data."""
+    from eth_account import Account
+
     signed = Account.sign_transaction(raw_tx, private_key)
     return {
         "rawTransaction": signed.rawTransaction.hex(),

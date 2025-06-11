@@ -30,6 +30,9 @@ fi
 # ├───────────────┼────────────────────────┤
 # │ Pane 5        │ Pane 4                 │
 # │ (shell)       │ momentum_agent.py      │
+# ├───────────────┼────────────────────────┤
+# │ Pane 6        │ Pane 7                 │
+# │ shared_bus.py │ execution/mock_exec_agent.py │
 # └────────────────────────────────────────┘
 ###############################################################################
 
@@ -63,9 +66,19 @@ tmux select-pane  -t $MOM_PANE
 MAIN_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $MAIN_PANE
 
-# 7. Arrange all panes into a tiled layout for equal sizing
+# 7. Pane 6 – shared bus (split Pane 5 vertically ↓)
+tmux select-pane  -t $MAIN_PANE
+BUS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
+tmux send-keys    -t $BUS_PANE 'sleep 2 && source .venv/bin/activate && python agents/shared_bus.py' C-m
+
+# 8. Pane 7 – mock execution agent (split Pane 6 horizontally →)
+tmux select-pane  -t $BUS_PANE
+EXEC_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && python agents/execution/mock_exec_agent.py' C-m
+
+# 9. Arrange all panes into a tiled layout for equal sizing
 tmux select-layout -t $SESSION:0 tiled
 
-# 8. Attach user to session
+# 10. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane
 exec tmux attach -t $SESSION

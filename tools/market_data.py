@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any, List
 
-import ccxt.async_support as ccxt
 from pydantic import BaseModel
 from temporalio import activity, workflow
 
@@ -21,6 +20,7 @@ class MarketTick(BaseModel):
 @activity.defn
 async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
     """Return the latest ticker for ``symbol`` from ``exchange``."""
+    import ccxt.async_support as ccxt
     exchange_cls = getattr(ccxt, exchange)
     client = exchange_cls()
     try:

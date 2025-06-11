@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException
 from datetime import datetime
 from temporalio.client import Client, WorkflowExecutionStatus
 
@@ -46,6 +47,15 @@ def _discover_workflows() -> dict[str, Callable[..., Any]]:
                 name = obj.__temporal_workflow_definition.name
                 wf_map[name] = obj
     return wf_map
+
+
+def _resolve_workflow(name: str) -> Callable[..., Any]:
+    """Return workflow callable for ``name`` or raise 404."""
+    wf = _discover_workflows().get(name)
+    if wf is None:
+        logger.error("Unknown tool requested: %s", name)
+        raise HTTPException(status_code=404, detail="Unknown tool")
+    return wf
 
 
 def _prepare_args(wf: Callable[..., Any], payload: dict[str, Any]) -> list[Any]:
@@ -104,10 +114,7 @@ async def start_tool(request: Request) -> Response:
     body = await request.json()
     tool_name = request.path_params["tool_name"]
     logger.info("Request to start tool %s with payload %s", tool_name, body)
-    wf = workflows.get(tool_name)
-    if not wf:
-        logger.error("Unknown tool requested: %s", tool_name)
-        return JSONResponse({"detail": "Unknown tool"}, status_code=404)
+    wf = _resolve_workflow(tool_name)
     try:
         args = _prepare_args(wf, body if isinstance(body, dict) else {})
     except Exception as exc:

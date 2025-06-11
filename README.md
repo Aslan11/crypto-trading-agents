@@ -188,7 +188,11 @@ $ pip install -r requirements.txt
 $ npm install
 $ npm run dev
 
+
 Point your agent workers at localhost:8080 (default MCP port) and confirm health at http://localhost:8080/healthz.
+
+If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when starting workflows such as `SubscribeCEXStream`.  Use trading pairs like `BTC/USD`.
+For private Coinbase endpoints, set `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` in your environment.
 
 Development Workflow
 

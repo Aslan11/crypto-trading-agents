@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
-SYMBOLS = [s.strip() for s in os.environ.get("SYMBOLS", "BTC/USDT").split(",")]
+SYMBOLS = [s.strip() for s in os.environ.get("SYMBOLS", "BTC/USD").split(",")]
 LOG_EVERY = int(os.environ.get("LOG_EVERY", "10"))
 
 STOP_EVENT = asyncio.Event()

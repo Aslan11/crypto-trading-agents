@@ -6,11 +6,20 @@ import asyncio
 import logging
 import os
 import signal
+import sys
+from pathlib import Path
 from collections import deque
 from datetime import datetime
-from typing import AsyncIterator
 
 import aiohttp
+
+def _add_project_root_to_path() -> None:
+    """Ensure repository root is on ``sys.path`` for imports."""
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+_add_project_root_to_path()
 from agents.feature_engineering_agent import subscribe_vectors
 
 

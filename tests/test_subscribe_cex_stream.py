@@ -19,8 +19,8 @@ async def test_subscribe_cex_stream():
             resp = client.post(
                 "/tools/SubscribeCEXStream",
                 json={
-                    "exchange": "binance",
-                    "symbols": ["BTC/USDT"],
+                    "exchange": "coinbaseexchange",
+                    "symbols": ["BTC/USD"],
                     "interval_sec": 0.1,
                     "max_cycles": 2,
                 },

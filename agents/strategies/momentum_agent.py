@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
-SYMBOL = os.environ.get("SYMBOL", "BTC/USDT")
+SYMBOL = os.environ.get("SYMBOL", "BTC/USD")
 COOLDOWN_SEC = int(os.environ.get("COOLDOWN_SEC", "30"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 

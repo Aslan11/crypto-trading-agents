@@ -10,6 +10,7 @@ import pandas as pd
 from temporalio import activity, workflow
 import aiohttp
 import os
+import asyncio
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -90,7 +91,10 @@ class ComputeFeatureVector:
         self.symbol = ""
         self.window_sec = 60
         self._ticks: List[dict] = []
-        self._event = workflow.Event()
+        # Use an asyncio.Event for signalling between the signal handler and
+        # the main workflow loop. Temporal workflows should avoid waiting on
+        # events directly, so we will wait via ``workflow.wait_condition``.
+        self._event = asyncio.Event()
 
     @workflow.signal
     def market_tick(self, tick: dict) -> None:
@@ -105,7 +109,10 @@ class ComputeFeatureVector:
         self.symbol = symbol
         self.window_sec = window_sec
         while True:
-            await self._event.wait()
+            # Wait for a new tick to be signalled via the event. We use
+            # ``workflow.wait_condition`` so that the wait is deterministic in
+            # Temporal's workflow environment.
+            await workflow.wait_condition(lambda: self._event.is_set())
             self._event.clear()
 
             now = workflow.now()

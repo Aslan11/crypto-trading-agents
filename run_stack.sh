@@ -37,18 +37,18 @@ tmux new-session  -d  -s $SESSION -n main
 tmux send-keys    -t $SESSION:0.0 'temporal server start-dev' C-m
 
 # 2. Pane 1 – worker.py (split vertically ↓)
-tmux split-window -t $SESSION:0.0 -v
-tmux send-keys    -t $SESSION:0.1 'source .venv/bin/activate && python worker/main.py' C-m
+WORKER_PANE=$(tmux split-window -t $SESSION:0.0 -v -P -F "#{pane_id}")
+tmux send-keys    -t $WORKER_PANE 'source .venv/bin/activate && python worker/main.py' C-m
 
 # 3. Pane 2 – MCP server (split Pane 0 horizontally →)
 tmux select-pane  -t $SESSION:0.0
-tmux split-window -h
-tmux send-keys    -t $SESSION:0.2 'source .venv/bin/activate && python mcp_server/app.py' C-m
+MCP_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+tmux send-keys    -t $MCP_PANE 'source .venv/bin/activate && python mcp_server/app.py' C-m
 
 # 4. Pane 3 – feature engineering agent (split Pane 1 horizontally →)
-tmux select-pane  -t $SESSION:0.1
-tmux split-window -h
-tmux send-keys    -t $SESSION:0.3 'source .venv/bin/activate && python agents/feature_engineering_agent.py' C-m
+tmux select-pane  -t $WORKER_PANE
+FE_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+tmux send-keys    -t $FE_PANE 'source .venv/bin/activate && python agents/feature_engineering_agent.py' C-m
 
 # 5. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane

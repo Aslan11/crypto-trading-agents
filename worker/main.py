@@ -10,6 +10,7 @@ import pkgutil
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 
 from temporalio import activity, workflow
 from temporalio.client import Client
@@ -60,17 +61,21 @@ async def main() -> None:
 
     print(f"Loaded {len(workflows)} workflows and {len(activities)} activities")
 
-    client = await Client.connect("localhost:7233", namespace="default")
+    address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+    namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+    client = await Client.connect(address, namespace=namespace)
     task_queue = os.environ.get("TASK_QUEUE", "mcp-tools")
 
-    worker = Worker(
-        client,
-        task_queue=task_queue,
-        workflows=workflows,
-        activities=activities,
-    )
+    with ThreadPoolExecutor() as activity_executor:
+        worker = Worker(
+            client,
+            task_queue=task_queue,
+            workflows=workflows,
+            activities=activities,
+            activity_executor=activity_executor,
+        )
 
-    await worker.run()
+        await worker.run()
 
 
 if __name__ == "__main__":

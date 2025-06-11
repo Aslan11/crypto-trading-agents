@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
+from temporalio.worker.workflow_sandbox import UnsandboxedWorkflowRunner
 
 
 def _add_project_root_to_path() -> None:
@@ -73,6 +74,7 @@ async def main() -> None:
             workflows=workflows,
             activities=activities,
             activity_executor=activity_executor,
+            workflow_runner=UnsandboxedWorkflowRunner(),
         )
 
         await worker.run()

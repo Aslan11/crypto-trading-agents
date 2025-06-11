@@ -27,7 +27,10 @@ fi
 # ├───────────────┼────────────────────────┤
 # │ Pane 1        │ Pane 3                 │
 # │ worker/main.py│ feature_engineering_agent.py │
-# └───────────────┴────────────────────────┘
+# ├───────────────┴────────────────────────┤
+# │ Pane 4                                 │
+# │ momentum_agent.py                      │
+# └────────────────────────────────────────┘
 ###############################################################################
 
 # 0. Create new detached session
@@ -50,6 +53,11 @@ tmux select-pane  -t $WORKER_PANE
 FE_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $FE_PANE 'source .venv/bin/activate && python agents/feature_engineering_agent.py' C-m
 
-# 5. Attach user to session
+# 5. Pane 4 – momentum strategy agent (split Pane 3 vertically ↓)
+tmux select-pane  -t $FE_PANE
+MOM_PANE=$(tmux split-window -v -P -F "#{pane_id}")
+tmux send-keys    -t $MOM_PANE 'source .venv/bin/activate && python ageints/strategies/momentum_agent.py' C-m
+
+# 6. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane
 exec tmux attach -t $SESSION

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 import numpy as np
 import pandas as pd
 from temporalio import activity, workflow
+import aiohttp
+import os
+
+MCP_HOST = os.environ.get("MCP_HOST", "localhost")
+MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
 
 @activity.defn
@@ -65,41 +70,65 @@ def compute_indicators(ticks: List[dict]) -> dict:
     }
 
 
+@activity.defn
+async def record_vector(vector: dict) -> None:
+    """Send feature vector payload to MCP server signal log."""
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            await session.post(url, json=vector)
+        except Exception:
+            pass
+
+
 @workflow.defn
 class ComputeFeatureVector:
-    """Build a feature vector from recent ``market_tick`` signals."""
+    """Continuously compute feature vectors from ``market_tick`` signals."""
+
+    def __init__(self) -> None:
+        self.symbol = ""
+        self.window_sec = 60
+        self._ticks: List[dict] = []
+        self._event = workflow.Event()
+
+    @workflow.signal
+    def market_tick(self, tick: dict) -> None:
+        if tick.get("symbol") != self.symbol:
+            return
+        data = tick.get("data", {})
+        self._ticks.append(data)
+        self._event.set()
 
     @workflow.run
-    async def run(self, symbol: str, window_sec: int = 60) -> dict | None:
-        """Gather tick history and compute indicators.
+    async def run(self, symbol: str, window_sec: int = 60) -> None:
+        self.symbol = symbol
+        self.window_sec = window_sec
+        while True:
+            await self._event.wait()
+            self._event.clear()
 
-        Parameters
-        ----------
-        symbol:
-            Market symbol whose ticks should be considered.
-        window_sec:
-            How many seconds back to fetch ``market_tick`` signals.
+            now = workflow.now()
+            since = now - timedelta(seconds=self.window_sec)
+            pruned: List[dict] = []
+            for t in self._ticks:
+                ts_ms = t.get("timestamp")
+                if ts_ms is None:
+                    continue
+                ts = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                if ts >= since:
+                    pruned.append(t)
+            self._ticks = pruned
 
-        Returns
-        -------
-        dict | None
-            Feature vector dictionary or ``None`` if no ticks are available.
-        """
-        since = workflow.now() - timedelta(seconds=window_sec)
-        ticks: List[dict] = []
-        get_history = getattr(workflow, "get_signal_history", None)
-        if get_history:
-            async for evt in get_history("market_tick", start_time=since):
-                tick = evt.args[0] if isinstance(evt.args, list) else evt.args
-                if isinstance(tick, dict) and tick.get("symbol") == symbol:
-                    data = tick.get("data", {})
-                    ticks.append(data)
+            vector = await workflow.execute_activity(
+                compute_indicators,
+                self._ticks,
+                schedule_to_close_timeout=timedelta(seconds=10),
+            )
 
-        if not ticks:
-            return None
-
-        return await workflow.execute_activity(
-            compute_indicators,
-            ticks,
-            schedule_to_close_timeout=timedelta(seconds=10),
-        )
+            payload = {"symbol": self.symbol, "ts": vector["ts"], "data": vector}
+            await workflow.execute_activity(
+                record_vector,
+                payload,
+                schedule_to_close_timeout=timedelta(seconds=5),
+            )

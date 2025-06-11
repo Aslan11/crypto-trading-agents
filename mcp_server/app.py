@@ -7,7 +7,9 @@ import os
 import pkgutil
 import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Callable, Iterable
+import sys
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
@@ -20,6 +22,12 @@ from temporalio.client import Client, WorkflowExecutionStatus
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# Ensure project root is on sys.path so ``tools`` can be imported regardless of
+# current working directory.
+root_dir = Path(__file__).resolve().parents[1]
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
 
 # Global Temporal client and workflow registry
 client: Client

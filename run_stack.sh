@@ -63,6 +63,9 @@ tmux select-pane  -t $MOM_PANE
 MAIN_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $MAIN_PANE
 
-# 7. Attach user to session
+# 7. Arrange all panes into a tiled layout for equal sizing
+tmux select-layout -t $SESSION:0 tiled
+
+# 8. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane
 exec tmux attach -t $SESSION

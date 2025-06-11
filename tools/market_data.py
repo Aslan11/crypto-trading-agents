@@ -7,6 +7,8 @@ from typing import Any, List
 
 from pydantic import BaseModel
 from temporalio import activity, workflow
+import aiohttp
+import os
 
 
 class MarketTick(BaseModel):
@@ -15,6 +17,10 @@ class MarketTick(BaseModel):
     exchange: str
     symbol: str
     data: dict[str, Any]
+
+
+MCP_HOST = os.environ.get("MCP_HOST", "localhost")
+MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
 
 @activity.defn
@@ -28,6 +34,18 @@ async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
         return MarketTick(exchange=exchange, symbol=symbol, data=data).model_dump()
     finally:
         await client.close()
+
+
+@activity.defn
+async def record_tick(tick: dict) -> None:
+    """Send tick payload to MCP server signal log."""
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            await session.post(url, json=tick)
+        except Exception:
+            pass
 
 
 @workflow.defn
@@ -50,6 +68,11 @@ class SubscribeCEXStream:
                     exchange,
                     symbol,
                     schedule_to_close_timeout=timedelta(seconds=10),
+                )
+                await workflow.execute_activity(
+                    record_tick,
+                    ticker,
+                    schedule_to_close_timeout=timedelta(seconds=5),
                 )
                 await workflow.signal_child_workflows("market_tick", ticker)
             cycles += 1

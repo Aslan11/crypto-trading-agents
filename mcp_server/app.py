@@ -153,4 +153,10 @@ async def workflow_status(request: Request) -> Response:
 if __name__ == "__main__":
     host = os.environ.get("MCP_HOST", "0.0.0.0")
     port = int(os.environ.get("MCP_PORT", "8080"))
-    app.run(host=host, port=port)
+
+    # FastMCP's ``run`` no longer accepts ``host`` or ``port`` parameters.
+    # Configure the server via ``settings`` instead and explicitly use the
+    # Streamable HTTP transport so our custom routes are served over HTTP.
+    app.settings.host = host
+    app.settings.port = port
+    app.run(transport="streamable-http")

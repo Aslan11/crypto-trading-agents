@@ -54,15 +54,13 @@ class SignAndSendTx:
 
         signed = await workflow.execute_activity(
             build_signed_tx,
-            raw_tx,
-            privkey,
+            args=[raw_tx, privkey],
             schedule_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
         tx_hash = await workflow.execute_activity(
             send_tx,
-            signed["rawTransaction"],
-            rpc_url,
+            args=[signed["rawTransaction"], rpc_url],
             schedule_to_close_timeout=timedelta(seconds=120),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )

@@ -65,8 +65,7 @@ class SubscribeCEXStream:
             for symbol in symbols:
                 ticker = await workflow.execute_activity(
                     fetch_ticker,
-                    exchange,
-                    symbol,
+                    args=[exchange, symbol],
                     schedule_to_close_timeout=timedelta(seconds=10),
                 )
                 await workflow.execute_activity(

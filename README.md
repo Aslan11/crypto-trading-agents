@@ -199,6 +199,8 @@ Development Workflow
 Create a new tool under tools/ and register it with the MCP server.
 
 Write a strategy agent in agents/ that calls your tool via the MCP client SDK.
+Use `subscribe_vectors(symbol)` from `agents.feature_engineering_agent` to
+stream processed feature rows into your strategy logic.
 
 Unit‑test determinism – run make replay to replay recent workflows.
 

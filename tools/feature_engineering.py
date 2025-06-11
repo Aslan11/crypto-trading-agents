@@ -82,11 +82,13 @@ class ComputeFeatureVector:
         """
         since = workflow.now() - timedelta(seconds=window_sec)
         ticks: List[dict] = []
-        async for evt in workflow.get_signal_history("market_tick", start_time=since):
-            tick = evt.args[0] if isinstance(evt.args, list) else evt.args
-            if isinstance(tick, dict) and tick.get("symbol") == symbol:
-                data = tick.get("data", {})
-                ticks.append(data)
+        get_history = getattr(workflow, "get_signal_history", None)
+        if get_history:
+            async for evt in get_history("market_tick", start_time=since):
+                tick = evt.args[0] if isinstance(evt.args, list) else evt.args
+                if isinstance(tick, dict) and tick.get("symbol") == symbol:
+                    data = tick.get("data", {})
+                    ticks.append(data)
 
         return await workflow.execute_activity(
             compute_indicators,

@@ -73,7 +73,8 @@ class SubscribeCEXStream:
                     ticker,
                     schedule_to_close_timeout=timedelta(seconds=5),
                 )
-                await workflow.signal_child_workflows("market_tick", ticker)
+                if hasattr(workflow, "signal_child_workflows"):
+                    await workflow.signal_child_workflows("market_tick", ticker)
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 await workflow.continue_as_new(

@@ -92,6 +92,15 @@ async def _poll_tool(session: aiohttp.ClientSession, wf_id: str, run_id: str) ->
     return None
 
 
+async def _record_signal(session: aiohttp.ClientSession, payload: dict) -> None:
+    """Send strategy signal payload to the MCP server log."""
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/strategy_signal"
+    try:
+        await session.post(url, json=payload)
+    except Exception as exc:  # pragma: no cover - network errors
+        logger.error("Failed to record signal: %s", exc)
+
+
 async def main() -> None:
     """Run the momentum strategy agent."""
     loop = asyncio.get_running_loop()
@@ -128,6 +137,8 @@ async def main() -> None:
             wf_id, run_id = wf
             result = await _poll_tool(session, wf_id, run_id)
             logger.info("Tool completed with result: %s", result)
+            if result:
+                await _record_signal(session, result)
             last_sent = now_ts
             await asyncio.sleep(COOLDOWN_SEC)
 

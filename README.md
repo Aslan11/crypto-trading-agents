@@ -191,6 +191,41 @@ $ npm run dev
 
 Point your agent workers at localhost:8080 (default MCP port) and confirm health at http://localhost:8080/healthz.
 
+Demo
+----
+
+The quickest way to see the stack in action is to run the included
+`run_stack.sh` script which launches everything in a single `tmux`
+session.  After completing the quick setup above, simply execute:
+
+```bash
+$ ./run_stack.sh
+```
+
+This starts the Temporal dev server, Python worker, MCP server and a few
+sample agents.  Each component runs in its own `tmux` pane so you can
+watch log output as orders flow through the system.  Detach from the
+session with `Ctrl&#8209;b d` and reattach anytime using the same command.
+
+### Walking through the demo
+
+1. With the tmux session running, open a new terminal window.
+2. Start a market data workflow for Bitcoin:
+
+   ```bash
+   curl -X POST http://localhost:8080/tools/SubscribeCEXStream \
+     -H 'Content-Type: application/json' \
+     -d '{"exchange": "coinbaseexchange", "symbols": ["BTC/USD"], "interval_sec": 1}'
+   ```
+
+3. The MCP server launches the `SubscribeCEXStream` workflow which
+   fetches ticks every second and records them to `/signal/market_tick`.
+4. The feature engineering agent reacts to those ticks and runs
+   `ComputeFeatureVector` to produce feature vectors.
+5. The momentum agent consumes vectors, emits buy/sell signals and logs
+   them via `EvaluateStrategyMomentum`.
+6. The mock execution agent prints the resulting orders.
+
 If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when starting workflows such as `SubscribeCEXStream`.  Use trading pairs like `BTC/USD`.
 For private Coinbase endpoints, set `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` in your environment.
 

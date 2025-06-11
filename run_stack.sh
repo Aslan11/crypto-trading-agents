@@ -27,9 +27,9 @@ fi
 # ├───────────────┼────────────────────────┤
 # │ Pane 1        │ Pane 3                 │
 # │ worker/main.py│ feature_engineering_agent.py │
-# ├───────────────┴────────────────────────┤
-# │ Pane 4                                 │
-# │ momentum_agent.py                      │
+# ├───────────────┼────────────────────────┤
+# │ Pane 5        │ Pane 4                 │
+# │ (shell)       │ momentum_agent.py      │
 # └────────────────────────────────────────┘
 ###############################################################################
 
@@ -58,6 +58,11 @@ tmux select-pane  -t $FE_PANE
 MOM_PANE=$(tmux split-window -v -P -F "#{pane_id}")
 tmux send-keys    -t $MOM_PANE 'sleep 2 && source .venv/bin/activate && python agents/strategies/momentum_agent.py' C-m
 
-# 6. Attach user to session
+# 6. Pane 5 – blank shell (split Pane 4 horizontally ←)
+tmux select-pane  -t $MOM_PANE
+MAIN_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+tmux send-keys    -t $MAIN_PANE
+
+# 7. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane
 exec tmux attach -t $SESSION

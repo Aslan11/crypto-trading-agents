@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import logging
 import os
 import pkgutil
 import secrets
@@ -13,6 +14,9 @@ from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from temporalio.client import Client, WorkflowExecutionStatus
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # Global Temporal client and workflow registry
@@ -66,8 +70,10 @@ async def lifespan(app: FastMCP):
     global client, workflows
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+    logger.info("Connecting to Temporal at %s (namespace=%s)", address, namespace)
     client = await Client.connect(address, namespace=namespace)
     workflows = _discover_workflows()
+    logger.info("Discovered %d workflows", len(workflows))
     try:
         yield
     finally:
@@ -95,22 +101,28 @@ class StartWorkflowResponse(BaseModel):
 async def start_tool(request: Request) -> Response:
     body = await request.json()
     tool_name = request.path_params["tool_name"]
+    logger.info("Request to start tool %s with payload %s", tool_name, body)
     wf = workflows.get(tool_name)
     if not wf:
+        logger.error("Unknown tool requested: %s", tool_name)
         return JSONResponse({"detail": "Unknown tool"}, status_code=404)
     try:
         args = _prepare_args(wf, body if isinstance(body, dict) else {})
     except Exception as exc:
+        logger.error("Invalid payload for %s: %s", tool_name, exc)
         return JSONResponse({"detail": str(exc)}, status_code=422)
     workflow_id = f"{tool_name}-{secrets.token_hex(8)}"
+    logger.info("Starting workflow %s with args %s", workflow_id, args)
     handle = await client.start_workflow(
         wf.run if hasattr(wf, "run") else wf,
         args=args,
         id=workflow_id,
         task_queue="mcp-tools",
     )
+    run_id = handle.result_run_id or handle.run_id
+    logger.info("Workflow started: id=%s run_id=%s", workflow_id, run_id)
     return JSONResponse(
-        StartWorkflowResponse(workflow_id=workflow_id, run_id=handle.result_run_id or handle.run_id).model_dump(),
+        StartWorkflowResponse(workflow_id=workflow_id, run_id=run_id).model_dump(),
         status_code=202,
     )
 
@@ -124,9 +136,11 @@ class WorkflowStatusResponse(BaseModel):
 async def workflow_status(request: Request) -> Response:
     workflow_id = request.path_params["workflow_id"]
     run_id = request.path_params["run_id"]
+    logger.info("Fetching status for workflow %s run %s", workflow_id, run_id)
     handle = client.get_workflow_handle(workflow_id, run_id=run_id)
     desc = await handle.describe()
     status_name = desc.status.name if desc.status else "UNKNOWN"
+    logger.info("Workflow %s is %s", workflow_id, status_name)
     result: Any | None = None
     if desc.status and desc.status != WorkflowExecutionStatus.RUNNING:
         try:

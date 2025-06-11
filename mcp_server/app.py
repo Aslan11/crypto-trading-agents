@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from datetime import datetime
 from temporalio.client import Client, WorkflowExecutionStatus
 
 logging.basicConfig(level=logging.INFO)
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Global Temporal client and workflow registry
 client: Client
 workflows: dict[str, Callable[..., Any]]
+signal_log: dict[str, list[dict]] = {}
 
 
 def _import_workflow_modules() -> Iterable[Any]:
@@ -148,6 +150,26 @@ async def workflow_status(request: Request) -> Response:
         except Exception as exc:
             result = {"error": str(exc)}
     return JSONResponse(WorkflowStatusResponse(status=status_name, result=result).model_dump())
+
+
+@app.custom_route("/signal/{name}", methods=["POST"])
+async def record_signal(request: Request) -> Response:
+    name = request.path_params["name"]
+    payload = await request.json()
+    ts = payload.get("ts")
+    if ts is None:
+        ts = int(datetime.utcnow().timestamp())
+        payload["ts"] = ts
+    signal_log.setdefault(name, []).append(payload)
+    return Response(status_code=204)
+
+
+@app.custom_route("/signal/{name}", methods=["GET"])
+async def fetch_signals(request: Request) -> Response:
+    name = request.path_params["name"]
+    after = int(request.query_params.get("after", "0"))
+    events = [e for e in signal_log.get(name, []) if e.get("ts", 0) > after]
+    return JSONResponse(events)
 
 
 if __name__ == "__main__":

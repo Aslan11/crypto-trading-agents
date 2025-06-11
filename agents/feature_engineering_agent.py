@@ -7,6 +7,8 @@ import signal
 from typing import Any
 
 import aiohttp
+from temporalio.client import Client
+from tools.feature_engineering import ComputeFeatureVector
 
 __all__ = ["get_latest_vector", "main"]
 
@@ -22,9 +24,43 @@ MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 SYMBOLS = [s.strip() for s in os.environ.get("SYMBOLS", "BTC/USD").split(",")]
 LOG_EVERY = int(os.environ.get("LOG_EVERY", "10"))
+TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
+TASK_QUEUE = os.environ.get("TASK_QUEUE", "mcp-tools")
 
 STOP_EVENT = asyncio.Event()
 TASKS: set[asyncio.Task[Any]] = set()
+
+
+async def _poll_vectors(session: aiohttp.ClientSession) -> None:
+    cursor = 0
+    backoff = 1
+    while not STOP_EVENT.is_set():
+        url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
+        try:
+            async with session.get(url, params={"after": cursor}) as resp:
+                if resp.status == 200:
+                    events = await resp.json()
+                    backoff = 1
+                else:
+                    logger.warning("Vector poll error %s", resp.status)
+                    events = []
+        except Exception as exc:
+            logger.error("Vector poll failed: %s", exc)
+            events = []
+        if not events:
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+            continue
+        backoff = 1
+        for evt in events:
+            symbol = evt.get("symbol")
+            ts = evt.get("ts")
+            data = evt.get("data")
+            if symbol is None or ts is None or not isinstance(data, dict):
+                continue
+            await _store_vector(symbol, ts, data)
+            cursor = max(cursor, ts)
 
 
 async def get_latest_vector(symbol: str) -> dict | None:
@@ -51,64 +87,19 @@ async def _store_vector(symbol: str, ts: int, vector: dict) -> None:
         )
 
 
-async def _start_compute(session: aiohttp.ClientSession, symbol: str) -> tuple[str, str] | None:
-    url = f"http://{MCP_HOST}:{MCP_PORT}/tools/ComputeFeatureVector"
-    payload = {"symbol": symbol, "window_sec": 60}
-    backoff = 1
-    while not STOP_EVENT.is_set():
-        try:
-            async with session.post(url, json=payload) as resp:
-                if resp.status == 202:
-                    data = await resp.json()
-                    return data["workflow_id"], data["run_id"]
-                logger.warning("Tool start error %s", resp.status)
-        except Exception as exc:
-            logger.error("Error starting workflow: %s", exc)
-        await asyncio.sleep(backoff)
-        backoff = min(backoff * 2, 30)
-    return None
+async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
+    wf_id = f"feature-{symbol.replace('/', '-') }"
+    await client.signal_with_start_workflow(
+        ComputeFeatureVector.run,
+        id=wf_id,
+        task_queue=TASK_QUEUE,
+        signal="market_tick",
+        signal_args=[tick],
+        args=[symbol, 60],
+    )
 
 
-async def _poll_workflow(
-    session: aiohttp.ClientSession, symbol: str, ts: int, wf_id: str, run_id: str
-) -> None:
-    url = f"http://{MCP_HOST}:{MCP_PORT}/workflow/{wf_id}/{run_id}"
-    backoff = 1
-    while not STOP_EVENT.is_set():
-        await asyncio.sleep(1)
-        try:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    status = data.get("status")
-                    if status == "COMPLETED":
-                        result = data.get("result")
-                        if isinstance(result, dict):
-                            await _store_vector(symbol, ts, result)
-                        else:
-                            logger.error("Workflow %s completed without result", wf_id)
-                        return
-                    if status != "RUNNING":
-                        logger.error("Workflow %s ended with %s", wf_id, status)
-                        return
-                    backoff = 1
-                    continue
-                logger.warning("Workflow poll error %s", resp.status)
-        except Exception as exc:
-            logger.error("Error polling workflow %s: %s", wf_id, exc)
-        await asyncio.sleep(backoff)
-        backoff = min(backoff * 2, 30)
-
-
-async def _handle_tick(session: aiohttp.ClientSession, symbol: str, ts: int) -> None:
-    wf = await _start_compute(session, symbol)
-    if not wf:
-        return
-    wf_id, run_id = wf
-    await _poll_workflow(session, symbol, ts, wf_id, run_id)
-
-
-async def _poll_ticks(session: aiohttp.ClientSession) -> None:
+async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
     cursor = 0
     backoff = 1
     while not STOP_EVENT.is_set():
@@ -135,7 +126,7 @@ async def _poll_ticks(session: aiohttp.ClientSession) -> None:
             if symbol is None or ts is None:
                 continue
             if symbol in SYMBOLS:
-                task = asyncio.create_task(_handle_tick(session, symbol, ts))
+                task = asyncio.create_task(_signal_tick(client, symbol, tick))
                 TASKS.add(task)
                 task.add_done_callback(TASKS.discard)
             cursor = max(cursor, ts)
@@ -155,11 +146,14 @@ async def main() -> None:
     loop.add_signal_handler(signal.SIGINT, STOP_EVENT.set)
 
     timeout = aiohttp.ClientTimeout(total=30)
+    temporal_client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        poll_task = asyncio.create_task(_poll_ticks(session))
+        tick_task = asyncio.create_task(_poll_ticks(session, temporal_client))
+        vec_task = asyncio.create_task(_poll_vectors(session))
         await STOP_EVENT.wait()
-        poll_task.cancel()
-        await asyncio.gather(poll_task, return_exceptions=True)
+        tick_task.cancel()
+        vec_task.cancel()
+        await asyncio.gather(tick_task, vec_task, return_exceptions=True)
         await _shutdown()
 
 

@@ -39,7 +39,7 @@ async def send_tx(signed_hex: str, rpc_url: str) -> str:
     return tx_hash.hex()
 
 
-@workflow.defn
+@workflow.defn(sandboxed=False)
 class SignAndSendTx:
     """Workflow to sign a transaction and send it to an EVM chain."""
 

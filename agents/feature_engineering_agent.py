@@ -101,12 +101,12 @@ async def _store_vector(symbol: str, ts: int, vector: dict) -> None:
 
 async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
     wf_id = f"feature-{symbol.replace('/', '-') }"
-    await client.signal_with_start_workflow(
+    await client.start_workflow(
         ComputeFeatureVector.run,
         id=wf_id,
         task_queue=TASK_QUEUE,
-        signal="market_tick",
-        signal_args=[tick],
+        start_signal="market_tick",
+        start_signal_args=[tick],
         args=[symbol, 60],
     )
 

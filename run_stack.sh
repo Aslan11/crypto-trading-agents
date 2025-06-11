@@ -23,10 +23,10 @@ fi
 # Pane layout
 # ┌───────────────┬────────────────────────┐
 # │ Pane 0        │ Pane 2                 │
-# │ temporal dev  │ MCP server             │
+# │ temporal dev  │ mcp_server/app.py      │
 # ├───────────────┼────────────────────────┤
 # │ Pane 1        │ Pane 3                 │
-# │ worker.py     │ curl smoke-test        │
+# │ worker/main.py│ feature_engineering_agent.py │
 # └───────────────┴────────────────────────┘
 ###############################################################################
 
@@ -38,25 +38,17 @@ tmux send-keys    -t $SESSION:0.0 'temporal server start-dev' C-m
 
 # 2. Pane 1 – worker.py (split vertically ↓)
 tmux split-window -t $SESSION:0.0 -v
-tmux send-keys    -t $SESSION:0.1 'source .venv/bin/activate && python worker.py' C-m
+tmux send-keys    -t $SESSION:0.1 'source .venv/bin/activate && python worker/main.py' C-m
 
 # 3. Pane 2 – MCP server (split Pane 0 horizontally →)
 tmux select-pane  -t $SESSION:0.0
 tmux split-window -h
-tmux send-keys    -t $SESSION:0.2 'source .venv/bin/activate && python -m mcp_server.app' C-m
+tmux send-keys    -t $SESSION:0.2 'source .venv/bin/activate && python mcp_server/app.py' C-m
 
-# 4. Pane 3 – smoke-test curl (split Pane 1 horizontally →)
+# 4. Pane 3 – feature engineering agent (split Pane 1 horizontally →)
 tmux select-pane  -t $SESSION:0.1
 tmux split-window -h
-tmux send-keys    -t $SESSION:0.3 '
-sleep 8  # wait for services
-echo -e "\n=== MCP health ==="
-curl -s http://localhost:8080/healthz
-echo -e "\n=== Launch test workflow ==="
-curl -s -X POST http://localhost:8080/tools/SubscribeCEXStream \
-  -H "Content-Type: application/json" \
-  -d '"'"'{"exchange":"binance","symbols":["BTC/USDT"],"interval_sec":5,"max_cycles":2}'"'"' | jq
-' C-m
+tmux send-keys    -t $SESSION:0.3 'source .venv/bin/activate && python agents/feature_engineering_agent.py' C-m
 
 # 5. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane

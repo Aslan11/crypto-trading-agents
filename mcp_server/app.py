@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException
 from datetime import datetime
 from temporalio.client import Client, WorkflowExecutionStatus
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,9 +31,25 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
 # Global Temporal client and workflow registry
-client: Client
+client: Client | None = None
 workflows: dict[str, Callable[..., Any]]
 signal_log: dict[str, list[dict]] = {}
+_client_lock = asyncio.Lock()
+
+
+async def get_temporal_client() -> Client:
+    """Return connected Temporal client, initializing if necessary."""
+    global client
+    if client is None:
+        async with _client_lock:
+            if client is None:
+                address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+                namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+                logger.info(
+                    "Connecting to Temporal at %s (namespace=%s)", address, namespace
+                )
+                client = await Client.connect(address, namespace=namespace)
+    return client
 
 
 def _import_workflow_modules() -> Iterable[Any]:
@@ -87,17 +104,16 @@ def _prepare_args(wf: Callable[..., Any], payload: dict[str, Any]) -> list[Any]:
 
 @asynccontextmanager
 async def lifespan(app: FastMCP):
-    global client, workflows
-    address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
-    namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
-    logger.info("Connecting to Temporal at %s (namespace=%s)", address, namespace)
-    client = await Client.connect(address, namespace=namespace)
+    global workflows
+    await get_temporal_client()
     workflows = _discover_workflows()
     logger.info("Discovered %d workflows", len(workflows))
     try:
         yield
     finally:
-        await client.close()
+        if client is not None:
+            await client.close()
+            client = None
 
 
 app = FastMCP(lifespan=lifespan)
@@ -130,7 +146,8 @@ async def start_tool(request: Request) -> Response:
         return JSONResponse({"detail": str(exc)}, status_code=422)
     workflow_id = f"{tool_name}-{secrets.token_hex(8)}"
     logger.info("Starting workflow %s with args %s", workflow_id, args)
-    handle = await client.start_workflow(
+    temporal_client = await get_temporal_client()
+    handle = await temporal_client.start_workflow(
         wf.run if hasattr(wf, "run") else wf,
         args=args,
         id=workflow_id,
@@ -154,7 +171,8 @@ async def workflow_status(request: Request) -> Response:
     workflow_id = request.path_params["workflow_id"]
     run_id = request.path_params["run_id"]
     logger.info("Fetching status for workflow %s run %s", workflow_id, run_id)
-    handle = client.get_workflow_handle(workflow_id, run_id=run_id)
+    temporal_client = await get_temporal_client()
+    handle = temporal_client.get_workflow_handle(workflow_id, run_id=run_id)
     desc = await handle.describe()
     status_name = desc.status.name if desc.status else "UNKNOWN"
     logger.info("Workflow %s is %s", workflow_id, status_name)

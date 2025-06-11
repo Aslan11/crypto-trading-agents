@@ -11,37 +11,7 @@ from datetime import datetime
 from typing import AsyncIterator
 
 import aiohttp
-
-try:
-    from agents.feature_engineering_agent import subscribe_vectors  # type: ignore
-except Exception:  # pragma: no cover - fallback for missing helper
-    async def subscribe_vectors(symbol: str) -> AsyncIterator[dict]:
-        """Fallback generator fetching feature vectors from MCP."""
-        host = os.environ.get("MCP_HOST", "localhost")
-        port = os.environ.get("MCP_PORT", "8080")
-        url = f"http://{host}:{port}/signal/feature_vector"
-        after = 0
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            while True:
-                try:
-                    async with session.get(url, params={"after": after}) as resp:
-                        if resp.status != 200:
-                            await asyncio.sleep(1)
-                            continue
-                        events = await resp.json()
-                except Exception as exc:  # pragma: no cover - network errors
-                    logging.getLogger(__name__).error("Vector poll error: %s", exc)
-                    await asyncio.sleep(5)
-                    continue
-                if not events:
-                    await asyncio.sleep(1)
-                    continue
-                for evt in events:
-                    if evt.get("symbol") != symbol:
-                        continue
-                    after = max(after, evt.get("ts", 0))
-                    yield evt.get("data", evt)
+from agents.feature_engineering_agent import subscribe_vectors
 
 
 logger = logging.getLogger(__name__)

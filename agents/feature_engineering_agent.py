@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import aiohttp
 from temporalio.client import Client
@@ -22,7 +22,7 @@ def _add_project_root_to_path() -> None:
 _add_project_root_to_path()
 from tools.feature_engineering import ComputeFeatureVector
 
-__all__ = ["get_latest_vector", "main"]
+__all__ = ["get_latest_vector", "subscribe_vectors", "main"]
 
 # Global in-memory feature store
 FEATURE_STORE: dict[tuple[str, int], dict] = {}
@@ -84,6 +84,28 @@ async def get_latest_vector(symbol: str) -> dict | None:
             return None
         (sym, ts), vec = max(matches, key=lambda kv: kv[0][1])
         return vec
+
+
+async def subscribe_vectors(symbol: str) -> AsyncIterator[dict]:
+    """Yield feature vectors for ``symbol`` as they arrive."""
+
+    last_ts = 0
+    while True:
+        async with _FEATURE_LOCK:
+            items = sorted(
+                [
+                    (ts, vec)
+                    for (sym, ts), vec in FEATURE_STORE.items()
+                    if sym == symbol and ts > last_ts
+                ],
+                key=lambda t: t[0],
+            )
+        if not items:
+            await asyncio.sleep(0.1)
+            continue
+        for ts, vec in items:
+            last_ts = ts
+            yield vec
 
 
 async def _store_vector(symbol: str, ts: int, vector: dict) -> None:

@@ -168,7 +168,7 @@ async def _store_vector(symbol: str, ts: int, vector: dict) -> None:
     client = await _get_client()
     await _ensure_workflow(client)
     handle = client.get_workflow_handle(FEATURE_WF_ID)
-    await handle.signal("add_vector", symbol, ts, vector)
+    await handle.signal("add_vector", args=[symbol, ts, vector])
     if ts % LOG_EVERY == 0:
         logger.info("Stored vector for %s @ %d: %s", symbol, ts, vector)
 

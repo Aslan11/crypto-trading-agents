@@ -38,7 +38,6 @@ logging.basicConfig(level=logging.INFO)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
-SYMBOLS = [s.strip() for s in os.environ.get("SYMBOLS", "BTC/USD").split(",")]
 LOG_EVERY = int(os.environ.get("LOG_EVERY", "10"))
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
@@ -215,10 +214,9 @@ async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
             ts = tick.get("ts")
             if symbol is None or ts is None:
                 continue
-            if symbol in SYMBOLS:
-                task = asyncio.create_task(_signal_tick(client, symbol, tick))
-                TASKS.add(task)
-                task.add_done_callback(TASKS.discard)
+            task = asyncio.create_task(_signal_tick(client, symbol, tick))
+            TASKS.add(task)
+            task.add_done_callback(TASKS.discard)
             cursor = max(cursor, ts)
         await asyncio.sleep(1)
 

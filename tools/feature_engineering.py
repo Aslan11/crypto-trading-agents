@@ -12,6 +12,10 @@ import aiohttp
 import os
 import asyncio
 
+SMA_SHORT_MIN = int(os.environ.get("SMA_SHORT_MIN", "1"))
+SMA_LONG_MIN = int(os.environ.get("SMA_LONG_MIN", "5"))
+VECTOR_WINDOW_SEC = int(os.environ.get("VECTOR_WINDOW_SEC", str(SMA_LONG_MIN * 60)))
+
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
@@ -48,13 +52,13 @@ def compute_indicators(ticks: List[dict]) -> dict:
 
     df.set_index("ts", inplace=True)
 
-    sma1 = df["mid"].rolling("1min").mean().iloc[-1]
-    sma5 = df["mid"].rolling("5min").mean().iloc[-1]
-    vol1m = df["mid"].rolling("1min").std().iloc[-1]
+    sma1 = df["mid"].rolling(f"{SMA_SHORT_MIN}min").mean().iloc[-1]
+    sma5 = df["mid"].rolling(f"{SMA_LONG_MIN}min").mean().iloc[-1]
+    vol1m = df["mid"].rolling(f"{SMA_SHORT_MIN}min").std().iloc[-1]
 
     last_ts = df.index[-1]
     mid_price = df["mid"].iloc[-1]
-    prev_series = df["mid"].loc[: last_ts - pd.Timedelta(minutes=1)]
+    prev_series = df["mid"].loc[: last_ts - pd.Timedelta(minutes=SMA_SHORT_MIN)]
     if prev_series.empty:
         ret1m = np.nan
     else:
@@ -89,7 +93,7 @@ class ComputeFeatureVector:
 
     def __init__(self) -> None:
         self.symbol = ""
-        self.window_sec = 60
+        self.window_sec = VECTOR_WINDOW_SEC
         self._ticks: List[dict] = []
         # Use an asyncio.Event for signalling between the signal handler and
         # the main workflow loop. Temporal workflows should avoid waiting on
@@ -105,7 +109,7 @@ class ComputeFeatureVector:
         self._event.set()
 
     @workflow.run
-    async def run(self, symbol: str, window_sec: int = 60) -> None:
+    async def run(self, symbol: str, window_sec: int = VECTOR_WINDOW_SEC) -> None:
         self.symbol = symbol
         self.window_sec = window_sec
         while True:

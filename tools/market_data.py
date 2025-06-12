@@ -21,6 +21,8 @@ class MarketTick(BaseModel):
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
+# Automatically continue the workflow periodically to avoid unbounded history
+STREAM_CONTINUE_EVERY = int(os.environ.get("STREAM_CONTINUE_EVERY", "3600"))
 
 
 @activity.defn
@@ -58,8 +60,11 @@ class SubscribeCEXStream:
         exchange: str,
         symbols: List[str],
         interval_sec: int = 1,
-        max_cycles: int | None = 3600,
+        max_cycles: int | None = None,
+        *,
+        continue_every: int = STREAM_CONTINUE_EVERY,
     ) -> None:
+        """Stream tickers indefinitely, continuing as new periodically."""
         cycles = 0
         while True:
             for symbol in symbols:
@@ -77,10 +82,13 @@ class SubscribeCEXStream:
                     await workflow.signal_child_workflows("market_tick", ticker)
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
+                return
+            if cycles >= continue_every:
                 await workflow.continue_as_new(
                     exchange=exchange,
                     symbols=symbols,
                     interval_sec=interval_sec,
                     max_cycles=max_cycles,
+                    continue_every=continue_every,
                 )
             await workflow.sleep(interval_sec)

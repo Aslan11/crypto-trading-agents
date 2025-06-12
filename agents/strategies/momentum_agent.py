@@ -13,11 +13,13 @@ from datetime import datetime
 
 import aiohttp
 
+
 def _add_project_root_to_path() -> None:
     """Ensure repository root is on ``sys.path`` for imports."""
     root = Path(__file__).resolve().parents[2]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
+
 
 _add_project_root_to_path()
 from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
@@ -48,15 +50,21 @@ def _cross(prev: dict, curr: dict) -> str | None:
     p1, p5 = prev.get("sma1"), prev.get("sma5")
     c1, c5 = curr.get("sma1"), curr.get("sma5")
     if None in (p1, p5, c1, c5):
+        logger.debug("Skipping cross due to missing values: %s %s", prev, curr)
         return None
     if p1 < p5 and c1 > c5:
+        logger.debug("Detected BUY cross: %s -> %s", prev, curr)
         return "BUY"
     if p1 > p5 and c1 < c5:
+        logger.debug("Detected SELL cross: %s -> %s", prev, curr)
         return "SELL"
+    logger.debug("No crossover detected: %s -> %s", prev, curr)
     return None
 
 
-async def _start_tool(session: aiohttp.ClientSession, signal_payload: dict) -> tuple[str, str] | None:
+async def _start_tool(
+    session: aiohttp.ClientSession, signal_payload: dict
+) -> tuple[str, str] | None:
     url = f"http://{MCP_HOST}:{MCP_PORT}/tools/EvaluateStrategyMomentum"
     payload = {"signal": signal_payload, "cooldown_sec": COOLDOWN_SEC}
     try:
@@ -70,7 +78,9 @@ async def _start_tool(session: aiohttp.ClientSession, signal_payload: dict) -> t
     return None
 
 
-async def _poll_tool(session: aiohttp.ClientSession, wf_id: str, run_id: str) -> dict | None:
+async def _poll_tool(
+    session: aiohttp.ClientSession, wf_id: str, run_id: str
+) -> dict | None:
     url = f"http://{MCP_HOST}:{MCP_PORT}/workflow/{wf_id}/{run_id}"
     while not STOP_EVENT.is_set():
         await asyncio.sleep(1)
@@ -118,6 +128,7 @@ async def main() -> None:
             if STOP_EVENT.is_set():
                 break
             vec_queue.append(vector)
+            logger.debug("Received vector: %s", vector)
             vector_count += 1
             if vector_count % 30 == 0:
                 logger.info("Processed %d vectors", vector_count)
@@ -128,16 +139,22 @@ async def main() -> None:
                 continue
             now_ts = int(datetime.utcnow().timestamp())
             if now_ts - last_sent < COOLDOWN_SEC:
+                logger.debug(
+                    "Cooldown active (%.0fs remaining)",
+                    COOLDOWN_SEC - (now_ts - last_sent),
+                )
                 continue
             signal_payload = {"symbol": SYMBOL, "side": side, "ts": now_ts}
             logger.info("Emitting %s signal", side)
             wf = await _start_tool(session, signal_payload)
             if not wf:
+                logger.warning("Failed to start momentum tool")
                 continue
             wf_id, run_id = wf
             result = await _poll_tool(session, wf_id, run_id)
             logger.info("Tool completed with result: %s", result)
             if result:
+                logger.debug("Recording signal result: %s", result)
                 await _record_signal(session, result)
             last_sent = now_ts
             await asyncio.sleep(COOLDOWN_SEC)

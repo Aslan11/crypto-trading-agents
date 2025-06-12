@@ -129,6 +129,7 @@ class ExecutionLedgerWorkflow:
     """Maintain mock execution ledger state."""
 
     def __init__(self) -> None:
+        self.initial_cash = Decimal("250000")
         self.cash = Decimal("250000")
         self.positions: Dict[str, Decimal] = {}
         self.last_price: Dict[str, Decimal] = {}
@@ -152,9 +153,11 @@ class ExecutionLedgerWorkflow:
 
     @workflow.query
     def get_pnl(self) -> float:
-        pnl = self.cash + sum(
-            q * self.last_price.get(sym, Decimal("0")) for sym, q in self.positions.items()
+        position_value = sum(
+            q * self.last_price.get(sym, Decimal("0"))
+            for sym, q in self.positions.items()
         )
+        pnl = (self.cash + position_value) - self.initial_cash
         return float(pnl)
 
     @workflow.query

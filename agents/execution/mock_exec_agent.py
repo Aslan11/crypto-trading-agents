@@ -8,7 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 
 import aiohttp
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowNotFoundError
 from agents.workflows import ExecutionLedgerWorkflow
 
 try:
@@ -39,9 +39,10 @@ async def _get_client() -> Client:
 
 
 async def _ensure_workflow(client: Client) -> None:
+    handle = client.get_workflow_handle(LEDGER_WF_ID)
     try:
-        await client.get_workflow_handle(LEDGER_WF_ID)
-    except Exception:
+        await handle.describe()
+    except WorkflowNotFoundError:
         await client.start_workflow(
             ExecutionLedgerWorkflow.run,
             id=LEDGER_WF_ID,

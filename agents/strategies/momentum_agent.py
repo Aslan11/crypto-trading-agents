@@ -23,6 +23,8 @@ def _add_project_root_to_path() -> None:
 
 _add_project_root_to_path()
 from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
+from agents.workflows import MomentumWorkflow
+from temporalio.client import Client
 
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,29 @@ logging.basicConfig(
 )
 
 STOP_EVENT = asyncio.Event()
+MOMENTUM_WF_ID = "momentum-agent"
+TEMPORAL_CLIENT: Client | None = None
+
+
+async def _get_client() -> Client:
+    global TEMPORAL_CLIENT
+    if TEMPORAL_CLIENT is None:
+        address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+        namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+        TEMPORAL_CLIENT = await Client.connect(address, namespace=namespace)
+    return TEMPORAL_CLIENT
+
+
+async def _ensure_workflow(client: Client) -> None:
+    try:
+        await client.get_workflow_handle(MOMENTUM_WF_ID)
+    except Exception:
+        await client.start_workflow(
+            MomentumWorkflow.run,
+            id=MOMENTUM_WF_ID,
+            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+            args=[COOLDOWN_SEC],
+        )
 
 
 def _handle_sigint() -> None:
@@ -118,33 +143,23 @@ async def main() -> None:
 
     logger.info("Momentum agent watching %s", SYMBOL)
 
-    vec_queue: deque[dict] = deque(maxlen=2)
-    vector_count = 0
-    last_sent = 0
+    client = await _get_client()
+    await _ensure_workflow(client)
+    handle = client.get_workflow_handle(MOMENTUM_WF_ID)
+    last_sig = 0
 
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async for vector in subscribe_vectors(SYMBOL, use_local=False):
             if STOP_EVENT.is_set():
                 break
-            vec_queue.append(vector)
-            logger.debug("Received vector: %s", vector)
-            vector_count += 1
-            if vector_count % 30 == 0:
-                logger.info("Processed %d vectors", vector_count)
-            if len(vec_queue) < 2:
+            await handle.signal("add_vector", vector)
+            sig = await handle.query("next_signal", last_sig)
+            if not sig:
                 continue
-            side = _cross(vec_queue[0], vec_queue[1])
-            if not side:
-                continue
-            now_ts = int(datetime.utcnow().timestamp())
-            if now_ts - last_sent < COOLDOWN_SEC:
-                logger.debug(
-                    "Cooldown active (%.0fs remaining)",
-                    COOLDOWN_SEC - (now_ts - last_sent),
-                )
-                continue
-            signal_payload = {"symbol": SYMBOL, "side": side, "ts": now_ts}
+            last_sig = sig["ts"]
+            side = sig["side"]
+            signal_payload = {"symbol": SYMBOL, "side": side, "ts": last_sig}
             logger.info("Emitting %s signal", side)
             wf = await _start_tool(session, signal_payload)
             if not wf:
@@ -156,8 +171,6 @@ async def main() -> None:
             if result:
                 logger.debug("Recording signal result: %s", result)
                 await _record_signal(session, result)
-            last_sent = now_ts
-            await asyncio.sleep(COOLDOWN_SEC)
 
 
 if __name__ == "__main__":

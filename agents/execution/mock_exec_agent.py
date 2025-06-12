@@ -8,6 +8,8 @@ from datetime import datetime
 from decimal import Decimal
 
 import aiohttp
+from temporalio.client import Client
+from agents.workflows import ExecutionLedgerWorkflow
 
 try:
     from agents.shared_bus import APPROVED_INTENT_QUEUE
@@ -22,11 +24,29 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-cash = Decimal("20")
-positions: dict[str, Decimal] = {}
-_last_price: dict[str, Decimal] = {}
-FILL_COUNT = 0
+LEDGER_WF_ID = "mock-ledger"
+TEMPORAL_CLIENT: Client | None = None
 STOP_EVENT = asyncio.Event()
+
+
+async def _get_client() -> Client:
+    global TEMPORAL_CLIENT
+    if TEMPORAL_CLIENT is None:
+        address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+        namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+        TEMPORAL_CLIENT = await Client.connect(address, namespace=namespace)
+    return TEMPORAL_CLIENT
+
+
+async def _ensure_workflow(client: Client) -> None:
+    try:
+        await client.get_workflow_handle(LEDGER_WF_ID)
+    except Exception:
+        await client.start_workflow(
+            ExecutionLedgerWorkflow.run,
+            id=LEDGER_WF_ID,
+            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+        )
 
 
 async def _fetch(
@@ -42,42 +62,11 @@ async def _fetch(
     return None
 
 
-def _update_ledger(fill: dict) -> None:
-    global cash, FILL_COUNT
-    side = fill["side"]
-    symbol = fill["symbol"]
-    qty = Decimal(str(fill["qty"]))
-    price = Decimal(str(fill["fill_price"]))
-    cost = Decimal(str(fill["cost"]))
-
-    _last_price[symbol] = price
-
-    if side == "BUY":
-        cash -= cost
-        positions[symbol] = positions.get(symbol, Decimal("0")) + qty
-    else:
-        cash += cost
-        positions[symbol] = positions.get(symbol, Decimal("0")) - qty
-
-    FILL_COUNT += 1
-
-    pos_qty = positions.get(symbol, Decimal("0"))
-    ts = datetime.utcfromtimestamp(fill["ts"]).strftime("%Y-%m-%d %H:%M")
-    logger.info(
-        "[%s] %s %.6f %s @%s  cost=$%.2f  cash=$%.2f  pos=%.6f",
-        ts,
-        side,
-        qty,
-        symbol,
-        price,
-        cost,
-        cash,
-        pos_qty,
-    )
-
-    if FILL_COUNT % 10 == 0:
-        pnl = cash + sum(q * _last_price.get(sym, Decimal("0")) for sym, q in positions.items())
-        logger.info("Total P&L: $%.2f", pnl)
+async def _update_ledger(fill: dict) -> None:
+    client = await _get_client()
+    await _ensure_workflow(client)
+    handle = client.get_workflow_handle(LEDGER_WF_ID)
+    await handle.signal("record_fill", fill)
 
 
 async def _place_order(session: aiohttp.ClientSession, intent: dict) -> None:
@@ -85,7 +74,12 @@ async def _place_order(session: aiohttp.ClientSession, intent: dict) -> None:
     price = Decimal(str(intent["price"]))
     cost = qty * price
 
-    if intent["side"] == "BUY" and cash < cost:
+    client = await _get_client()
+    await _ensure_workflow(client)
+    handle = client.get_workflow_handle(LEDGER_WF_ID)
+    cash = await handle.query("get_cash")
+
+    if intent["side"] == "BUY" and Decimal(str(cash)) < cost:
         logger.warning("INSUFFICIENT_FUNDS for %s", intent)
         return
 
@@ -119,7 +113,7 @@ async def _place_order(session: aiohttp.ClientSession, intent: dict) -> None:
         await asyncio.sleep(0.5)
 
     if fill:
-        _update_ledger(fill)
+        await _update_ledger(fill)
 
 
 async def _poll_intents(session: aiohttp.ClientSession) -> None:
@@ -144,6 +138,8 @@ async def _poll_intents(session: aiohttp.ClientSession) -> None:
 
 async def _run() -> None:
     timeout = aiohttp.ClientTimeout(total=10)
+    client = await _get_client()
+    await _ensure_workflow(client)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         poll_task = asyncio.create_task(_poll_intents(session))
         try:
@@ -164,8 +160,10 @@ async def main() -> None:
     try:
         await _run()
     finally:
-        pnl = cash + sum(q * _last_price.get(sym, Decimal("0")) for sym, q in positions.items())
-        logger.info("Final cash=$%.2f positions=%s P&L=$%.2f", cash, positions, pnl)
+        client = await _get_client()
+        handle = client.get_workflow_handle(LEDGER_WF_ID)
+        pnl = await handle.query("get_pnl")
+        logger.info("Workflow P&L=$%.2f", pnl)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import aiohttp
 
 from agents.shared_bus import enqueue_intent
 from agents.workflows import EnsembleWorkflow
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowNotFoundError
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -36,9 +36,10 @@ async def _get_client() -> Client:
 
 
 async def _ensure_workflow(client: Client) -> None:
+    handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
     try:
-        await client.get_workflow_handle(ENSEMBLE_WF_ID)
-    except Exception:
+        await handle.describe()
+    except WorkflowNotFoundError:
         await client.start_workflow(
             EnsembleWorkflow.run,
             id=ENSEMBLE_WF_ID,

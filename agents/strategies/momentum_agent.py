@@ -24,7 +24,7 @@ def _add_project_root_to_path() -> None:
 _add_project_root_to_path()
 from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
 from agents.workflows import MomentumWorkflow
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowNotFoundError
 
 
 logger = logging.getLogger(__name__)
@@ -55,9 +55,10 @@ async def _get_client() -> Client:
 
 
 async def _ensure_workflow(client: Client) -> None:
+    handle = client.get_workflow_handle(MOMENTUM_WF_ID)
     try:
-        await client.get_workflow_handle(MOMENTUM_WF_ID)
-    except Exception:
+        await handle.describe()
+    except WorkflowNotFoundError:
         await client.start_workflow(
             MomentumWorkflow.run,
             id=MOMENTUM_WF_ID,

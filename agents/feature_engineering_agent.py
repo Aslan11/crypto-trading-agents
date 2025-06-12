@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import aiohttp
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowNotFoundError
 
 from agents.workflows import FeatureStoreWorkflow
 
@@ -89,9 +89,10 @@ async def _get_client() -> Client:
 
 
 async def _ensure_workflow(client: Client) -> None:
+    handle = client.get_workflow_handle(FEATURE_WF_ID)
     try:
-        await client.get_workflow_handle(FEATURE_WF_ID)
-    except Exception:
+        await handle.describe()
+    except WorkflowNotFoundError:
         await client.start_workflow(
             FeatureStoreWorkflow.run,
             id=FEATURE_WF_ID,

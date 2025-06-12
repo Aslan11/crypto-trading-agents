@@ -28,13 +28,23 @@ def _add_project_root_to_path() -> None:
 
 
 def _discover_modules() -> Iterable[Any]:
-    """Yield all imported modules under ``tools``."""
+    """Yield all imported modules under ``tools`` and ``agents``."""
     import tools
+    import agents
 
-    # Include the base package itself
+    # Include the base packages themselves
     yield tools
+    yield agents
 
     for finder, name, ispkg in pkgutil.walk_packages(tools.__path__, prefix="tools."):
+        try:
+            module = importlib.import_module(name)
+        except Exception as exc:  # pragma: no cover - import errors should not kill worker
+            print(f"Failed to import {name}: {exc}", file=sys.stderr)
+            continue
+        yield module
+
+    for finder, name, ispkg in pkgutil.walk_packages(agents.__path__, prefix="agents."):
         try:
             module = importlib.import_module(name)
         except Exception as exc:  # pragma: no cover - import errors should not kill worker

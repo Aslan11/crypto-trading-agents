@@ -23,6 +23,7 @@ MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 # Automatically continue the workflow periodically to avoid unbounded history
 STREAM_CONTINUE_EVERY = int(os.environ.get("STREAM_CONTINUE_EVERY", "3600"))
+STREAM_HISTORY_LIMIT = int(os.environ.get("STREAM_HISTORY_LIMIT", "9000"))
 
 
 @activity.defn
@@ -62,6 +63,7 @@ class SubscribeCEXStream:
         interval_sec: int = 1,
         max_cycles: int | None = None,
         continue_every: int = STREAM_CONTINUE_EVERY,
+        history_limit: int = STREAM_HISTORY_LIMIT,
     ) -> None:
         """Stream tickers indefinitely, continuing as new periodically."""
         cycles = 0
@@ -82,6 +84,16 @@ class SubscribeCEXStream:
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 return
+            hist_len = workflow.get_current_history_length()
+            if hist_len >= history_limit or workflow.is_continue_as_new_suggested():
+                await workflow.continue_as_new(
+                    exchange=exchange,
+                    symbols=symbols,
+                    interval_sec=interval_sec,
+                    max_cycles=max_cycles,
+                    continue_every=continue_every,
+                    history_limit=history_limit,
+                )
             if cycles >= continue_every:
                 await workflow.continue_as_new(
                     exchange=exchange,
@@ -89,5 +101,6 @@ class SubscribeCEXStream:
                     interval_sec=interval_sec,
                     max_cycles=max_cycles,
                     continue_every=continue_every,
+                    history_limit=history_limit,
                 )
             await workflow.sleep(interval_sec)

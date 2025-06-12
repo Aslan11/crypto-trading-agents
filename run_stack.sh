@@ -33,6 +33,9 @@ fi
 # ├───────────────┼────────────────────────┤
 # │ Pane 6        │ Pane 7                 │
 # │ shared_bus.py │ execution/mock_exec_agent.py │
+# ├───────────────┴────────────────────────┤
+# │ Pane 8                                │
+# │ ensemble/ensemble_agent.py            │
 # └────────────────────────────────────────┘
 ###############################################################################
 
@@ -76,9 +79,14 @@ tmux select-pane  -t $BUS_PANE
 EXEC_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && python agents/execution/mock_exec_agent.py' C-m
 
-# 9. Arrange all panes into a tiled layout for equal sizing
+# 9. Pane 8 – ensemble agent (split Pane 7 vertically ↓)
+tmux select-pane  -t $EXEC_PANE
+ENS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
+tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && python agents/ensemble/ensemble_agent.py' C-m
+
+# 10. Arrange all panes into a tiled layout for equal sizing
 tmux select-layout -t $SESSION:0 tiled
 
-# 10. Attach user to session
+# 11. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane
 exec tmux attach -t $SESSION

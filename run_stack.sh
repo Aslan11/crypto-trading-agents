@@ -71,13 +71,13 @@ tmux select-pane  -t $MOM_PANE
 MAIN_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $MAIN_PANE
 
-# 7. Pane 6 – shared bus (split Pane 5 vertically ↓)
+# 7. Pane 6 – blank shell (split Pane 5 vertically ↓)
 tmux select-pane  -t $MAIN_PANE
-BUS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $BUS_PANE 'sleep 2 && source .venv/bin/activate && python agents/shared_bus.py' C-m
+SECONDARY_PANE=$(tmux split-window -v -P -F "#{pane_id}")
+tmux send-keys    -t $SECONDARY_PANE 'sleep 2 && source .venv/bin/activate' C-m
 
 # 8. Pane 7 – mock execution agent (split Pane 6 horizontally →)
-tmux select-pane  -t $BUS_PANE
+tmux select-pane  -t $SECONDARY_PANE
 EXEC_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && python agents/execution/mock_exec_agent.py' C-m
 

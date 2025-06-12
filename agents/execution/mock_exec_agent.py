@@ -82,9 +82,14 @@ async def _place_order(session: aiohttp.ClientSession, intent: dict) -> None:
     await _ensure_workflow(client)
     handle = client.get_workflow_handle(LEDGER_WF_ID)
     cash = await handle.query("get_cash")
+    positions = await handle.query("get_positions")
+    pos_qty = Decimal(str(positions.get(intent["symbol"], 0)))
 
     if intent["side"] == "BUY" and Decimal(str(cash)) < cost:
         logger.warning("INSUFFICIENT_FUNDS for %s", intent)
+        return
+    if intent["side"] == "SELL" and pos_qty < qty:
+        logger.warning("INSUFFICIENT_POSITION for %s", intent)
         return
 
     try:

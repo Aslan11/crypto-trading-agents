@@ -113,7 +113,7 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
                     client = await _get_client()
                     await _ensure_workflow(client)
                     handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
-                    await handle.signal("update_price", symbol, float(price))
+                    await handle.signal("update_price", args=[symbol, float(price)])
                     cursor = max(cursor, ts)
                 except RPCError as err:  # pragma: no cover - network failures
                     logger.warning(

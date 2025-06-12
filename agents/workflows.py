@@ -129,7 +129,7 @@ class ExecutionLedgerWorkflow:
     """Maintain mock execution ledger state."""
 
     def __init__(self) -> None:
-        self.cash = Decimal("20")
+        self.cash = Decimal("250000")
         self.positions: Dict[str, Decimal] = {}
         self.last_price: Dict[str, Decimal] = {}
         self.fill_count = 0

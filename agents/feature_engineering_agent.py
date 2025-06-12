@@ -22,7 +22,10 @@ def _add_project_root_to_path() -> None:
 
 
 _add_project_root_to_path()
-from tools.feature_engineering import ComputeFeatureVector  # noqa: E402
+
+# Import ComputeFeatureVector lazily inside the helper that starts the workflow
+# to avoid exposing the workflow definition at module import time. This prevents
+# duplicate workflow registration when the worker scans modules for definitions.
 
 __all__ = ["get_latest_vector", "subscribe_vectors", "main"]
 
@@ -166,6 +169,10 @@ async def _store_vector(symbol: str, ts: int, vector: dict) -> None:
 
 
 async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
+    # Import here to avoid registering the workflow twice when the worker scans
+    # modules for definitions.
+    from tools.feature_engineering import ComputeFeatureVector
+
     wf_id = f"feature-{symbol.replace('/', '-') }"
     await client.start_workflow(
         ComputeFeatureVector.run,

@@ -87,20 +87,24 @@ class SubscribeCEXStream:
             hist_len = workflow.info().get_current_history_length()
             if hist_len >= history_limit or workflow.info().is_continue_as_new_suggested():
                 await workflow.continue_as_new(
-                    exchange,
-                    symbols,
-                    interval_sec,
-                    max_cycles,
-                    continue_every,
-                    history_limit,
+                    args=[
+                        exchange,
+                        symbols,
+                        interval_sec,
+                        max_cycles,
+                        continue_every,
+                        history_limit,
+                    ]
                 )
             if cycles >= continue_every:
                 await workflow.continue_as_new(
-                    exchange,
-                    symbols,
-                    interval_sec,
-                    max_cycles,
-                    continue_every,
-                    history_limit,
+                    args=[
+                        exchange,
+                        symbols,
+                        interval_sec,
+                        max_cycles,
+                        continue_every,
+                        history_limit,
+                    ]
                 )
             await workflow.sleep(interval_sec)

@@ -54,21 +54,15 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 
 | Tool (Workflow)            | Purpose                                                | Typical Triggers        |
 |----------------------------|--------------------------------------------------------|-------------------------|
-| `subscribe_cex_stream`     | Fan-in WebSocket order-book & trade ticks from CEXs    | Startup, reconnect      |
-| `subscribe_dex_blocks`     | Monitor confirmed & pending DEX swaps on-chain         | New block               |
-| `subscribe_mempool_whales` | Emit alerts for large mempool txs or watch-list wallets| Pending tx              |
-| `compute_feature_vector`   | Join ticks, funding, on-chain data into feature rows   | Market tick             |
-| `evaluate_strategy_<name>` | Generate raw buy/sell signals for a strategy           | Feature row             |
-| `ensemble_signals`         | Rank & weight raw signals into order intents           | Signal batch            |
-| `pre_trade_risk_check`     | Enforce VaR, leverage, wallet exposure                 | Order intents           |
-| `rebalance_portfolio`      | Route orders to reach target positions                 | Approved intents        |
-| `submit_cex_order`         | Durable CEX order placement & tracking                 | Portfolio rebalance     |
-| `swap_via_dex_aggregate`   | Execute DEX swaps with slippage & gas guards           | Portfolio rebalance     |
-| `sign_and_send_tx`         | MPC/HSM signing & broadcast                            | Execution               |
-| `watchdog_heartbeat`       | Pages if any agent stops kicking within T seconds      | Continuous              |
-| `archive_trade_decision`   | Persist full vector→intent→tx history for audit        | Trade settled           |
+| `SubscribeCEXStream`     | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
+| `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
+| `EvaluateStrategyMomentum` | Log and throttle momentum signals            | Feature vector        |
+| `PreTradeRiskCheck`      | Validate intents against simple VaR limits     | Order intents         |
+| `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
+| `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
+| `SignAndSendTx`          | Sign and broadcast an EVM transaction          | Execution             |
+| `ExecutionLedgerWorkflow`| Track fills and positions in memory            | Fill events           |
 
-See `docs/tools.md` for full parameter and schema definitions.
 
 ## Getting Started
 

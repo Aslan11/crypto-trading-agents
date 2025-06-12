@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 import signal
 from decimal import Decimal
 
@@ -10,6 +11,7 @@ import aiohttp
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 from agents.workflows import ExecutionLedgerWorkflow
+from tools.execution import PlaceMockOrder
 
 try:
     from agents.shared_bus import APPROVED_INTENT_QUEUE
@@ -73,7 +75,7 @@ async def _update_ledger(fill: dict) -> None:
     await handle.signal("record_fill", fill)
 
 
-async def _place_order(session: aiohttp.ClientSession, intent: dict) -> None:
+async def _place_order(_session: aiohttp.ClientSession | None, intent: dict) -> None:
     qty = Decimal(str(intent["qty"]))
     price = Decimal(str(intent["price"]))
     cost = qty * price
@@ -93,36 +95,18 @@ async def _place_order(session: aiohttp.ClientSession, intent: dict) -> None:
         return
 
     try:
-        resp = await session.post(
-            f"http://{MCP_HOST}:{MCP_PORT}/tools/PlaceMockOrder",
-            json={"intent": intent},
+        handle = await client.start_workflow(
+            PlaceMockOrder.run,
+            intent,
+            id=f"mock-order-{secrets.token_hex(8)}",
+            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         )
-        data = await resp.json()
-        wf_id = data["workflow_id"]
-        run_id = data["run_id"]
-    except Exception as exc:  # pragma: no cover - network errors
-        logger.error("Failed to start workflow: %s", exc)
+        fill = await handle.result()
+    except Exception as exc:  # pragma: no cover - workflow failures
+        logger.error("Workflow execution failed: %s", exc)
         return
 
-    fill = None
-    while not STOP_EVENT.is_set():
-        try:
-            status_resp = await session.get(
-                f"http://{MCP_HOST}:{MCP_PORT}/workflow/{wf_id}/{run_id}"
-            )
-            payload = await status_resp.json()
-            status = payload.get("status")
-            if status == "COMPLETED":
-                fill = payload.get("result")
-                break
-        except Exception as exc:  # pragma: no cover - network errors
-            logger.error("Status poll failed: %s", exc)
-            await asyncio.sleep(0.5)
-            continue
-        await asyncio.sleep(0.5)
-
-    if fill:
-        await _update_ledger(fill)
+    await _update_ledger(fill)
 
 
 async def _poll_intents(session: aiohttp.ClientSession) -> None:

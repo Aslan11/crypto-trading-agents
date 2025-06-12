@@ -3,7 +3,7 @@ name = "crypto-trading-agents"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.12.12",
     "asyncio>=3.4.3",

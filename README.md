@@ -118,9 +118,11 @@ If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when
 `SubscribeCEXStream` automatically restarts itself via Temporal's *continue as new*
 mechanism after a configurable number of cycles to prevent unbounded workflow
 history growth. The default interval is one hour (3600 cycles) and can be
-changed by setting the `STREAM_CONTINUE_EVERY` environment variable.
+changed by setting the `STREAM_CONTINUE_EVERY` environment variable. The workflow
+also checks its current history length and continues early when it exceeds
+`STREAM_HISTORY_LIMIT` (defaults to 9000 events).
 `ComputeFeatureVector` behaves the same way using the `VECTOR_CONTINUE_EVERY`
-environment variable.
+and `VECTOR_HISTORY_LIMIT` environment variables.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.

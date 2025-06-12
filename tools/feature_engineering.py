@@ -16,6 +16,7 @@ SMA_SHORT_MIN = int(os.environ.get("SMA_SHORT_MIN", "1"))
 SMA_LONG_MIN = int(os.environ.get("SMA_LONG_MIN", "5"))
 VECTOR_WINDOW_SEC = int(os.environ.get("VECTOR_WINDOW_SEC", str(SMA_LONG_MIN * 60)))
 VECTOR_CONTINUE_EVERY = int(os.environ.get("VECTOR_CONTINUE_EVERY", "3600"))
+VECTOR_HISTORY_LIMIT = int(os.environ.get("VECTOR_HISTORY_LIMIT", "9000"))
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -115,6 +116,7 @@ class ComputeFeatureVector:
         symbol: str,
         window_sec: int = VECTOR_WINDOW_SEC,
         continue_every: int = VECTOR_CONTINUE_EVERY,
+        history_limit: int = VECTOR_HISTORY_LIMIT,
     ) -> None:
         self.symbol = symbol
         self.window_sec = window_sec
@@ -151,9 +153,18 @@ class ComputeFeatureVector:
                 schedule_to_close_timeout=timedelta(seconds=5),
             )
             cycles += 1
+            hist_len = workflow.get_current_history_length()
+            if hist_len >= history_limit or workflow.is_continue_as_new_suggested():
+                await workflow.continue_as_new(
+                    symbol=symbol,
+                    window_sec=window_sec,
+                    continue_every=continue_every,
+                    history_limit=history_limit,
+                )
             if cycles >= continue_every:
                 await workflow.continue_as_new(
                     symbol=symbol,
                     window_sec=window_sec,
                     continue_every=continue_every,
+                    history_limit=history_limit,
                 )

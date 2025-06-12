@@ -61,7 +61,6 @@ class SubscribeCEXStream:
         symbols: List[str],
         interval_sec: int = 1,
         max_cycles: int | None = None,
-        *,
         continue_every: int = STREAM_CONTINUE_EVERY,
     ) -> None:
         """Stream tickers indefinitely, continuing as new periodically."""

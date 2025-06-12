@@ -57,12 +57,12 @@ tmux send-keys    -t $MCP_PANE 'source .venv/bin/activate && python mcp_server/a
 # 4. Pane 3 – feature engineering agent (split Pane 1 horizontally →)
 tmux select-pane  -t $WORKER_PANE
 FE_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $FE_PANE 'sleep 2 && source .venv/bin/activate && python agents/feature_engineering_agent.py' C-m
+tmux send-keys    -t $FE_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/feature_engineering_agent.py' C-m
 
 # 5. Pane 4 – momentum strategy agent (split Pane 3 vertically ↓)
 tmux select-pane  -t $FE_PANE
 MOM_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $MOM_PANE 'sleep 2 && source .venv/bin/activate && python agents/strategies/momentum_agent.py' C-m
+tmux send-keys    -t $MOM_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/strategies/momentum_agent.py' C-m
 
 tmux select-layout -t $SESSION:0 tiled
 
@@ -79,7 +79,7 @@ tmux send-keys    -t $SECONDARY_PANE 'sleep 2 && source .venv/bin/activate' C-m
 # 8. Pane 7 – mock execution agent (split Pane 6 horizontally →)
 tmux select-pane  -t $SECONDARY_PANE
 EXEC_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && python agents/execution/mock_exec_agent.py' C-m
+tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/execution/mock_exec_agent.py' C-m
 
 # 9. Pane 8 – ensemble agent (split Pane 7 vertically ↓)
 tmux select-pane  -t $EXEC_PANE

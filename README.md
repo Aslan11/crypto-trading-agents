@@ -24,20 +24,29 @@ Temporal supplies resilient workflows while MCP gives agents a shared, tool-base
 
 ## Architecture
 ```
-┌─────────────┐         ┌──────────────────┐           ┌─────────────────┐
-│ Market-Data │ ───────▶│ Feature Vector   │ ──────────▶│ Strategy Agents │
-│   Streams   │         │   Builder        │           └────────┬────────┘
-└─────────────┘         └──────────────────┘                    │ raw signals
-        ▲                         ▲                            ▼
-        │ on-chain events         │ whale alerts      ┌──────────────────┐
-┌──────────────┐         ┌────────┴─────────┐          │ Ensemble / Risk │
-│ On-Chain Intel│────────▶ Liquidity Agent  │──────────▶  & Treasury     │
-└──────────────┘         └────────┬─────────┘          └────────┬────────┘
-                                   │ intents approved           │ order basket
-                                   ▼                            ▼
-                            ┌───────────────┐           ┌─────────────────┐
-                            │ Wallet/Custody│───────────▶ Execution Agent │
-                            └───────────────┘           └─────────────────┘
+┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Market Data │ ──▶│ Feature Vectors  │ ──▶│ Strategy Agents │
+│   Streams   │    │     Store        │    └───────┬─────────┘
+└─────────────┘    └──────────────────┘            │ signals
+                                                   ▼
+                                         ┌──────────────────┐
+                                         │ Ensemble & Risk  │
+                                         └────────┬─────────┘
+                                                  │ intents
+                                                  ▼
+                                         ┌──────────────────┐
+                                         │    Intent Bus    │
+                                         └────────┬─────────┘
+                                                  │ intents
+                                                  ▼
+                                         ┌──────────────────┐
+                                         │ Execution Agent  │
+                                         └────────┬─────────┘
+                                                  │ fills
+                                                  ▼
+                                         ┌──────────────────┐
+                                         │ Execution Ledger │
+                                         └──────────────────┘
 ```
 Each block corresponds to one or more MCP tools (Temporal workflows) described below.
 

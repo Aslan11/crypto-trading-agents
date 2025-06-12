@@ -54,16 +54,16 @@ def _discover_modules() -> Iterable[Any]:
 
 
 def _collect_definitions(modules: Iterable[Any]) -> tuple[Sequence[type], Sequence[Any]]:
-    """Collect workflow and activity definitions from modules."""
-    workflows: list[type] = []
-    activities: list[Any] = []
+    """Collect unique workflow and activity definitions from modules."""
+    workflows: set[type] = set()
+    activities: set[Any] = set()
     for module in modules:
         for obj in module.__dict__.values():
             if hasattr(obj, "__temporal_workflow_definition"):
-                workflows.append(obj)
+                workflows.add(obj)
             elif hasattr(obj, "__temporal_activity_definition"):
-                activities.append(obj)
-    return workflows, activities
+                activities.add(obj)
+    return list(workflows), list(activities)
 
 
 async def main() -> None:

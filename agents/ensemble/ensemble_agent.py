@@ -134,8 +134,7 @@ async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, 
     try:
         handle = await client.start_workflow(
             PreTradeRiskCheck.run,
-            wf_id,
-            [intent],
+            args=[wf_id, [intent]],
             id=wf_id,
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         )

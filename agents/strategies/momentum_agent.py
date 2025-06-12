@@ -8,7 +8,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Set
 
 
 import aiohttp
@@ -34,6 +34,7 @@ MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 COOLDOWN_SEC = int(os.environ.get("COOLDOWN_SEC", "30"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "0.5"))
 
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -102,7 +103,7 @@ async def _start_tool(
     session: aiohttp.ClientSession, signal_payload: dict
 ) -> tuple[str, str] | None:
     url = f"http://{MCP_HOST}:{MCP_PORT}/tools/EvaluateStrategyMomentum"
-    payload = {"signal": signal_payload, "cooldown_sec": COOLDOWN_SEC}
+    payload = {"signal": signal_payload}
     try:
         async with session.post(url, json=payload) as resp:
             if resp.status == 202:
@@ -119,7 +120,7 @@ async def _poll_tool(
 ) -> dict | None:
     url = f"http://{MCP_HOST}:{MCP_PORT}/workflow/{wf_id}/{run_id}"
     while not STOP_EVENT.is_set():
-        await asyncio.sleep(1)
+        await asyncio.sleep(POLL_INTERVAL)
         try:
             async with session.get(url) as resp:
                 if resp.status != 200:
@@ -145,6 +146,19 @@ async def _record_signal(session: aiohttp.ClientSession, payload: dict) -> None:
         await session.post(url, json=payload)
     except Exception as exc:  # pragma: no cover - network errors
         logger.error("Failed to record signal: %s", exc)
+
+
+async def _run_tool(session: aiohttp.ClientSession, payload: dict) -> None:
+    """Start momentum evaluation tool and record the result asynchronously."""
+    wf = await _start_tool(session, payload)
+    if not wf:
+        logger.warning("Failed to start momentum tool")
+        return
+    wf_id, run_id = wf
+    result = await _poll_tool(session, wf_id, run_id)
+    logger.info("Tool completed with result: %s", result)
+    if result:
+        await _record_signal(session, result)
 
 
 async def main() -> None:
@@ -192,6 +206,7 @@ async def main() -> None:
         client = await _get_client()
         handles: dict[str, Any] = {}
         last_sig: dict[str, int] = {}
+        tasks: Set[asyncio.Task] = set()
 
         async for symbol, vector in _subscribe_all_vectors():
             if symbol not in handles:
@@ -209,15 +224,12 @@ async def main() -> None:
             side = sig["side"]
             payload = {"symbol": symbol, "side": side, "ts": last_sig[symbol]}
             logger.info("Emitting %s signal for %s", side, symbol)
-            wf = await _start_tool(session, payload)
-            if not wf:
-                logger.warning("Failed to start momentum tool")
-                continue
-            wf_id, run_id = wf
-            result = await _poll_tool(session, wf_id, run_id)
-            logger.info("Tool completed with result: %s", result)
-            if result:
-                await _record_signal(session, result)
+            task = asyncio.create_task(_run_tool(session, payload))
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:

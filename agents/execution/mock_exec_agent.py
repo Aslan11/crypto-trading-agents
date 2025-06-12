@@ -111,22 +111,16 @@ async def _place_order(_session: aiohttp.ClientSession | None, intent: dict) -> 
 
 async def _poll_intents(session: aiohttp.ClientSession) -> None:
     cursor = 0
-    backoff = 1
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/approved_intent"
     while not STOP_EVENT.is_set():
         events = await _fetch(session, url, params={"after": cursor}) or []
-        if not events:
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30)
-            continue
-        backoff = 1
         for intent in events:
             ts = intent.get("ts")
             if ts is None:
                 continue
             cursor = max(cursor, ts)
             await _place_order(session, intent)
-        await asyncio.sleep(0)
+        await asyncio.sleep(1)
 
 
 async def _run() -> None:

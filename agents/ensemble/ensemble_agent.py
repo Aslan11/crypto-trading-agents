@@ -109,11 +109,18 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
             vec = evt.get("data", {})
             price = vec.get("mid")
             if symbol and ts and price is not None:
-                client = await _get_client()
-                await _ensure_workflow(client)
-                handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
-                await handle.signal("update_price", symbol, float(price))
-                cursor = max(cursor, ts)
+                try:
+                    client = await _get_client()
+                    await _ensure_workflow(client)
+                    handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
+                    await handle.signal("update_price", symbol, float(price))
+                    cursor = max(cursor, ts)
+                except RPCError as err:  # pragma: no cover - network failures
+                    logger.warning(
+                        "RPC error %s while updating price: %s",
+                        err.status,
+                        err.message,
+                    )
         await asyncio.sleep(0)
 
 
@@ -165,26 +172,33 @@ async def _poll_signals(session: aiohttp.ClientSession) -> None:
             ts = evt.get("ts")
             if not symbol or not side:
                 continue
-            client = await _get_client()
-            await _ensure_workflow(client)
-            handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
-            price = await handle.query("get_price", symbol) or 0.0
-            intent = {
-                "symbol": symbol,
-                "side": side,
-                "qty": INTENT_QTY,
-                "price": price,
-                "ts": ts,
-            }
-            approved = await _risk_check(session, intent)
-            if approved:
-                enqueue_intent(intent)
-                await _broadcast_intent(client, intent)
-                await handle.signal("record_intent", intent)
-                logger.info("Enqueued intent: %s", intent)
-            else:
-                logger.info("Intent rejected: %s", intent)
-            cursor = max(cursor, ts)
+            try:
+                client = await _get_client()
+                await _ensure_workflow(client)
+                handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
+                price = await handle.query("get_price", symbol) or 0.0
+                intent = {
+                    "symbol": symbol,
+                    "side": side,
+                    "qty": INTENT_QTY,
+                    "price": price,
+                    "ts": ts,
+                }
+                approved = await _risk_check(session, intent)
+                if approved:
+                    enqueue_intent(intent)
+                    await _broadcast_intent(client, intent)
+                    await handle.signal("record_intent", intent)
+                    logger.info("Enqueued intent: %s", intent)
+                else:
+                    logger.info("Intent rejected: %s", intent)
+                cursor = max(cursor, ts)
+            except RPCError as err:  # pragma: no cover - network failures
+                logger.warning(
+                    "RPC error %s while processing intent: %s",
+                    err.status,
+                    err.message,
+                )
         await asyncio.sleep(0)
 
 

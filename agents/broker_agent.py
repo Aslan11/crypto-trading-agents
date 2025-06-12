@@ -94,13 +94,20 @@ async def _format_status(status: Dict[str, object]) -> str:
 
     client = openai.AsyncOpenAI()
     prompt = (
-        "Summarize the following portfolio status for a human audience:\n"
+        "Summarize the following portfolio status for a human audience. "
+        "Format the output for display in a terminal using short lines.\n"
         f"{status}"
     )
     try:
         resp = await client.chat.completions.create(
             model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Your responses will be printed to a terminal. Use concise wording and line breaks for readability.",
+                },
+                {"role": "user", "content": prompt},
+            ],
         )
         return resp.choices[0].message.content.strip()
     except Exception as exc:  # pragma: no cover - network issues

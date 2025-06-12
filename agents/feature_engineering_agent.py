@@ -13,6 +13,7 @@ from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
 from agents.workflows import FeatureStoreWorkflow
+from agents.utils import print_banner
 
 
 def _add_project_root_to_path() -> None:
@@ -230,6 +231,11 @@ async def _shutdown() -> None:
 
 async def main() -> None:
     """Run the feature engineering agent."""
+
+    print_banner(
+        "Feature Engineering Agent",
+        "Compute and store feature vectors",
+    )
 
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, STOP_EVENT.set)

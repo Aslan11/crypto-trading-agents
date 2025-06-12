@@ -14,6 +14,7 @@ from agents.shared_bus import enqueue_intent
 from agents.workflows import EnsembleWorkflow
 from tools.intent_bus import IntentBus
 from tools.risk import PreTradeRiskCheck
+from agents.utils import print_banner
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -198,6 +199,11 @@ async def _poll_signals(session: aiohttp.ClientSession) -> None:
 
 
 async def main() -> None:
+    print_banner(
+        "Ensemble Agent",
+        "Aggregate signals and broadcast intents",
+    )
+
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, STOP_EVENT.set)
 

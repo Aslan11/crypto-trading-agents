@@ -9,6 +9,7 @@ from typing import List, Dict
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 from agents.workflows import ExecutionLedgerWorkflow
+from agents.utils import print_banner
 
 import aiohttp
 
@@ -202,6 +203,11 @@ async def _chat_loop(messages: list[dict]) -> None:
 
 
 async def main() -> None:
+    print_banner(
+        "Broker Agent",
+        "Interactively start market data streams",
+    )
+
     symbols, messages = await _prompt_user()
     if not symbols:
         return

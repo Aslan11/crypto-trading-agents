@@ -8,8 +8,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from collections import deque
-from datetime import datetime
+
 
 import aiohttp
 
@@ -23,16 +22,16 @@ def _add_project_root_to_path() -> None:
 
 _add_project_root_to_path()
 from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
-from agents.workflows import MomentumWorkflow
-from temporalio.client import Client
-from temporalio.service import RPCError, RPCStatusCode
+from agents.workflows import MomentumWorkflow  # noqa: E402
+from temporalio.client import Client  # noqa: E402
+from temporalio.service import RPCError, RPCStatusCode  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
-SYMBOL = os.environ.get("SYMBOL", "BTC/USD")
+SYMBOLS = [s.strip() for s in os.environ.get("SYMBOLS", "BTC/USD").split(",")]
 COOLDOWN_SEC = int(os.environ.get("COOLDOWN_SEC", "30"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
@@ -55,15 +54,22 @@ async def _get_client() -> Client:
     return TEMPORAL_CLIENT
 
 
-async def _ensure_workflow(client: Client) -> None:
-    handle = client.get_workflow_handle(MOMENTUM_WF_ID)
+def _wf_id(symbol: str | None = None) -> str:
+    if symbol is None:
+        return MOMENTUM_WF_ID
+    return f"{MOMENTUM_WF_ID}-{symbol.replace('/', '-')}"
+
+
+async def _ensure_workflow(client: Client, symbol: str | None = None) -> None:
+    wf_id = _wf_id(symbol)
+    handle = client.get_workflow_handle(wf_id)
     try:
         await handle.describe()
     except RPCError as err:
         if err.status == RPCStatusCode.NOT_FOUND:
             await client.start_workflow(
                 MomentumWorkflow.run,
-                id=MOMENTUM_WF_ID,
+                id=wf_id,
                 task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
                 args=[COOLDOWN_SEC],
             )
@@ -146,16 +152,14 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, _handle_sigint)
 
-    logger.info("Momentum agent watching %s", SYMBOL)
+    logger.info("Momentum agent watching %s", ", ".join(SYMBOLS))
 
-    client = await _get_client()
-    await _ensure_workflow(client)
-    handle = client.get_workflow_handle(MOMENTUM_WF_ID)
-    last_sig = 0
-
-    timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async for vector in subscribe_vectors(SYMBOL, use_local=False):
+    async def _run_symbol(symbol: str, session: aiohttp.ClientSession) -> None:
+        client = await _get_client()
+        await _ensure_workflow(client, symbol)
+        handle = client.get_workflow_handle(_wf_id(symbol))
+        last_sig = 0
+        async for vector in subscribe_vectors(symbol, use_local=False):
             if STOP_EVENT.is_set():
                 break
             await handle.signal("add_vector", vector)
@@ -164,9 +168,9 @@ async def main() -> None:
                 continue
             last_sig = sig["ts"]
             side = sig["side"]
-            signal_payload = {"symbol": SYMBOL, "side": side, "ts": last_sig}
-            logger.info("Emitting %s signal", side)
-            wf = await _start_tool(session, signal_payload)
+            payload = {"symbol": symbol, "side": side, "ts": last_sig}
+            logger.info("Emitting %s signal for %s", side, symbol)
+            wf = await _start_tool(session, payload)
             if not wf:
                 logger.warning("Failed to start momentum tool")
                 continue
@@ -174,8 +178,15 @@ async def main() -> None:
             result = await _poll_tool(session, wf_id, run_id)
             logger.info("Tool completed with result: %s", result)
             if result:
-                logger.debug("Recording signal result: %s", result)
                 await _record_signal(session, result)
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        tasks = [asyncio.create_task(_run_symbol(sym, session)) for sym in SYMBOLS]
+        await STOP_EVENT.wait()
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 if __name__ == "__main__":

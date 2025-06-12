@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import signal
-from datetime import datetime
 from decimal import Decimal
 
 import aiohttp
@@ -176,4 +175,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:  # pragma: no cover - shutdown
         pass
-

@@ -15,6 +15,7 @@ import asyncio
 SMA_SHORT_MIN = int(os.environ.get("SMA_SHORT_MIN", "1"))
 SMA_LONG_MIN = int(os.environ.get("SMA_LONG_MIN", "5"))
 VECTOR_WINDOW_SEC = int(os.environ.get("VECTOR_WINDOW_SEC", str(SMA_LONG_MIN * 60)))
+VECTOR_CONTINUE_EVERY = int(os.environ.get("VECTOR_CONTINUE_EVERY", "3600"))
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -109,9 +110,15 @@ class ComputeFeatureVector:
         self._event.set()
 
     @workflow.run
-    async def run(self, symbol: str, window_sec: int = VECTOR_WINDOW_SEC) -> None:
+    async def run(
+        self,
+        symbol: str,
+        window_sec: int = VECTOR_WINDOW_SEC,
+        continue_every: int = VECTOR_CONTINUE_EVERY,
+    ) -> None:
         self.symbol = symbol
         self.window_sec = window_sec
+        cycles = 0
         while True:
             # Wait for a new tick to be signalled via the event. We use
             # ``workflow.wait_condition`` so that the wait is deterministic in
@@ -143,3 +150,10 @@ class ComputeFeatureVector:
                 payload,
                 schedule_to_close_timeout=timedelta(seconds=5),
             )
+            cycles += 1
+            if cycles >= continue_every:
+                await workflow.continue_as_new(
+                    symbol=symbol,
+                    window_sec=window_sec,
+                    continue_every=continue_every,
+                )

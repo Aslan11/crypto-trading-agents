@@ -119,6 +119,8 @@ If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when
 mechanism after a configurable number of cycles to prevent unbounded workflow
 history growth. The default interval is one hour (3600 cycles) and can be
 changed by setting the `STREAM_CONTINUE_EVERY` environment variable.
+`ComputeFeatureVector` behaves the same way using the `VECTOR_CONTINUE_EVERY`
+environment variable.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.

@@ -43,6 +43,7 @@ TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 TASK_QUEUE = os.environ.get("TASK_QUEUE", "mcp-tools")
 FEATURE_WINDOW_SEC = int(os.environ.get("VECTOR_WINDOW_SEC", "300"))
+VECTOR_CONTINUE_EVERY = int(os.environ.get("VECTOR_CONTINUE_EVERY", "3600"))
 
 STOP_EVENT = asyncio.Event()
 TASKS: set[asyncio.Task[Any]] = set()
@@ -184,7 +185,7 @@ async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
         task_queue=TASK_QUEUE,
         start_signal="market_tick",
         start_signal_args=[tick],
-        args=[symbol, FEATURE_WINDOW_SEC],
+        args=[symbol, FEATURE_WINDOW_SEC, VECTOR_CONTINUE_EVERY],
     )
 
 

@@ -12,6 +12,7 @@ from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 from agents.workflows import ExecutionLedgerWorkflow
 from tools.execution import PlaceMockOrder
+from agents.utils import print_banner
 
 try:
     from agents.shared_bus import APPROVED_INTENT_QUEUE
@@ -142,6 +143,11 @@ async def _run() -> None:
 
 
 async def main() -> None:
+    print_banner(
+        "Mock Execution Agent",
+        "Simulate order execution",
+    )
+
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, STOP_EVENT.set)
     try:

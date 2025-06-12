@@ -24,6 +24,7 @@ def _add_project_root_to_path() -> None:
 _add_project_root_to_path()
 from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
 from agents.workflows import MomentumWorkflow  # noqa: E402
+from agents.utils import print_banner
 from temporalio.client import Client  # noqa: E402
 from temporalio.service import RPCError, RPCStatusCode  # noqa: E402
 
@@ -163,6 +164,11 @@ async def _run_tool(session: aiohttp.ClientSession, payload: dict) -> None:
 
 async def main() -> None:
     """Run the momentum strategy agent."""
+    print_banner(
+        "Momentum Strategy Agent",
+        "Emit buy/sell signals via SMA crossover",
+    )
+
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, _handle_sigint)
 

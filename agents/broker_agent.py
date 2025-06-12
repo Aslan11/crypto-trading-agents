@@ -76,14 +76,41 @@ async def _get_status() -> Dict[str, object]:
     return {"cash": cash, "pnl": pnl, "positions": positions}
 
 
-async def _print_status() -> None:
-    status = await _get_status()
+async def _format_status(status: Dict[str, object]) -> str:
+    """Return a friendly summary of the ledger status using the LLM if available."""
     cash = status.get("cash", 0.0)
     pnl = status.get("pnl", 0.0)
     positions = status.get("positions", {})
-    print(f"Cash: ${cash:.2f}")
-    print(f"Holdings: {positions}")
-    print(f"Gains/Losses: ${pnl:.2f}")
+
+    default = (
+        f"Cash: ${cash:.2f}\n"
+        f"Holdings: {positions}\n"
+        f"Gains/Losses: ${pnl:.2f}"
+    )
+
+    if openai is None:
+        return default
+
+    client = openai.AsyncOpenAI()
+    prompt = (
+        "Summarize the following portfolio status for a human audience:\n"
+        f"{status}"
+    )
+    try:
+        resp = await client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as exc:  # pragma: no cover - network issues
+        logger.error("LLM call failed: %s", exc)
+        return default
+
+
+async def _print_status() -> None:
+    status = await _get_status()
+    summary = await _format_status(status)
+    print(summary)
 
 
 async def _prompt_user() -> tuple[List[str], list[dict]]:

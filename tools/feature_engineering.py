@@ -156,15 +156,19 @@ class ComputeFeatureVector:
             hist_len = workflow.info().get_current_history_length()
             if hist_len >= history_limit or workflow.info().is_continue_as_new_suggested():
                 await workflow.continue_as_new(
-                    symbol,
-                    window_sec,
-                    continue_every,
-                    history_limit,
+                    args=[
+                        symbol,
+                        window_sec,
+                        continue_every,
+                        history_limit,
+                    ]
                 )
             if cycles >= continue_every:
                 await workflow.continue_as_new(
-                    symbol,
-                    window_sec,
-                    continue_every,
-                    history_limit,
+                    args=[
+                        symbol,
+                        window_sec,
+                        continue_every,
+                        history_limit,
+                    ]
                 )

@@ -185,7 +185,9 @@ async def _chat_loop(messages: list[dict]) -> None:
         return
 
     client = openai.AsyncOpenAI()
-    print("Type 'status' to view portfolio or 'quit' to exit.")
+    print(
+        "Type 'status' to view portfolio, 'add <SYM>' to start a new stream, or 'quit' to exit."
+    )
     while True:
         user_msg = input("> ").strip()
         if not user_msg:
@@ -195,6 +197,11 @@ async def _chat_loop(messages: list[dict]) -> None:
         if user_msg.lower().startswith("status"):
             await _print_status()
             continue
+        if any(w in user_msg.lower() for w in {"add", "track", "subscribe"}):
+            symbols = _parse_symbols(user_msg)
+            if symbols:
+                await _start_stream(symbols)
+                continue
         messages.append({"role": "user", "content": user_msg})
         try:
             resp = await client.chat.completions.create(

@@ -20,15 +20,16 @@ def log_signal(signal: dict) -> dict:
 
 @workflow.defn
 class EvaluateStrategyMomentum:
-    """Workflow wrapper around :func:`log_signal` with a cooldown."""
+    """Workflow wrapper around :func:`log_signal` with an optional cooldown."""
 
     @workflow.run
-    async def run(self, signal: dict, cooldown_sec: int = 30) -> dict:
-        """Execute ``log_signal`` then sleep for ``cooldown_sec`` seconds."""
+    async def run(self, signal: dict, cooldown_sec: int | None = None) -> dict:
+        """Execute ``log_signal`` then sleep ``cooldown_sec`` seconds if set."""
         await workflow.execute_activity(
             log_signal,
             signal,
             schedule_to_close_timeout=timedelta(seconds=5),
         )
-        await workflow.sleep(cooldown_sec)
+        if cooldown_sec:
+            await workflow.sleep(cooldown_sec)
         return signal

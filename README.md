@@ -56,7 +56,7 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `SubscribeCEXStream`     | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
-| `EvaluateStrategyMomentum` | Log and throttle momentum signals            | Feature vector        |
+| `EvaluateStrategyMomentum` | Log momentum signals (optional cooldown)     | Feature vector        |
 | `PreTradeRiskCheck`      | Validate intents against simple VaR limits     | Order intents         |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
@@ -109,7 +109,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    ```
 3. `SubscribeCEXStream` records ticks to the `market_tick` signal.
 4. The feature engineering agent processes those ticks via `ComputeFeatureVector`.
-5. The momentum agent emits buy/sell signals using `EvaluateStrategyMomentum`.
+5. The momentum agent emits buy/sell signals using `EvaluateStrategyMomentum` and continues processing while the tool runs.
 6. The ensemble agent approves intents with `PreTradeRiskCheck` and publishes them to the `IntentBus`.
 7. The mock execution agent picks up approved intents and prints simulated order fills.
 

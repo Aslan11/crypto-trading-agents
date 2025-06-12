@@ -66,18 +66,18 @@ tmux send-keys    -t $MOM_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPA
 
 tmux select-layout -t $SESSION:0 tiled
 
-# 6. Pane 5 – blank shell (split Pane 4 horizontally ←)
+# 6. Pane 5 – broker agent (split Pane 4 horizontally ←)
 tmux select-pane  -t $MOM_PANE
-MAIN_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $MAIN_PANE
+BROKER_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+tmux send-keys    -t $BROKER_PANE 'sleep 2 && source .venv/bin/activate && python agents/broker_agent.py'
 
 # 7. Pane 6 – blank shell (split Pane 5 vertically ↓)
-tmux select-pane  -t $MAIN_PANE
-SECONDARY_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $SECONDARY_PANE 'sleep 2 && source .venv/bin/activate' C-m
+tmux select-pane  -t $BROKER_PANE
+BLANK_PANE=$(tmux split-window -v -P -F "#{pane_id}")
+tmux send-keys    -t $BLANK_PANE 'sleep 2 && source .venv/bin/activate' C-m
 
 # 8. Pane 7 – mock execution agent (split Pane 6 horizontally →)
-tmux select-pane  -t $SECONDARY_PANE
+tmux select-pane  -t $BLANK_PANE
 EXEC_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/execution/mock_exec_agent.py' C-m
 

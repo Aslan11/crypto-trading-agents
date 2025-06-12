@@ -17,4 +17,5 @@ dependencies = [
     "uvicorn>=0.34.3",
     "pandas>=2.2.2",
     "numpy>=1.26.4",
+    "openai>=1.86.0",
 ]

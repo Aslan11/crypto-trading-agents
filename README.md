@@ -71,7 +71,6 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 | Requirement  | Version      | Notes                                        |
 |--------------|--------------|----------------------------------------------|
 | Python       | 3.11 or newer| Data & strategy agents                       |
-| Node.js      | 20 LTS       | MCP server & tooling                         |
 | Temporal CLI | 1.24+        | `brew install temporal` or use Temporal Cloud|
 | Docker       | latest       | Local infra (Redis, Kafka, Postgres)         |
 
@@ -84,11 +83,10 @@ make dev-up        # spins up Temporal + infra via docker-compose
 
 # Activate Python env
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 
-# Start MCP server (hot reload)
-npm install
-npm run dev
+# Start MCP server 
+python mcp_server/app.py
 ```
 Point your agent workers at `localhost:8080` (default MCP port) and confirm health at <http://localhost:8080/healthz>.
 
@@ -132,7 +130,7 @@ changed by setting the `STREAM_CONTINUE_EVERY` environment variable.
 ## Repository Layout
 ```
 ├── agents/          # Strategy & system agents (Python workers)
-├── tools/           # Durable tool workflows (TypeScript + Temporal SDK)
+├── tools/           # Durable tool workflows (Python + Temporal SDK)
 ├── scripts/         # One-off maintenance & retraining jobs
 ├── infra/           # docker-compose, terraform, helm charts
 ├── docs/            # Deep-dives, ADRs, tool schemas

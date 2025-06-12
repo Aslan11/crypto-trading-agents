@@ -86,28 +86,70 @@ async def get_latest_vector(symbol: str) -> dict | None:
         return vec
 
 
-async def subscribe_vectors(symbol: str) -> AsyncIterator[dict]:
-    """Yield feature vectors for ``symbol`` as they arrive."""
+async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIterator[dict]:
+    """Yield feature vectors for ``symbol`` as they arrive.
 
-    last_ts = 0
-    while not STOP_EVENT.is_set():
-        async with _FEATURE_LOCK:
-            items = sorted(
-                [
-                    (ts, vec)
-                    for (sym, ts), vec in FEATURE_STORE.items()
-                    if sym == symbol and ts > last_ts
-                ],
-                key=lambda t: t[0],
-            )
-        if not items:
-            await asyncio.sleep(0.1)
-            continue
-        for ts, vec in items:
-            if STOP_EVENT.is_set():
-                return
-            last_ts = ts
-            yield vec
+    When ``use_local`` is ``True`` this streams vectors from the in-memory
+    ``FEATURE_STORE`` populated by :func:`_poll_vectors`.  Otherwise vectors are
+    polled directly from the MCP server so the generator works across processes.
+    """
+
+    if use_local:
+        last_ts = 0
+        while not STOP_EVENT.is_set():
+            async with _FEATURE_LOCK:
+                items = sorted(
+                    [
+                        (ts, vec)
+                        for (sym, ts), vec in FEATURE_STORE.items()
+                        if sym == symbol and ts > last_ts
+                    ],
+                    key=lambda t: t[0],
+                )
+            if not items:
+                await asyncio.sleep(0.1)
+                continue
+            for ts, vec in items:
+                if STOP_EVENT.is_set():
+                    return
+                last_ts = ts
+                yield vec
+        return
+
+    cursor = 0
+    timeout = aiohttp.ClientTimeout(total=30)
+    backoff = 1
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        while not STOP_EVENT.is_set():
+            try:
+                async with session.get(url, params={"after": cursor}) as resp:
+                    if resp.status == 200:
+                        events = await resp.json()
+                        backoff = 1
+                    else:
+                        logger.warning("Vector poll error %s", resp.status)
+                        events = []
+            except Exception as exc:
+                logger.error("Vector poll failed: %s", exc)
+                events = []
+
+            if not events:
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+                continue
+
+            backoff = 1
+            for evt in events:
+                if STOP_EVENT.is_set():
+                    return
+                sym = evt.get("symbol")
+                ts = evt.get("ts")
+                data = evt.get("data")
+                if sym != symbol or ts is None or not isinstance(data, dict):
+                    continue
+                cursor = max(cursor, ts)
+                yield data
 
 
 async def _store_vector(symbol: str, ts: int, vector: dict) -> None:

@@ -8,7 +8,8 @@ from datetime import datetime
 from decimal import Decimal
 
 import aiohttp
-from temporalio.client import Client, WorkflowNotFoundError
+from temporalio.client import Client
+from temporalio.service import RPCError, RPCStatusCode
 from agents.workflows import ExecutionLedgerWorkflow
 
 try:
@@ -42,12 +43,15 @@ async def _ensure_workflow(client: Client) -> None:
     handle = client.get_workflow_handle(LEDGER_WF_ID)
     try:
         await handle.describe()
-    except WorkflowNotFoundError:
-        await client.start_workflow(
-            ExecutionLedgerWorkflow.run,
-            id=LEDGER_WF_ID,
-            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
-        )
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=LEDGER_WF_ID,
+                task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+            )
+        else:
+            raise
 
 
 async def _fetch(

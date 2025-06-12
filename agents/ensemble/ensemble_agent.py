@@ -11,7 +11,8 @@ import aiohttp
 
 from agents.shared_bus import enqueue_intent
 from agents.workflows import EnsembleWorkflow
-from temporalio.client import Client, WorkflowNotFoundError
+from temporalio.client import Client
+from temporalio.service import RPCError, RPCStatusCode
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -39,12 +40,15 @@ async def _ensure_workflow(client: Client) -> None:
     handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
     try:
         await handle.describe()
-    except WorkflowNotFoundError:
-        await client.start_workflow(
-            EnsembleWorkflow.run,
-            id=ENSEMBLE_WF_ID,
-            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
-        )
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            await client.start_workflow(
+                EnsembleWorkflow.run,
+                id=ENSEMBLE_WF_ID,
+                task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+            )
+        else:
+            raise
 
 
 async def _fetch(

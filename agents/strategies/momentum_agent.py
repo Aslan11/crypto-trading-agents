@@ -24,7 +24,8 @@ def _add_project_root_to_path() -> None:
 _add_project_root_to_path()
 from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
 from agents.workflows import MomentumWorkflow
-from temporalio.client import Client, WorkflowNotFoundError
+from temporalio.client import Client
+from temporalio.service import RPCError, RPCStatusCode
 
 
 logger = logging.getLogger(__name__)
@@ -58,13 +59,16 @@ async def _ensure_workflow(client: Client) -> None:
     handle = client.get_workflow_handle(MOMENTUM_WF_ID)
     try:
         await handle.describe()
-    except WorkflowNotFoundError:
-        await client.start_workflow(
-            MomentumWorkflow.run,
-            id=MOMENTUM_WF_ID,
-            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
-            args=[COOLDOWN_SEC],
-        )
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            await client.start_workflow(
+                MomentumWorkflow.run,
+                id=MOMENTUM_WF_ID,
+                task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+                args=[COOLDOWN_SEC],
+            )
+        else:
+            raise
 
 
 def _handle_sigint() -> None:

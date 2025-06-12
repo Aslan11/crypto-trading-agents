@@ -121,6 +121,8 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
                         err.status,
                         err.message,
                     )
+                except Exception:  # pragma: no cover - unexpected errors
+                    logger.exception("Unexpected error updating price")
         await asyncio.sleep(0)
 
 
@@ -199,6 +201,8 @@ async def _poll_signals(session: aiohttp.ClientSession) -> None:
                     err.status,
                     err.message,
                 )
+            except Exception:  # pragma: no cover - unexpected errors
+                logger.exception("Unexpected error processing intent")
         await asyncio.sleep(0)
 
 

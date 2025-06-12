@@ -124,7 +124,7 @@ async def main() -> None:
 
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async for vector in subscribe_vectors(SYMBOL):
+        async for vector in subscribe_vectors(SYMBOL, use_local=False):
             if STOP_EVENT.is_set():
                 break
             vec_queue.append(vector)

@@ -29,6 +29,19 @@ FILL_COUNT = 0
 STOP_EVENT = asyncio.Event()
 
 
+async def _fetch(
+    session: aiohttp.ClientSession, url: str, params: dict | None = None
+) -> list[dict] | None:
+    try:
+        async with session.get(url, params=params) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            logger.warning("GET %s returned %s", url, resp.status)
+    except Exception as exc:  # pragma: no cover - network errors
+        logger.error("GET %s failed: %s", url, exc)
+    return None
+
+
 def _update_ledger(fill: dict) -> None:
     global cash, FILL_COUNT
     side = fill["side"]
@@ -109,12 +122,40 @@ async def _place_order(session: aiohttp.ClientSession, intent: dict) -> None:
         _update_ledger(fill)
 
 
+async def _poll_intents(session: aiohttp.ClientSession) -> None:
+    cursor = 0
+    backoff = 1
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/approved_intent"
+    while not STOP_EVENT.is_set():
+        events = await _fetch(session, url, params={"after": cursor}) or []
+        if not events:
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+            continue
+        backoff = 1
+        for intent in events:
+            ts = intent.get("ts")
+            if ts is None:
+                continue
+            cursor = max(cursor, ts)
+            await _place_order(session, intent)
+        await asyncio.sleep(0)
+
+
 async def _run() -> None:
     timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        while not STOP_EVENT.is_set():
-            intent = await APPROVED_INTENT_QUEUE.get()
-            await _place_order(session, intent)
+        poll_task = asyncio.create_task(_poll_intents(session))
+        try:
+            while not STOP_EVENT.is_set():
+                try:
+                    intent = await asyncio.wait_for(APPROVED_INTENT_QUEUE.get(), 1.0)
+                except asyncio.TimeoutError:
+                    continue
+                await _place_order(session, intent)
+        finally:
+            poll_task.cancel()
+            await asyncio.gather(poll_task, return_exceptions=True)
 
 
 async def main() -> None:

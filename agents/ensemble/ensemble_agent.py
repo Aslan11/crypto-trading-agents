@@ -96,6 +96,15 @@ async def _risk_check(session: aiohttp.ClientSession, intent: Dict[str, Any]) ->
     return False
 
 
+async def _broadcast_intent(session: aiohttp.ClientSession, intent: Dict[str, Any]) -> None:
+    """Send approved intent to the IntentBus workflow."""
+    await _post(
+        session,
+        f"http://{MCP_HOST}:{MCP_PORT}/tools/IntentBus",
+        {"intent": intent},
+    )
+
+
 async def _poll_signals(session: aiohttp.ClientSession) -> None:
     cursor = 0
     while not STOP_EVENT.is_set():
@@ -121,6 +130,7 @@ async def _poll_signals(session: aiohttp.ClientSession) -> None:
             approved = await _risk_check(session, intent)
             if approved:
                 enqueue_intent(intent)
+                await _broadcast_intent(session, intent)
                 logger.info("Enqueued intent: %s", intent)
             else:
                 logger.info("Intent rejected: %s", intent)

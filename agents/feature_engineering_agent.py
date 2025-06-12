@@ -11,6 +11,8 @@ from typing import Any, AsyncIterator
 import aiohttp
 from temporalio.client import Client
 
+from agents.workflows import FeatureStoreWorkflow
+
 
 def _add_project_root_to_path() -> None:
     """Ensure the repository root is on ``sys.path`` for imports."""
@@ -24,10 +26,8 @@ from tools.feature_engineering import ComputeFeatureVector  # noqa: E402
 
 __all__ = ["get_latest_vector", "subscribe_vectors", "main"]
 
-# Global in-memory feature store
-FEATURE_STORE: dict[tuple[str, int], dict] = {}
-_FEATURE_LOCK = asyncio.Lock()
-_VECTOR_COUNT = 0
+FEATURE_WF_ID = "feature-store"
+TEMPORAL_CLIENT: Client | None = None
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -76,45 +76,48 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
             cursor = max(cursor, ts)
 
 
+async def _get_client() -> Client:
+    global TEMPORAL_CLIENT
+    if TEMPORAL_CLIENT is None:
+        TEMPORAL_CLIENT = await Client.connect(
+            TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE
+        )
+    return TEMPORAL_CLIENT
+
+
+async def _ensure_workflow(client: Client) -> None:
+    try:
+        await client.get_workflow_handle(FEATURE_WF_ID)
+    except Exception:
+        await client.start_workflow(
+            FeatureStoreWorkflow.run,
+            id=FEATURE_WF_ID,
+            task_queue=TASK_QUEUE,
+        )
+
+
 async def get_latest_vector(symbol: str) -> dict | None:
     """Return the most recent feature vector for ``symbol`` if available."""
 
-    async with _FEATURE_LOCK:
-        matches = [(k, v) for k, v in FEATURE_STORE.items() if k[0] == symbol]
-        if not matches:
-            return None
-        (sym, ts), vec = max(matches, key=lambda kv: kv[0][1])
-        return vec
+    client = await _get_client()
+    handle = client.get_workflow_handle(FEATURE_WF_ID)
+    return await handle.query("latest_vector", symbol)
 
 
 async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIterator[dict]:
-    """Yield feature vectors for ``symbol`` as they arrive.
-
-    When ``use_local`` is ``True`` this streams vectors from the in-memory
-    ``FEATURE_STORE`` populated by :func:`_poll_vectors`.  Otherwise vectors are
-    polled directly from the MCP server so the generator works across processes.
-    """
+    """Yield feature vectors for ``symbol`` as they arrive."""
 
     if use_local:
         last_ts = 0
+        client = await _get_client()
+        handle = client.get_workflow_handle(FEATURE_WF_ID)
         while not STOP_EVENT.is_set():
-            async with _FEATURE_LOCK:
-                items = sorted(
-                    [
-                        (ts, vec)
-                        for (sym, ts), vec in FEATURE_STORE.items()
-                        if sym == symbol and ts > last_ts
-                    ],
-                    key=lambda t: t[0],
-                )
-            if not items:
+            res = await handle.query("next_vector", symbol, last_ts)
+            if not res:
                 await asyncio.sleep(0.1)
                 continue
-            for ts, vec in items:
-                if STOP_EVENT.is_set():
-                    return
-                last_ts = ts
-                yield vec
+            last_ts, vec = res
+            yield vec
         return
 
     cursor = 0
@@ -154,16 +157,12 @@ async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIte
 
 
 async def _store_vector(symbol: str, ts: int, vector: dict) -> None:
-    global _VECTOR_COUNT
-
-    async with _FEATURE_LOCK:
-        FEATURE_STORE[(symbol, ts)] = vector
-        _VECTOR_COUNT += 1
-        count = _VECTOR_COUNT
-    if count % LOG_EVERY == 0:
-        logger.info(
-            "Stored vector %d for %s @ %d: %s", count, symbol, ts, vector
-        )
+    client = await _get_client()
+    await _ensure_workflow(client)
+    handle = client.get_workflow_handle(FEATURE_WF_ID)
+    await handle.signal("add_vector", symbol, ts, vector)
+    if ts % LOG_EVERY == 0:
+        logger.info("Stored vector for %s @ %d: %s", symbol, ts, vector)
 
 
 async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
@@ -225,7 +224,8 @@ async def main() -> None:
     loop.add_signal_handler(signal.SIGINT, STOP_EVENT.set)
 
     timeout = aiohttp.ClientTimeout(total=30)
-    temporal_client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
+    temporal_client = await _get_client()
+    await _ensure_workflow(temporal_client)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         tick_task = asyncio.create_task(_poll_ticks(session, temporal_client))
         vec_task = asyncio.create_task(_poll_vectors(session))

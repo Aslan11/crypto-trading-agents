@@ -4,14 +4,11 @@ from agents.feature_engineering_agent import (
     subscribe_vectors,
     STOP_EVENT,
     _store_vector,
-    FEATURE_STORE,
 )
 
 
 @pytest.mark.asyncio
 async def test_subscribe_vectors_respects_stop_event():
-    # ensure clean state
-    FEATURE_STORE.clear()
     STOP_EVENT.clear()
 
     await _store_vector("BTC/USD", 1, {"foo": "bar"})

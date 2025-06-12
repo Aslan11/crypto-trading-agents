@@ -10,6 +10,8 @@ from typing import Any, Dict
 import aiohttp
 
 from agents.shared_bus import enqueue_intent
+from agents.workflows import EnsembleWorkflow
+from temporalio.client import Client
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -20,7 +22,28 @@ logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(mess
 logger = logging.getLogger(__name__)
 
 STOP_EVENT = asyncio.Event()
-_latest_price: dict[str, float] = {}
+ENSEMBLE_WF_ID = "ensemble-agent"
+TEMPORAL_CLIENT: Client | None = None
+
+
+async def _get_client() -> Client:
+    global TEMPORAL_CLIENT
+    if TEMPORAL_CLIENT is None:
+        address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+        namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+        TEMPORAL_CLIENT = await Client.connect(address, namespace=namespace)
+    return TEMPORAL_CLIENT
+
+
+async def _ensure_workflow(client: Client) -> None:
+    try:
+        await client.get_workflow_handle(ENSEMBLE_WF_ID)
+    except Exception:
+        await client.start_workflow(
+            EnsembleWorkflow.run,
+            id=ENSEMBLE_WF_ID,
+            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+        )
 
 
 async def _fetch(
@@ -63,7 +86,10 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
             vec = evt.get("data", {})
             price = vec.get("mid")
             if symbol and ts and price is not None:
-                _latest_price[symbol] = float(price)
+                client = await _get_client()
+                await _ensure_workflow(client)
+                handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
+                await handle.signal("update_price", symbol, float(price))
                 cursor = max(cursor, ts)
         await asyncio.sleep(0)
 
@@ -119,7 +145,10 @@ async def _poll_signals(session: aiohttp.ClientSession) -> None:
             ts = evt.get("ts")
             if not symbol or not side:
                 continue
-            price = _latest_price.get(symbol, 0.0)
+            client = await _get_client()
+            await _ensure_workflow(client)
+            handle = client.get_workflow_handle(ENSEMBLE_WF_ID)
+            price = await handle.query("get_price", symbol) or 0.0
             intent = {
                 "symbol": symbol,
                 "side": side,
@@ -131,6 +160,7 @@ async def _poll_signals(session: aiohttp.ClientSession) -> None:
             if approved:
                 enqueue_intent(intent)
                 await _broadcast_intent(session, intent)
+                await handle.signal("record_intent", intent)
                 logger.info("Enqueued intent: %s", intent)
             else:
                 logger.info("Intent rejected: %s", intent)
@@ -143,6 +173,8 @@ async def main() -> None:
     loop.add_signal_handler(signal.SIGINT, STOP_EVENT.set)
 
     timeout = aiohttp.ClientTimeout(total=30)
+    client = await _get_client()
+    await _ensure_workflow(client)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         vec_task = asyncio.create_task(_poll_vectors(session))
         sig_task = asyncio.create_task(_poll_signals(session))

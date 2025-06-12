@@ -161,6 +161,11 @@ class ExecutionLedgerWorkflow:
     def get_cash(self) -> float:
         return float(self.cash)
 
+    @workflow.query
+    def get_positions(self) -> Dict[str, float]:
+        """Return current position sizes as floats."""
+        return {sym: float(q) for sym, q in self.positions.items()}
+
     @workflow.run
     async def run(self) -> None:
         await workflow.wait_condition(lambda: False)

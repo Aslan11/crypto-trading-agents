@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import aiohttp
-from temporalio.client import Client, WorkflowNotFoundError
+from temporalio.client import Client
+from temporalio.service import RPCError, RPCStatusCode
 
 from agents.workflows import FeatureStoreWorkflow
 
@@ -92,12 +93,15 @@ async def _ensure_workflow(client: Client) -> None:
     handle = client.get_workflow_handle(FEATURE_WF_ID)
     try:
         await handle.describe()
-    except WorkflowNotFoundError:
-        await client.start_workflow(
-            FeatureStoreWorkflow.run,
-            id=FEATURE_WF_ID,
-            task_queue=TASK_QUEUE,
-        )
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            await client.start_workflow(
+                FeatureStoreWorkflow.run,
+                id=FEATURE_WF_ID,
+                task_queue=TASK_QUEUE,
+            )
+        else:
+            raise
 
 
 async def get_latest_vector(symbol: str) -> dict | None:

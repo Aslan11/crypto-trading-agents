@@ -3,15 +3,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import secrets
 import signal
 from typing import Any, Dict
 
 import aiohttp
 
+import secrets
+
 from agents.shared_bus import enqueue_intent
 from agents.workflows import EnsembleWorkflow
 from tools.intent_bus import IntentBus
+from tools.risk import PreTradeRiskCheck
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -126,32 +128,21 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
         await asyncio.sleep(0)
 
 
-async def _risk_check(session: aiohttp.ClientSession, intent: Dict[str, Any]) -> bool:
-    payload = {"intent_id": secrets.token_hex(8), "intents": [intent]}
-    start = await _post(
-        session, f"http://{MCP_HOST}:{MCP_PORT}/tools/PreTradeRiskCheck", payload
-    )
-    if not start:
-        return False
-    wf_id = start.get("workflow_id")
-    run_id = start.get("run_id")
-    if not wf_id or not run_id:
-        return False
-    while not STOP_EVENT.is_set():
-        await asyncio.sleep(0.5)
-        status = await _fetch(
-            session, f"http://{MCP_HOST}:{MCP_PORT}/workflow/{wf_id}/{run_id}"
+async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, Any]) -> bool:
+    client = await _get_client()
+    wf_id = f"risk-{secrets.token_hex(8)}"
+    try:
+        handle = await client.start_workflow(
+            PreTradeRiskCheck.run,
+            args=[wf_id, [intent]],
+            id=wf_id,
+            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         )
-        if not status:
-            continue
-        state = status.get("status")
-        if state == "COMPLETED":
-            result = status.get("result", {})
-            return result.get("status") == "APPROVED"
-        if state != "RUNNING":
-            logger.error("Risk workflow ended with %s", state)
-            return False
-    return False
+        result = await handle.result()
+        return result.get("status") == "APPROVED"
+    except Exception as exc:
+        logger.error("Risk workflow failed: %s", exc)
+        return False
 
 
 async def _broadcast_intent(client: Client, intent: Dict[str, Any]) -> None:

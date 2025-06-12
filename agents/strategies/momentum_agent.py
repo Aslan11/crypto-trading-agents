@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Any, AsyncIterator
 
 
 import aiohttp
@@ -31,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
-SYMBOLS = [s.strip() for s in os.environ.get("SYMBOLS", "BTC/USD").split(",")]
 COOLDOWN_SEC = int(os.environ.get("COOLDOWN_SEC", "30"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
@@ -152,23 +152,62 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, _handle_sigint)
 
-    logger.info("Momentum agent watching %s", ", ".join(SYMBOLS))
+    async def _subscribe_all_vectors() -> AsyncIterator[tuple[str, dict]]:
+        cursor = 0
+        backoff = 1
+        url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while not STOP_EVENT.is_set():
+                try:
+                    async with session.get(url, params={"after": cursor}) as resp:
+                        if resp.status == 200:
+                            events = await resp.json()
+                            backoff = 1
+                        else:
+                            logger.warning("Vector poll error %s", resp.status)
+                            events = []
+                except Exception as exc:
+                    logger.error("Vector poll failed: %s", exc)
+                    events = []
 
-    async def _run_symbol(symbol: str, session: aiohttp.ClientSession) -> None:
+                if not events:
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30)
+                    continue
+
+                backoff = 1
+                for evt in events:
+                    if STOP_EVENT.is_set():
+                        return
+                    sym = evt.get("symbol")
+                    ts = evt.get("ts")
+                    data = evt.get("data")
+                    if sym is None or ts is None or not isinstance(data, dict):
+                        continue
+                    cursor = max(cursor, ts)
+                    yield sym, data
+
+    async def _run(session: aiohttp.ClientSession) -> None:
         client = await _get_client()
-        await _ensure_workflow(client, symbol)
-        handle = client.get_workflow_handle(_wf_id(symbol))
-        last_sig = 0
-        async for vector in subscribe_vectors(symbol, use_local=False):
-            if STOP_EVENT.is_set():
-                break
+        handles: dict[str, Any] = {}
+        last_sig: dict[str, int] = {}
+
+        async for symbol, vector in _subscribe_all_vectors():
+            if symbol not in handles:
+                await _ensure_workflow(client, symbol)
+                handles[symbol] = client.get_workflow_handle(_wf_id(symbol))
+                last_sig[symbol] = 0
+                logger.info("Momentum agent now watching %s", symbol)
+
+            handle = handles[symbol]
             await handle.signal("add_vector", vector)
-            sig = await handle.query("next_signal", last_sig)
+            sig = await handle.query("next_signal", last_sig[symbol])
             if not sig:
                 continue
-            last_sig = sig["ts"]
+            last_sig[symbol] = sig["ts"]
             side = sig["side"]
-            payload = {"symbol": symbol, "side": side, "ts": last_sig}
+            payload = {"symbol": symbol, "side": side, "ts": last_sig[symbol]}
             logger.info("Emitting %s signal for %s", side, symbol)
             wf = await _start_tool(session, payload)
             if not wf:
@@ -182,11 +221,7 @@ async def main() -> None:
 
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        tasks = [asyncio.create_task(_run_symbol(sym, session)) for sym in SYMBOLS]
-        await STOP_EVENT.wait()
-        for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await _run(session)
 
 
 if __name__ == "__main__":

@@ -64,6 +64,8 @@ tmux select-pane  -t $FE_PANE
 MOM_PANE=$(tmux split-window -v -P -F "#{pane_id}")
 tmux send-keys    -t $MOM_PANE 'sleep 2 && source .venv/bin/activate && python agents/strategies/momentum_agent.py' C-m
 
+tmux select-layout -t $SESSION:0 tiled
+
 # 6. Pane 5 – blank shell (split Pane 4 horizontally ←)
 tmux select-pane  -t $MOM_PANE
 MAIN_PANE=$(tmux split-window -h -P -F "#{pane_id}")

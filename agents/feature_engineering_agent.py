@@ -90,7 +90,7 @@ async def subscribe_vectors(symbol: str) -> AsyncIterator[dict]:
     """Yield feature vectors for ``symbol`` as they arrive."""
 
     last_ts = 0
-    while True:
+    while not STOP_EVENT.is_set():
         async with _FEATURE_LOCK:
             items = sorted(
                 [
@@ -104,6 +104,8 @@ async def subscribe_vectors(symbol: str) -> AsyncIterator[dict]:
             await asyncio.sleep(0.1)
             continue
         for ts, vec in items:
+            if STOP_EVENT.is_set():
+                return
             last_ts = ts
             yield vec
 

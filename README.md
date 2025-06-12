@@ -114,6 +114,11 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 
 If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when starting workflows such as `SubscribeCEXStream`. Use trading pairs like `BTC/USD`. For private Coinbase endpoints, set `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` in your environment.
 
+`SubscribeCEXStream` automatically restarts itself via Temporal's *continue as new*
+mechanism after a configurable number of cycles to prevent unbounded workflow
+history growth. The default interval is one hour (3600 cycles) and can be
+changed by setting the `STREAM_CONTINUE_EVERY` environment variable.
+
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.
 - Write a strategy agent in `agents/` that calls your tool via the MCP client SDK. Use `subscribe_vectors(symbol)` from `agents.feature_engineering_agent` to stream processed feature rows into your strategy logic.

@@ -11,6 +11,7 @@ import aiohttp
 
 from agents.shared_bus import enqueue_intent
 from agents.workflows import EnsembleWorkflow
+from tools.intent_bus import IntentBus
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 STOP_EVENT = asyncio.Event()
 ENSEMBLE_WF_ID = "ensemble-agent"
+INTENT_BUS_WF_ID = "intent-bus"
 TEMPORAL_CLIENT: Client | None = None
 
 
@@ -45,6 +47,22 @@ async def _ensure_workflow(client: Client) -> None:
             await client.start_workflow(
                 EnsembleWorkflow.run,
                 id=ENSEMBLE_WF_ID,
+                task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+            )
+        else:
+            raise
+
+
+async def _ensure_intent_bus(client: Client) -> None:
+    """Ensure the IntentBus workflow is running."""
+    handle = client.get_workflow_handle(INTENT_BUS_WF_ID)
+    try:
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            await client.start_workflow(
+                IntentBus.run,
+                id=INTENT_BUS_WF_ID,
                 task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
             )
         else:
@@ -127,13 +145,10 @@ async def _risk_check(session: aiohttp.ClientSession, intent: Dict[str, Any]) ->
     return False
 
 
-async def _broadcast_intent(session: aiohttp.ClientSession, intent: Dict[str, Any]) -> None:
-    """Send approved intent to the IntentBus workflow."""
-    await _post(
-        session,
-        f"http://{MCP_HOST}:{MCP_PORT}/tools/IntentBus",
-        {"intent": intent},
-    )
+async def _broadcast_intent(client: Client, intent: Dict[str, Any]) -> None:
+    """Publish ``intent`` to the IntentBus workflow."""
+    handle = client.get_workflow_handle(INTENT_BUS_WF_ID)
+    await handle.signal("publish", intent)
 
 
 async def _poll_signals(session: aiohttp.ClientSession) -> None:
@@ -164,7 +179,7 @@ async def _poll_signals(session: aiohttp.ClientSession) -> None:
             approved = await _risk_check(session, intent)
             if approved:
                 enqueue_intent(intent)
-                await _broadcast_intent(session, intent)
+                await _broadcast_intent(client, intent)
                 await handle.signal("record_intent", intent)
                 logger.info("Enqueued intent: %s", intent)
             else:
@@ -180,6 +195,7 @@ async def main() -> None:
     timeout = aiohttp.ClientTimeout(total=30)
     client = await _get_client()
     await _ensure_workflow(client)
+    await _ensure_intent_bus(client)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         vec_task = asyncio.create_task(_poll_vectors(session))
         sig_task = asyncio.create_task(_poll_signals(session))

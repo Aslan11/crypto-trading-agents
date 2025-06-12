@@ -4,7 +4,11 @@ import asyncio
 import logging
 import os
 import re
-from typing import List
+from typing import List, Dict
+
+from temporalio.client import Client
+from temporalio.service import RPCError, RPCStatusCode
+from agents.workflows import ExecutionLedgerWorkflow
 
 import aiohttp
 
@@ -23,17 +27,70 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+LEDGER_WF_ID = "mock-ledger"
+TEMPORAL_CLIENT: Client | None = None
+
 
 def _parse_symbols(text: str) -> List[str]:
     """Return list of crypto symbols in ``text``."""
     return re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text.upper())
 
 
-async def _prompt_user() -> List[str]:
+async def _get_client() -> Client:
+    """Return connected Temporal client."""
+    global TEMPORAL_CLIENT
+    if TEMPORAL_CLIENT is None:
+        address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+        namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+        TEMPORAL_CLIENT = await Client.connect(address, namespace=namespace)
+    return TEMPORAL_CLIENT
+
+
+async def _ensure_ledger(client: Client) -> None:
+    """Ensure the ledger workflow is running."""
+    handle = client.get_workflow_handle(LEDGER_WF_ID)
+    try:
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=LEDGER_WF_ID,
+                task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+            )
+        else:
+            raise
+
+
+async def _get_status() -> Dict[str, object]:
+    """Return current cash, positions and PnL from the ledger."""
+    client = await _get_client()
+    await _ensure_ledger(client)
+    handle = client.get_workflow_handle(LEDGER_WF_ID)
+    cash = await handle.query("get_cash")
+    pnl = await handle.query("get_pnl")
+    try:
+        positions = await handle.query("get_positions")
+    except Exception:  # pragma: no cover - older workflow version
+        positions = {}
+    return {"cash": cash, "pnl": pnl, "positions": positions}
+
+
+async def _print_status() -> None:
+    status = await _get_status()
+    cash = status.get("cash", 0.0)
+    pnl = status.get("pnl", 0.0)
+    positions = status.get("positions", {})
+    print(f"Cash: ${cash:.2f}")
+    print(f"Holdings: {positions}")
+    print(f"Gains/Losses: ${pnl:.2f}")
+
+
+async def _prompt_user() -> tuple[List[str], list[dict]]:
     """Interact with the user via an LLM to gather crypto symbols."""
     if openai is None:
         print("openai package not installed")
-        return []
+        return [], []
 
     client = openai.AsyncOpenAI()
     messages = [
@@ -60,11 +117,12 @@ async def _prompt_user() -> List[str]:
         logger.error("LLM call failed: %s", exc)
         reply = ""
     print(reply)
+    messages.append({"role": "assistant", "content": reply})
 
     symbols = _parse_symbols(user_msg) or _parse_symbols(reply)
     if not symbols:
         print("No valid crypto symbols found. Exiting.")
-    return symbols
+    return symbols, messages
 
 
 async def _start_stream(symbols: List[str]) -> None:
@@ -86,11 +144,42 @@ async def _start_stream(symbols: List[str]) -> None:
             logger.error("HTTP request failed: %s", exc)
 
 
+async def _chat_loop(messages: list[dict]) -> None:
+    """Interactive chat loop for the broker."""
+    if openai is None:
+        return
+
+    client = openai.AsyncOpenAI()
+    print("Type 'status' to view portfolio or 'quit' to exit.")
+    while True:
+        user_msg = input("> ").strip()
+        if not user_msg:
+            continue
+        if user_msg.lower() in {"quit", "exit"}:
+            break
+        if user_msg.lower().startswith("status"):
+            await _print_status()
+            continue
+        messages.append({"role": "user", "content": user_msg})
+        try:
+            resp = await client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=messages,
+            )
+            reply = resp.choices[0].message.content.strip()
+        except Exception as exc:  # pragma: no cover - network issues
+            logger.error("LLM call failed: %s", exc)
+            reply = ""
+        print(reply)
+        messages.append({"role": "assistant", "content": reply})
+
+
 async def main() -> None:
-    symbols = await _prompt_user()
+    symbols, messages = await _prompt_user()
     if not symbols:
         return
     await _start_stream(symbols)
+    await _chat_loop(messages)
 
 
 if __name__ == "__main__":

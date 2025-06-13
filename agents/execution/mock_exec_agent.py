@@ -12,7 +12,7 @@ from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 from agents.workflows import ExecutionLedgerWorkflow
 from tools.execution import PlaceMockOrder
-from agents.utils import print_banner
+from agents.utils import print_banner, format_log
 
 try:
     from agents.shared_bus import APPROVED_INTENT_QUEUE
@@ -74,7 +74,10 @@ async def _update_ledger(fill: dict) -> None:
     await _ensure_workflow(client)
     handle = client.get_workflow_handle(LEDGER_WF_ID)
     await handle.signal("record_fill", fill)
-    logger.info("Recorded execution to ledger: %s", fill)
+    logger.info(
+        "Recorded execution to ledger:\n%s",
+        format_log(fill),
+    )
 
 
 async def _place_order(_session: aiohttp.ClientSession | None, intent: dict) -> None:

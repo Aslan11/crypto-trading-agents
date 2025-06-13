@@ -13,6 +13,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
+from agents.utils import format_log
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException
@@ -137,7 +138,11 @@ class StartWorkflowResponse(BaseModel):
 async def start_tool(request: Request) -> Response:
     body = await request.json()
     tool_name = request.path_params["tool_name"]
-    logger.info("Request to start tool %s with payload %s", tool_name, body)
+    logger.info(
+        "Request to start tool %s with payload:\n%s",
+        tool_name,
+        format_log(body),
+    )
     wf = _resolve_workflow(tool_name)
     try:
         args = _prepare_args(wf, body if isinstance(body, dict) else {})
@@ -145,7 +150,11 @@ async def start_tool(request: Request) -> Response:
         logger.error("Invalid payload for %s: %s", tool_name, exc)
         return JSONResponse({"detail": str(exc)}, status_code=422)
     workflow_id = f"{tool_name}-{secrets.token_hex(8)}"
-    logger.info("Starting workflow %s with args %s", workflow_id, args)
+    logger.info(
+        "Starting workflow %s with args:\n%s",
+        workflow_id,
+        format_log(args),
+    )
     temporal_client = await get_temporal_client()
     handle = await temporal_client.start_workflow(
         wf.run if hasattr(wf, "run") else wf,

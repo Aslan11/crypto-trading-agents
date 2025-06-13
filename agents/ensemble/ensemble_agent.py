@@ -21,7 +21,7 @@ from agents.shared_bus import enqueue_intent
 from agents.workflows import EnsembleWorkflow
 from tools.intent_bus import IntentBus
 from tools.risk import PreTradeRiskCheck
-from agents.utils import print_banner
+from agents.utils import print_banner, format_log
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -265,9 +265,15 @@ async def _poll_signals(session: aiohttp.ClientSession) -> None:
                     enqueue_intent(intent)
                     await _broadcast_intent(client, intent)
                     await handle.signal("record_intent", intent)
-                    logger.info("Enqueued intent: %s", intent)
+                    logger.info(
+                        "Enqueued intent:\n%s",
+                        format_log(intent),
+                    )
                 else:
-                    logger.info("Intent rejected: %s", intent)
+                    logger.info(
+                        "Intent rejected:\n%s",
+                        format_log(intent),
+                    )
                 cursor = max(cursor, ts)
             except RPCError as err:  # pragma: no cover - network failures
                 logger.warning(

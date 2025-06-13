@@ -24,7 +24,7 @@ def _add_project_root_to_path() -> None:
 _add_project_root_to_path()
 from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
 from agents.workflows import MomentumWorkflow  # noqa: E402
-from agents.utils import print_banner
+from agents.utils import print_banner, format_log
 from temporalio.client import Client  # noqa: E402
 from temporalio.service import RPCError, RPCStatusCode  # noqa: E402
 
@@ -157,7 +157,10 @@ async def _run_tool(session: aiohttp.ClientSession, payload: dict) -> None:
         return
     wf_id, run_id = wf
     result = await _poll_tool(session, wf_id, run_id)
-    logger.info("Tool completed with result: %s", result)
+    logger.info(
+        "Tool completed with result:\n%s",
+        format_log(result),
+    )
     if result:
         await _record_signal(session, result)
 

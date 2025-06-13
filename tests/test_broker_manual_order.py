@@ -39,3 +39,19 @@ async def test_parse_order_llm(monkeypatch):
 async def test_parse_order_none(monkeypatch):
     monkeypatch.setattr(ba, "openai", DummyOpenAI("{}"))
     assert await ba._parse_order("what's the weather?") is None
+
+
+def test_parse_order_simple_with_price():
+    intent = ba._parse_order_simple("BUY BTC/USD 2 40000")
+    assert intent["side"] == "BUY"
+    assert intent["symbol"] == "BTC/USD"
+    assert intent["qty"] == 2
+    assert intent["price"] == 40000
+
+
+def test_parse_order_simple_market():
+    intent = ba._parse_order_simple("SELL ETH/USD 3")
+    assert intent["side"] == "SELL"
+    assert intent["symbol"] == "ETH/USD"
+    assert intent["qty"] == 3
+    assert intent["price"] is None

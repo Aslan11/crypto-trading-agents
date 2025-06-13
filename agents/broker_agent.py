@@ -249,7 +249,7 @@ async def _start_stream(symbols: List[str]) -> None:
 def _parse_order_simple(text: str) -> dict | None:
     """Quickly parse ``text`` for ``BUY``/``SELL`` orders."""
     parts = text.split()
-    if len(parts) != 4:
+    if len(parts) not in {3, 4}:
         return None
     side = parts[0].upper()
     if side not in {"BUY", "SELL"}:
@@ -257,9 +257,14 @@ def _parse_order_simple(text: str) -> dict | None:
     symbol = parts[1].upper()
     try:
         qty = float(parts[2])
-        price = float(parts[3])
     except ValueError:
         return None
+    price: float | None = None
+    if len(parts) == 4:
+        try:
+            price = float(parts[3])
+        except ValueError:
+            return None
     return {
         "symbol": symbol,
         "side": side,
@@ -340,9 +345,14 @@ async def _chat_loop(messages: list[dict]) -> None:
         order = await _parse_order(user_msg)
         if order:
             enqueue_intent(order)
-            print(
-                f"Enqueued {order['side']} {order['qty']} {order['symbol']} @ {order['price']}"
-            )
+            if order["price"] is None:
+                print(
+                    f"Enqueued {order['side']} {order['qty']} {order['symbol']} @ market"
+                )
+            else:
+                print(
+                    f"Enqueued {order['side']} {order['qty']} {order['symbol']} @ {order['price']}"
+                )
             continue
         messages.append({"role": "user", "content": user_msg})
         try:

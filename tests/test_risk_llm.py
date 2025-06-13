@@ -15,11 +15,17 @@ class DummyClient:
         return self.handle
 
 class DummyResp:
-    def __init__(self, text):
-        self.choices = [type("Choice", (), {"message": type("Msg", (), {"content": text})()})]
+    def __init__(self, text: str):
+        self.choices = [
+            type(
+                "Choice",
+                (),
+                {"message": type("Msg", (), {"content": text})()},
+            )
+        ]
 
 class DummyOpenAIClient:
-    def __init__(self, text):
+    def __init__(self, text: str):
         self.text = text
         self.chat = type("Chat", (), {"completions": self})()
     async def create(self, *args, **kwargs):
@@ -41,7 +47,7 @@ async def fake_get_ledger_status(_client):
 async def test_risk_check_llm_approve(monkeypatch):
     monkeypatch.setattr(ea, "_get_client", fake_get_client)
     monkeypatch.setattr(ea, "_get_ledger_status", fake_get_ledger_status)
-    monkeypatch.setattr(ea, "openai", DummyOpenAI("APPROVE"))
+    monkeypatch.setattr(ea, "openai", DummyOpenAI("APPROVE: ok"))
     approved = await ea._risk_check(None, {"symbol": "BTC/USD", "side": "BUY", "qty": 1, "price": 10, "ts": 1})
     assert approved
 
@@ -49,6 +55,6 @@ async def test_risk_check_llm_approve(monkeypatch):
 async def test_risk_check_llm_reject(monkeypatch):
     monkeypatch.setattr(ea, "_get_client", fake_get_client)
     monkeypatch.setattr(ea, "_get_ledger_status", fake_get_ledger_status)
-    monkeypatch.setattr(ea, "openai", DummyOpenAI("REJECT"))
+    monkeypatch.setattr(ea, "openai", DummyOpenAI("REJECT: bad"))
     approved = await ea._risk_check(None, {"symbol": "BTC/USD", "side": "BUY", "qty": 1, "price": 10, "ts": 1})
     assert not approved

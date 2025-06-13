@@ -193,8 +193,15 @@ async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, 
         "Positions: {positions}\n"
         "Intent: {intent}\n"
         "Risk result: {risk}\n"
-        "Respond with APPROVE or REJECT."
-    ).format(cash=status.get("cash", 0.0), positions=status.get("positions"), intent=intent, risk=result)
+        "Respond with APPROVE or REJECT followed by a colon and the reason."
+    ).format(
+        cash=status.get("cash", 0.0),
+        positions=status.get("positions"),
+        intent=intent,
+        risk=result,
+    )
+
+    logger.info("Sending prompt to ChatGPT:\n%s", prompt)
 
     try:
         client_ai = openai.AsyncOpenAI()
@@ -202,7 +209,15 @@ async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, 
             model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
         )
-        decision = resp.choices[0].message.content.strip().upper()
+        reply = resp.choices[0].message.content.strip()
+        if ":" in reply:
+            decision_word, reason = reply.split(":", 1)
+            decision = decision_word.strip().upper()
+            reason = reason.strip()
+        else:
+            decision = reply.strip().upper()
+            reason = ""
+        logger.info("ChatGPT replied: %s - %s", decision, reason)
         return "APPROVE" in decision
     except Exception as exc:  # pragma: no cover - network errors
         logger.error("LLM decision failed: %s", exc)

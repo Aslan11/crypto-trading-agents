@@ -74,6 +74,7 @@ async def _update_ledger(fill: dict) -> None:
     await _ensure_workflow(client)
     handle = client.get_workflow_handle(LEDGER_WF_ID)
     await handle.signal("record_fill", fill)
+    logger.info("Recorded execution to ledger: %s", fill)
 
 
 async def _place_order(_session: aiohttp.ClientSession | None, intent: dict) -> None:

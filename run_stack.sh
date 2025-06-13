@@ -29,7 +29,7 @@ fi
 # │ worker/main.py│ feature_engineering_agent.py │
 # ├───────────────┼────────────────────────┤
 # │ Pane 5        │ Pane 4                 │
-# │ (shell)       │ momentum_agent.py      │
+# │ (shell)       │ momentum_service.py      │
 # ├───────────────┼────────────────────────┤
 # │ Pane 6        │ Pane 7                 │
 # │ shared_bus.py │ execution/mock_exec_agent.py │
@@ -62,7 +62,7 @@ tmux send-keys    -t $FE_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPAT
 # 5. Pane 4 – momentum strategy agent (split Pane 3 vertically ↓)
 tmux select-pane  -t $FE_PANE
 MOM_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $MOM_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/strategies/momentum_agent.py' C-m
+tmux send-keys    -t $MOM_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/strategies/momentum_service.py' C-m
 
 tmux select-layout -t $SESSION:0 tiled
 

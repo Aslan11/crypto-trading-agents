@@ -1,4 +1,4 @@
-"""Simple momentum trading strategy agent."""
+"""Simple momentum trading strategy service."""
 
 from __future__ import annotations
 
@@ -163,9 +163,9 @@ async def _run_tool(session: aiohttp.ClientSession, payload: dict) -> None:
 
 
 async def main() -> None:
-    """Run the momentum strategy agent."""
+    """Run the momentum strategy service."""
     print_banner(
-        "Momentum Strategy Agent",
+        "Momentum Strategy Service",
         "Emit buy/sell signals via SMA crossover",
     )
 
@@ -219,7 +219,7 @@ async def main() -> None:
                 await _ensure_workflow(client, symbol)
                 handles[symbol] = client.get_workflow_handle(_wf_id(symbol))
                 last_sig[symbol] = 0
-                logger.info("Momentum agent now watching %s", symbol)
+                logger.info("Momentum service now watching %s", symbol)
 
             handle = handles[symbol]
             await handle.signal("add_vector", vector)

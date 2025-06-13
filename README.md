@@ -109,7 +109,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    ```
 3. `SubscribeCEXStream` records ticks to the `market_tick` signal.
 4. The feature engineering agent processes those ticks via `ComputeFeatureVector`.
-5. The momentum agent emits buy/sell signals using `EvaluateStrategyMomentum` and continues processing while the tool runs.
+5. The momentum service emits buy/sell signals using `EvaluateStrategyMomentum` and continues processing while the tool runs.
 6. The ensemble agent approves intents with `PreTradeRiskCheck` and publishes them to the `IntentBus`.
 7. The mock execution agent picks up approved intents and prints simulated order fills.
 

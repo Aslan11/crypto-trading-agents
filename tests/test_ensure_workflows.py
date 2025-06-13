@@ -12,7 +12,7 @@ from agents.ensemble.ensemble_agent import (
     _ensure_workflow as ensure_ensemble,
     ENSEMBLE_WF_ID,
 )
-from agents.strategies.momentum_agent import (
+from agents.strategies.momentum_service import (
     _ensure_workflow as ensure_momentum,
     MOMENTUM_WF_ID,
 )

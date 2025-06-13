@@ -122,10 +122,11 @@ async def _print_status() -> None:
 
 
 async def _prompt_user() -> tuple[List[str], list[dict]]:
-    """Interact with the user via an LLM to gather crypto symbols."""
+    """Prompt the user for pairs or accept LLM suggestions."""
     if openai is None:
         print("openai package not installed")
-        return [], []
+        user_msg = input("Pairs to trade (e.g. BTC/USD,ETH/USD): ")
+        return _parse_symbols(user_msg), []
 
     client = openai.AsyncOpenAI()
     messages = [
@@ -138,14 +139,44 @@ async def _prompt_user() -> tuple[List[str], list[dict]]:
         }
     ]
 
-    prompt = "Which cryptocurrency pairs would you like to trade? e.g. BTC/USD, ETH/USD"
-    print(prompt)
-    user_msg = input("> ").strip()
-    messages.append({"role": "user", "content": user_msg})
-
+    suggest_q = (
+        "Which cryptocurrency pairs would you recommend for a momentum "
+        "trading strategy? Respond with a comma separated list like "
+        "BTC/USD,ETH/USD."
+    )
+    messages.append({"role": "user", "content": suggest_q})
     try:
         resp = await client.chat.completions.create(
-            model=OPENAI_MODEL, messages=messages
+            model=OPENAI_MODEL,
+            messages=messages,
+        )
+        suggest_reply = resp.choices[0].message.content.strip()
+    except Exception as exc:  # pragma: no cover - network issues
+        logger.error("LLM call failed: %s", exc)
+        suggest_reply = ""
+    print(suggest_reply)
+    messages.append({"role": "assistant", "content": suggest_reply})
+    suggested = _parse_symbols(suggest_reply)
+
+    prompt = (
+        "Press Enter to accept these pairs or provide your own "
+        "(e.g. BTC/USD,ETH/USD)"
+    )
+    print(prompt)
+    user_input = input("> ").strip()
+
+    if not user_input:
+        symbols = suggested
+        user_msg = "I'll trade: " + ",".join(symbols)
+    else:
+        symbols = _parse_symbols(user_input)
+        user_msg = user_input
+
+    messages.append({"role": "user", "content": user_msg})
+    try:
+        resp = await client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=messages,
         )
         reply = resp.choices[0].message.content.strip()
     except Exception as exc:  # pragma: no cover - network issues
@@ -154,7 +185,6 @@ async def _prompt_user() -> tuple[List[str], list[dict]]:
     print(reply)
     messages.append({"role": "assistant", "content": reply})
 
-    symbols = _parse_symbols(user_msg) or _parse_symbols(reply)
     if not symbols:
         print("No valid crypto symbols found. Exiting.")
     return symbols, messages

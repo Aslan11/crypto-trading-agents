@@ -33,7 +33,7 @@ if str(root_dir) not in sys.path:
 
 # Global Temporal client and workflow registry
 client: Client | None = None
-workflows: dict[str, Callable[..., Any]]
+workflows: dict[str, Callable[..., Any]] = {}
 signal_log: dict[str, list[dict]] = {}
 _client_lock = asyncio.Lock()
 
@@ -77,7 +77,7 @@ def _discover_workflows() -> dict[str, Callable[..., Any]]:
 
 def _resolve_workflow(name: str) -> Callable[..., Any]:
     """Return workflow callable for ``name`` or raise 404."""
-    wf = _discover_workflows().get(name)
+    wf = workflows.get(name)
     if wf is None:
         logger.error("Unknown tool requested: %s", name)
         raise HTTPException(status_code=404, detail="Unknown tool")

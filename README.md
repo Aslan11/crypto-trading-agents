@@ -126,7 +126,7 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.
-- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK. Use `subscribe_vectors(symbol)` from `agents.feature_engineering_agent` to stream processed feature rows into your strategy logic.
+- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK. Use `subscribe_vectors(symbol)` from `agents.feature_engineering_service` to stream processed feature rows into your strategy logic.
 - Unit-test determinism with `make replay` to replay recent workflows.
 - Hot-reload – both MCP server and Python workers use `--watch` for instant feedback.
 - Deploy – push to `main`; CI builds a Docker image and promotes to your Temporal namespace.

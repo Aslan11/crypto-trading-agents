@@ -22,7 +22,7 @@ def _add_project_root_to_path() -> None:
 
 
 _add_project_root_to_path()
-from agents.feature_engineering_agent import subscribe_vectors  # noqa: E402
+from agents.feature_engineering_service import subscribe_vectors  # noqa: E402
 from agents.workflows import MomentumWorkflow  # noqa: E402
 from agents.utils import print_banner, format_log
 from temporalio.client import Client  # noqa: E402

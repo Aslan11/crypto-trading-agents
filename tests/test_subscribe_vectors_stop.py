@@ -1,6 +1,6 @@
 import pytest
 
-from agents.feature_engineering_agent import (
+from agents.feature_engineering_service import (
     subscribe_vectors,
     STOP_EVENT,
     _store_vector,

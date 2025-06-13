@@ -52,7 +52,7 @@ tmux send-keys    -t $WORKER_PANE 'source .venv/bin/activate && python worker/ma
 # 3. Pane 2 – MCP server (split Pane 0 horizontally →)
 tmux select-pane  -t $SESSION:0.0
 MCP_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $MCP_PANE 'source .venv/bin/activate && python mcp_server/app.py' C-m
+tmux send-keys    -t $MCP_PANE 'source .venv/bin/activate && PYTHONPATH="$PWD" python mcp_server/app.py' C-m
 
 # 4. Pane 3 – feature engineering agent (split Pane 1 horizontally →)
 tmux select-pane  -t $WORKER_PANE
@@ -69,7 +69,7 @@ tmux select-layout -t $SESSION:0 tiled
 # 6. Pane 5 – broker agent (split Pane 4 horizontally ←)
 tmux select-pane  -t $MOM_PANE
 BROKER_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $BROKER_PANE 'sleep 3 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/broker_agent.py' C-m
+tmux send-keys    -t $BROKER_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/broker_agent.py' C-m
 
 # 7. Pane 6 – blank shell (split Pane 5 vertically ↓)
 tmux select-pane  -t $BROKER_PANE

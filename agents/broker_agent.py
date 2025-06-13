@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
+from datetime import datetime
 from typing import List, Dict
 
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 from agents.workflows import ExecutionLedgerWorkflow
 from agents.utils import print_banner
+from agents.shared_bus import enqueue_intent
 
 import aiohttp
 
@@ -243,6 +246,68 @@ async def _start_stream(symbols: List[str]) -> None:
             logger.error("HTTP request failed: %s", exc)
 
 
+def _parse_order_simple(text: str) -> dict | None:
+    """Quickly parse ``text`` for ``BUY``/``SELL`` orders."""
+    parts = text.split()
+    if len(parts) != 4:
+        return None
+    side = parts[0].upper()
+    if side not in {"BUY", "SELL"}:
+        return None
+    symbol = parts[1].upper()
+    try:
+        qty = float(parts[2])
+        price = float(parts[3])
+    except ValueError:
+        return None
+    return {
+        "symbol": symbol,
+        "side": side,
+        "qty": qty,
+        "price": price,
+        "ts": int(datetime.utcnow().timestamp()),
+    }
+
+
+async def _parse_order(text: str) -> dict | None:
+    """Parse a natural language order using the LLM if available."""
+    intent = _parse_order_simple(text)
+    if intent or openai is None:
+        return intent
+
+    prompt = (
+        "Extract a cryptocurrency order from the text. "
+        "Return ONLY JSON with keys: side, symbol, qty, price."
+    )
+
+    try:
+        client_ai = openai.AsyncOpenAI()
+        resp = await client_ai.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text},
+            ],
+            temperature=0,
+        )
+        data = json.loads(resp.choices[0].message.content.strip())
+        side = data.get("side", "").upper()
+        symbol = data.get("symbol", "").upper()
+        qty = float(data.get("qty"))
+        price = float(data.get("price"))
+        if side in {"BUY", "SELL"} and symbol:
+            return {
+                "symbol": symbol,
+                "side": side,
+                "qty": qty,
+                "price": price,
+                "ts": int(datetime.utcnow().timestamp()),
+            }
+    except Exception as exc:  # pragma: no cover - network or parse errors
+        logger.error("Order parsing failed: %s", exc)
+    return None
+
+
 async def _chat_loop(messages: list[dict]) -> None:
     """Interactive chat loop for the broker."""
     if openai is None:
@@ -250,7 +315,9 @@ async def _chat_loop(messages: list[dict]) -> None:
 
     client = openai.AsyncOpenAI()
     print(
-        "Type 'status' to view portfolio, 'add <SYM>' to start a new stream, or 'quit' to exit."
+        "Type 'status' to view portfolio, 'add <SYM>' to start a new stream,\n"
+        "or simply tell me in plain language when you want to buy or sell.\n"
+        "Type 'quit' to exit."
     )
     while True:
         user_msg = input("> ").strip()
@@ -270,6 +337,13 @@ async def _chat_loop(messages: list[dict]) -> None:
                 else:
                     await _start_stream(symbols)
                 continue
+        order = await _parse_order(user_msg)
+        if order:
+            enqueue_intent(order)
+            print(
+                f"Enqueued {order['side']} {order['qty']} {order['symbol']} @ {order['price']}"
+            )
+            continue
         messages.append({"role": "user", "content": user_msg})
         try:
             resp = await client.chat.completions.create(

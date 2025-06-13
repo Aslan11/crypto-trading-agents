@@ -21,6 +21,25 @@ VECTOR_HISTORY_LIMIT = int(os.environ.get("VECTOR_HISTORY_LIMIT", "9000"))
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
+# Reused HTTP session for posting feature vectors
+_session: aiohttp.ClientSession | None = None
+
+
+async def _get_session() -> aiohttp.ClientSession:
+    """Return the shared ``ClientSession`` creating it if needed."""
+    global _session
+    if _session is None or _session.closed:
+        timeout = aiohttp.ClientTimeout(total=5)
+        _session = aiohttp.ClientSession(timeout=timeout)
+    return _session
+
+
+async def close_session() -> None:
+    """Close the shared HTTP session if it exists."""
+    global _session
+    if _session is not None and not _session.closed:
+        await _session.close()
+
 
 @activity.defn
 def compute_indicators(ticks: List[dict]) -> dict:
@@ -81,12 +100,11 @@ def compute_indicators(ticks: List[dict]) -> dict:
 async def record_vector(vector: dict) -> None:
     """Send feature vector payload to MCP server signal log."""
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
-    timeout = aiohttp.ClientTimeout(total=5)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        try:
-            await session.post(url, json=vector)
-        except Exception:
-            pass
+    session = await _get_session()
+    try:
+        await session.post(url, json=vector)
+    except Exception:
+        pass
 
 
 @workflow.defn

@@ -25,6 +25,23 @@ MCP_PORT = os.environ.get("MCP_PORT", "8080")
 STREAM_CONTINUE_EVERY = int(os.environ.get("STREAM_CONTINUE_EVERY", "3600"))
 STREAM_HISTORY_LIMIT = int(os.environ.get("STREAM_HISTORY_LIMIT", "9000"))
 
+# Shared session for sending tick updates
+_session: aiohttp.ClientSession | None = None
+
+
+async def _get_session() -> aiohttp.ClientSession:
+    global _session
+    if _session is None or _session.closed:
+        timeout = aiohttp.ClientTimeout(total=5)
+        _session = aiohttp.ClientSession(timeout=timeout)
+    return _session
+
+
+async def close_session() -> None:
+    global _session
+    if _session is not None and not _session.closed:
+        await _session.close()
+
 
 @activity.defn
 async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
@@ -43,12 +60,11 @@ async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
 async def record_tick(tick: dict) -> None:
     """Send tick payload to MCP server signal log."""
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
-    timeout = aiohttp.ClientTimeout(total=5)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        try:
-            await session.post(url, json=tick)
-        except Exception:
-            pass
+    session = await _get_session()
+    try:
+        await session.post(url, json=tick)
+    except Exception:
+        pass
 
 
 @workflow.defn

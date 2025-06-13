@@ -10,17 +10,33 @@ from temporalio import activity, workflow
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
+# Shared session for posting intents
+_session: aiohttp.ClientSession | None = None
+
+
+async def _get_session() -> aiohttp.ClientSession:
+    global _session
+    if _session is None or _session.closed:
+        timeout = aiohttp.ClientTimeout(total=5)
+        _session = aiohttp.ClientSession(timeout=timeout)
+    return _session
+
+
+async def close_session() -> None:
+    global _session
+    if _session is not None and not _session.closed:
+        await _session.close()
+
 
 @activity.defn
 async def emit_intent(intent: dict) -> None:
     """Send approved intent to the MCP signal log."""
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/approved_intent"
-    timeout = aiohttp.ClientTimeout(total=5)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        try:
-            await session.post(url, json=intent)
-        except Exception:
-            pass
+    session = await _get_session()
+    try:
+        await session.post(url, json=intent)
+    except Exception:
+        pass
 
 
 @workflow.defn

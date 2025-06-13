@@ -133,6 +133,7 @@ class ExecutionLedgerWorkflow:
         self.cash = Decimal("250000")
         self.positions: Dict[str, Decimal] = {}
         self.last_price: Dict[str, Decimal] = {}
+        self.entry_price: Dict[str, Decimal] = {}
         self.fill_count = 0
 
     @workflow.signal
@@ -143,12 +144,24 @@ class ExecutionLedgerWorkflow:
         price = Decimal(str(fill["fill_price"]))
         cost = Decimal(str(fill["cost"]))
         self.last_price[symbol] = price
+        current_qty = self.positions.get(symbol, Decimal("0"))
         if side == "BUY":
             self.cash -= cost
-            self.positions[symbol] = self.positions.get(symbol, Decimal("0")) + qty
+            new_qty = current_qty + qty
+            avg_price = self.entry_price.get(symbol, Decimal("0"))
+            if new_qty > 0:
+                self.entry_price[symbol] = (
+                    (avg_price * current_qty + price * qty) / new_qty
+                )
+            self.positions[symbol] = new_qty
         else:
             self.cash += cost
-            self.positions[symbol] = self.positions.get(symbol, Decimal("0")) - qty
+            new_qty = current_qty - qty
+            if new_qty <= 0:
+                self.positions.pop(symbol, None)
+                self.entry_price.pop(symbol, None)
+            else:
+                self.positions[symbol] = new_qty
         self.fill_count += 1
 
     @workflow.query
@@ -168,6 +181,11 @@ class ExecutionLedgerWorkflow:
     def get_positions(self) -> Dict[str, float]:
         """Return current position sizes as floats."""
         return {sym: float(q) for sym, q in self.positions.items()}
+
+    @workflow.query
+    def get_entry_prices(self) -> Dict[str, float]:
+        """Return weighted average entry price for each symbol."""
+        return {sym: float(p) for sym, p in self.entry_price.items()}
 
     @workflow.run
     async def run(self) -> None:

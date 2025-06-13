@@ -86,9 +86,11 @@ async def _get_status() -> Dict[str, object]:
     pnl = await handle.query("get_pnl")
     try:
         positions = await handle.query("get_positions")
+        entry_prices = await handle.query("get_entry_prices")
     except Exception:  # pragma: no cover - older workflow version
         positions = {}
-    return {"cash": cash, "pnl": pnl, "positions": positions}
+        entry_prices = {}
+    return {"cash": cash, "pnl": pnl, "positions": positions, "entry_prices": entry_prices}
 
 
 async def _format_status(status: Dict[str, object]) -> str:
@@ -96,10 +98,12 @@ async def _format_status(status: Dict[str, object]) -> str:
     cash = status.get("cash", 0.0)
     pnl = status.get("pnl", 0.0)
     positions = status.get("positions", {})
+    entry_prices = status.get("entry_prices", {})
 
     default = (
         f"Cash: ${cash:.2f}\n"
         f"Holdings: {positions}\n"
+        f"Entry Prices: {entry_prices}\n"
         f"Gains/Losses: ${pnl:.2f}"
     )
 

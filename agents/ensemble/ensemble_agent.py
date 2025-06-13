@@ -103,9 +103,11 @@ async def _get_ledger_status(client: Client) -> Dict[str, Any]:
     cash = await handle.query("get_cash")
     try:
         positions = await handle.query("get_positions")
+        entry_prices = await handle.query("get_entry_prices")
     except Exception:  # pragma: no cover - older workflow version
         positions = {}
-    return {"cash": cash, "positions": positions}
+        entry_prices = {}
+    return {"cash": cash, "positions": positions, "entry_prices": entry_prices}
 
 
 async def _fetch(
@@ -191,12 +193,14 @@ async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, 
     prompt = (
         "Current cash: ${cash:.2f}\n"
         "Positions: {positions}\n"
+        "Entry prices: {entry_prices}\n"
         "Intent: {intent}\n"
         "Risk result: {risk}\n"
         "Respond with APPROVE or REJECT followed by a colon and the reason."
     ).format(
         cash=status.get("cash", 0.0),
         positions=status.get("positions"),
+        entry_prices=status.get("entry_prices"),
         intent=intent,
         risk=result,
     )

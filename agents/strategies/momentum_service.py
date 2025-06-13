@@ -174,7 +174,6 @@ async def main() -> None:
 
     async def _subscribe_all_vectors() -> AsyncIterator[tuple[str, dict]]:
         cursor = 0
-        backoff = 1
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
         timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -183,7 +182,6 @@ async def main() -> None:
                     async with session.get(url, params={"after": cursor}) as resp:
                         if resp.status == 200:
                             events = await resp.json()
-                            backoff = 1
                         else:
                             logger.warning("Vector poll error %s", resp.status)
                             events = []
@@ -192,11 +190,9 @@ async def main() -> None:
                     events = []
 
                 if not events:
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, 30)
+                    await asyncio.sleep(1)
                     continue
 
-                backoff = 1
                 for evt in events:
                     if STOP_EVENT.is_set():
                         return

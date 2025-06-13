@@ -176,10 +176,23 @@ async def main() -> None:
     loop.add_signal_handler(signal.SIGINT, _handle_sigint)
 
     async def _subscribe_all_vectors() -> AsyncIterator[tuple[str, dict]]:
+        """Yield all feature vectors from the current tail of the log."""
         cursor = 0
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
         timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Skip historical data so we start from the latest available vector
+            try:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        events = await resp.json()
+                        if events:
+                            cursor = max(e.get("ts", 0) for e in events)
+                    else:
+                        logger.warning("Vector poll error %s", resp.status)
+            except Exception as exc:
+                logger.error("Vector poll failed: %s", exc)
+
             while not STOP_EVENT.is_set():
                 try:
                     async with session.get(url, params={"after": cursor}) as resp:

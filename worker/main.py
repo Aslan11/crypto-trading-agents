@@ -79,6 +79,16 @@ async def main() -> None:
     client = await Client.connect(address, namespace=namespace)
     task_queue = os.environ.get("TASK_QUEUE", "mcp-tools")
 
+    from tools import feature_engineering, market_data, intent_bus
+
+    async def _shutdown() -> None:
+        await asyncio.gather(
+            feature_engineering.close_session(),
+            market_data.close_session(),
+            intent_bus.close_session(),
+            return_exceptions=True,
+        )
+
     with ThreadPoolExecutor() as activity_executor:
         worker = Worker(
             client,
@@ -89,7 +99,10 @@ async def main() -> None:
             workflow_runner=UnsandboxedWorkflowRunner(),
         )
 
-        await worker.run()
+        try:
+            await worker.run()
+        finally:
+            await _shutdown()
 
 
 if __name__ == "__main__":

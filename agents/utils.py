@@ -11,5 +11,16 @@ def print_banner(name: str, purpose: str) -> None:
         print(f"* {line.ljust(width - 4)} *")
     print(border)
 
-__all__ = ["print_banner"]
+from pprint import pformat
+from typing import Any
+
+
+def format_log(data: Any) -> str:
+    """Return a pretty string representation of ``data`` for logging."""
+    if isinstance(data, str):
+        return data
+    return pformat(data, width=60)
+
+
+__all__ = ["print_banner", "format_log"]
 

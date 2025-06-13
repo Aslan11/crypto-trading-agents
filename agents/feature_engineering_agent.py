@@ -13,7 +13,7 @@ from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
 from agents.workflows import FeatureStoreWorkflow
-from agents.utils import print_banner
+from agents.utils import print_banner, format_log
 
 
 def _add_project_root_to_path() -> None:
@@ -172,7 +172,12 @@ async def _store_vector(symbol: str, ts: int, vector: dict) -> None:
     handle = client.get_workflow_handle(FEATURE_WF_ID)
     await handle.signal("add_vector", args=[symbol, ts, vector])
     if ts % LOG_EVERY == 0:
-        logger.info("Stored vector for %s @ %d: %s", symbol, ts, vector)
+        logger.info(
+            "Stored vector for %s @ %d:\n%s",
+            symbol,
+            ts,
+            format_log(vector),
+        )
 
 
 async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:

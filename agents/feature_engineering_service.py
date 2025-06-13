@@ -236,10 +236,10 @@ async def _shutdown() -> None:
 
 
 async def main() -> None:
-    """Run the feature engineering agent."""
+    """Run the Feature Engineering Service."""
 
     print_banner(
-        "Feature Engineering Agent",
+        "Feature Engineering Service",
         "Compute and store feature vectors",
     )
 

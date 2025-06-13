@@ -69,7 +69,7 @@ tmux select-layout -t $SESSION:0 tiled
 # 6. Pane 5 – broker agent (split Pane 4 horizontally ←)
 tmux select-pane  -t $MOM_PANE
 BROKER_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $BROKER_PANE 'sleep 3 && source .venv/bin/activate && python agents/broker_agent.py' C-m
+tmux send-keys    -t $BROKER_PANE 'sleep 3 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/broker_agent.py' C-m
 
 # 7. Pane 6 – blank shell (split Pane 5 vertically ↓)
 tmux select-pane  -t $BROKER_PANE

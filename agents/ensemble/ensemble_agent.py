@@ -10,6 +10,13 @@ import aiohttp
 
 import secrets
 
+try:
+    import openai
+except Exception:  # pragma: no cover - optional dependency
+    openai = None
+
+from agents.workflows import ExecutionLedgerWorkflow
+
 from agents.shared_bus import enqueue_intent
 from agents.workflows import EnsembleWorkflow
 from tools.intent_bus import IntentBus
@@ -22,6 +29,8 @@ MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 INTENT_QTY = float(os.environ.get("INTENT_QTY", "1"))
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
+LEDGER_WF_ID = "mock-ledger"
 
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -70,6 +79,33 @@ async def _ensure_intent_bus(client: Client) -> None:
             )
         else:
             raise
+
+
+async def _ensure_ledger(client: Client) -> None:
+    """Ensure the execution ledger workflow is running."""
+    handle = client.get_workflow_handle(LEDGER_WF_ID)
+    try:
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=LEDGER_WF_ID,
+                task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+            )
+        else:
+            raise
+
+
+async def _get_ledger_status(client: Client) -> Dict[str, Any]:
+    await _ensure_ledger(client)
+    handle = client.get_workflow_handle(LEDGER_WF_ID)
+    cash = await handle.query("get_cash")
+    try:
+        positions = await handle.query("get_positions")
+    except Exception:  # pragma: no cover - older workflow version
+        positions = {}
+    return {"cash": cash, "positions": positions}
 
 
 async def _fetch(
@@ -140,10 +176,37 @@ async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, 
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         )
         result = await handle.result()
-        return result.get("status") == "APPROVED"
     except Exception as exc:
         logger.error("Risk workflow failed: %s", exc)
         return False
+
+    if result.get("status") != "APPROVED":
+        return False
+
+    status = await _get_ledger_status(client)
+
+    if openai is None:
+        return True
+
+    prompt = (
+        "Current cash: ${cash:.2f}\n"
+        "Positions: {positions}\n"
+        "Intent: {intent}\n"
+        "Risk result: {risk}\n"
+        "Respond with APPROVE or REJECT."
+    ).format(cash=status.get("cash", 0.0), positions=status.get("positions"), intent=intent, risk=result)
+
+    try:
+        client_ai = openai.AsyncOpenAI()
+        resp = await client_ai.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        decision = resp.choices[0].message.content.strip().upper()
+        return "APPROVE" in decision
+    except Exception as exc:  # pragma: no cover - network errors
+        logger.error("LLM decision failed: %s", exc)
+        return True
 
 
 async def _broadcast_intent(client: Client, intent: Dict[str, Any]) -> None:

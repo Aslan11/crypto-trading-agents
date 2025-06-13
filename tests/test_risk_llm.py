@@ -41,7 +41,7 @@ async def fake_get_client():
     return DummyClient()
 
 async def fake_get_ledger_status(_client):
-    return {"cash": 1000.0, "positions": {}}
+    return {"cash": 1000.0, "positions": {}, "entry_prices": {}}
 
 @pytest.mark.asyncio
 async def test_risk_check_llm_approve(monkeypatch):

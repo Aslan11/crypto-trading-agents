@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass, field
+from bisect import insort_right, bisect_right
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Tuple
@@ -8,37 +10,43 @@ from typing import Dict, List, Tuple
 from temporalio import workflow
 
 
+@dataclass(order=True)
+class VectorEntry:
+    ts: int
+    data: Dict = field(compare=False)
+
+
 @workflow.defn
 class FeatureStoreWorkflow:
     """Persist feature vectors signalled from agents."""
 
     def __init__(self) -> None:
-        self.store: Dict[Tuple[str, int], Dict] = {}
+        self.store: Dict[str, List[VectorEntry]] = {}
         self.count = 0
 
     @workflow.signal
     def add_vector(self, symbol: str, ts: int, data: Dict) -> None:
-        self.store[(symbol, ts)] = data
+        vecs = self.store.setdefault(symbol, [])
+        insort_right(vecs, VectorEntry(ts, data))
         self.count += 1
 
     @workflow.query
     def latest_vector(self, symbol: str) -> Dict | None:
-        matches = [(ts, vec) for (sym, ts), vec in self.store.items() if sym == symbol]
-        if not matches:
+        vecs = self.store.get(symbol)
+        if not vecs:
             return None
-        ts, vec = max(matches, key=lambda kv: kv[0])
-        return vec
+        return vecs[-1].data
 
     @workflow.query
     def next_vector(self, symbol: str, after_ts: int) -> Tuple[int, Dict] | None:
-        items = sorted(
-            [(ts, v) for (sym, ts), v in self.store.items() if sym == symbol and ts > after_ts],
-            key=lambda kv: kv[0],
-        )
-        if not items:
+        vecs = self.store.get(symbol)
+        if not vecs:
             return None
-        ts, vec = items[0]
-        return ts, vec
+        idx = bisect_right(vecs, VectorEntry(after_ts, {}))
+        if idx >= len(vecs):
+            return None
+        entry = vecs[idx]
+        return entry.ts, entry.data
 
     @workflow.run
     async def run(self) -> None:

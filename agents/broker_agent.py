@@ -37,6 +37,20 @@ def _parse_symbols(text: str) -> List[str]:
     return re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text.upper())
 
 
+async def _filter_available_symbols(exchange: str, symbols: List[str]) -> List[str]:
+    """Return ``symbols`` that are tradable on ``exchange``."""
+    import ccxt.async_support as ccxt
+
+    exchange_cls = getattr(ccxt, exchange)
+    client = exchange_cls()
+    try:
+        await client.load_markets()
+        available = set(client.symbols)
+        return [sym for sym in symbols if sym in available]
+    finally:
+        await client.close()
+
+
 async def _get_client() -> Client:
     """Return connected Temporal client."""
     global TEMPORAL_CLIENT
@@ -141,8 +155,9 @@ async def _prompt_user() -> tuple[List[str], list[dict]]:
 
     suggest_q = (
         "Which cryptocurrency pairs would you recommend for a momentum "
-        "trading strategy? Respond with a comma separated list like "
-        "BTC/USD,ETH/USD."
+        "trading strategy on Coinbase Exchange? Only include pairs that "
+        "actually trade on Coinbase. Respond with a comma separated list "
+        "like BTC/USD,ETH/USD."
     )
     messages.append({"role": "user", "content": suggest_q})
     try:
@@ -157,6 +172,8 @@ async def _prompt_user() -> tuple[List[str], list[dict]]:
     print(suggest_reply)
     messages.append({"role": "assistant", "content": suggest_reply})
     suggested = _parse_symbols(suggest_reply)
+    if suggested:
+        suggested = await _filter_available_symbols(EXCHANGE, suggested)
 
     prompt = (
         "Press Enter to accept these pairs or provide your own "
@@ -171,6 +188,15 @@ async def _prompt_user() -> tuple[List[str], list[dict]]:
     else:
         symbols = _parse_symbols(user_input)
         user_msg = user_input
+
+    if symbols:
+        filtered = await _filter_available_symbols(EXCHANGE, symbols)
+        missing = set(symbols) - set(filtered)
+        symbols = filtered
+        if missing:
+            print(f"Ignoring unavailable symbols: {', '.join(sorted(missing))}")
+        if not user_input:
+            user_msg = "I'll trade: " + ",".join(symbols)
 
     messages.append({"role": "user", "content": user_msg})
     try:
@@ -191,6 +217,10 @@ async def _prompt_user() -> tuple[List[str], list[dict]]:
 
 
 async def _start_stream(symbols: List[str]) -> None:
+    if not symbols:
+        print("No valid symbols to stream.")
+        return
+
     payload = {"exchange": EXCHANGE, "symbols": symbols}
     url = f"http://{MCP_HOST}:{MCP_PORT}/tools/SubscribeCEXStream"
     async with aiohttp.ClientSession(
@@ -230,7 +260,11 @@ async def _chat_loop(messages: list[dict]) -> None:
         if any(w in user_msg.lower() for w in {"add", "track", "subscribe"}):
             symbols = _parse_symbols(user_msg)
             if symbols:
-                await _start_stream(symbols)
+                symbols = await _filter_available_symbols(EXCHANGE, symbols)
+                if not symbols:
+                    print("No valid symbols found.")
+                else:
+                    await _start_stream(symbols)
                 continue
         messages.append({"role": "user", "content": user_msg})
         try:

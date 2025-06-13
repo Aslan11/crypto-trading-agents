@@ -52,7 +52,7 @@ tmux send-keys    -t $WORKER_PANE 'source .venv/bin/activate && python worker/ma
 # 3. Pane 2 – MCP server (split Pane 0 horizontally →)
 tmux select-pane  -t $SESSION:0.0
 MCP_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $MCP_PANE 'source .venv/bin/activate && python mcp_server/app.py' C-m
+tmux send-keys    -t $MCP_PANE 'source .venv/bin/activate && PYTHONPATH="$PWD" python mcp_server/app.py' C-m
 
 # 4. Pane 3 – feature engineering agent (split Pane 1 horizontally →)
 tmux select-pane  -t $WORKER_PANE

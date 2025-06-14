@@ -46,6 +46,7 @@ TASK_QUEUE = os.environ.get("TASK_QUEUE", "mcp-tools")
 FEATURE_WINDOW_SEC = int(os.environ.get("VECTOR_WINDOW_SEC", "300"))
 VECTOR_CONTINUE_EVERY = int(os.environ.get("VECTOR_CONTINUE_EVERY", "3600"))
 VECTOR_HISTORY_LIMIT = int(os.environ.get("VECTOR_HISTORY_LIMIT", "9000"))
+POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "0.1"))
 
 STOP_EVENT = asyncio.Event()
 TASKS: set[asyncio.Task[Any]] = set()
@@ -53,14 +54,14 @@ TASKS: set[asyncio.Task[Any]] = set()
 
 async def _poll_vectors(session: aiohttp.ClientSession) -> None:
     cursor = 0
-    backoff = 1
+    backoff = POLL_INTERVAL
     while not STOP_EVENT.is_set():
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
         try:
             async with session.get(url, params={"after": cursor}) as resp:
                 if resp.status == 200:
                     events = await resp.json()
-                    backoff = 1
+                    backoff = POLL_INTERVAL
                 else:
                     logger.warning("Vector poll error %s", resp.status)
                     events = []
@@ -71,7 +72,7 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
             continue
-        backoff = 1
+        backoff = POLL_INTERVAL
         for evt in events:
             symbol = evt.get("symbol")
             ts = evt.get("ts")
@@ -132,7 +133,7 @@ async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIte
 
     cursor = 0
     timeout = aiohttp.ClientTimeout(total=30)
-    backoff = 1
+    backoff = POLL_INTERVAL
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
     async with aiohttp.ClientSession(timeout=timeout) as session:
         while not STOP_EVENT.is_set():
@@ -152,8 +153,7 @@ async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIte
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
                 continue
-
-            backoff = 1
+            backoff = POLL_INTERVAL
             for evt in events:
                 if STOP_EVENT.is_set():
                     return
@@ -198,14 +198,14 @@ async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
 
 async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
     cursor = 0
-    backoff = 1
+    backoff = POLL_INTERVAL
     while not STOP_EVENT.is_set():
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
         try:
             async with session.get(url, params={"after": cursor}) as resp:
                 if resp.status == 200:
                     ticks = await resp.json()
-                    backoff = 1
+                    backoff = POLL_INTERVAL
                 else:
                     logger.warning("Signal poll error %s", resp.status)
                     ticks = []
@@ -216,7 +216,7 @@ async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
             continue
-        backoff = 1
+        backoff = POLL_INTERVAL
         for tick in ticks:
             symbol = tick.get("symbol")
             ts = tick.get("ts")
@@ -226,7 +226,7 @@ async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
             TASKS.add(task)
             task.add_done_callback(TASKS.discard)
             cursor = max(cursor, ts)
-        await asyncio.sleep(1)
+        await asyncio.sleep(POLL_INTERVAL)
 
 
 async def _shutdown() -> None:

@@ -36,6 +36,7 @@ MCP_PORT = os.environ.get("MCP_PORT", "8080")
 COOLDOWN_SEC = int(os.environ.get("COOLDOWN_SEC", "30"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "0.5"))
+VECTOR_POLL_INTERVAL = float(os.environ.get("VECTOR_POLL_INTERVAL", os.environ.get("POLL_INTERVAL", "0.1")))
 
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -193,7 +194,7 @@ async def main() -> None:
                     events = []
 
                 if not events:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(VECTOR_POLL_INTERVAL)
                     continue
 
                 for evt in events:

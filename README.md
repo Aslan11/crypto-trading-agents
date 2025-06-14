@@ -122,7 +122,8 @@ changed by setting the `STREAM_CONTINUE_EVERY` environment variable. The workflo
 also checks its current history length and continues early when it exceeds
 `STREAM_HISTORY_LIMIT` (defaults to 9000 events).
 `ComputeFeatureVector` behaves the same way using the `VECTOR_CONTINUE_EVERY`
-and `VECTOR_HISTORY_LIMIT` environment variables.
+and `VECTOR_HISTORY_LIMIT` environment variables. Set `POLL_INTERVAL` to lower
+the default backoff when agents poll the MCP server for ticks and vectors.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.

@@ -4,7 +4,7 @@ import pytest
 from temporalio.testing import docker_service
 from temporalio.client import Client
 
-from agents.feature_engineering_agent import (
+from agents.feature_engineering_service import (
     _ensure_workflow as ensure_feature,
     FEATURE_WF_ID,
 )

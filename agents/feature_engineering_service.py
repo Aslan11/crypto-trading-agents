@@ -1,4 +1,4 @@
-"""Agent that computes feature vectors from raw market ticks."""
+"""Service that computes feature vectors from raw market ticks."""
 
 from __future__ import annotations
 
@@ -241,10 +241,10 @@ async def _shutdown() -> None:
 
 
 async def main() -> None:
-    """Run the feature engineering agent."""
+    """Run the feature engineering service."""
 
     print_banner(
-        "Feature Engineering Agent",
+        "Feature Engineering Service",
         "Compute and store feature vectors",
     )
 

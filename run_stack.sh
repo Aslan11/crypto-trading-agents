@@ -26,7 +26,7 @@ fi
 # │ temporal dev  │ mcp_server/app.py      │
 # ├───────────────┼────────────────────────┤
 # │ Pane 1        │ Pane 3                 │
-# │ worker/main.py│ feature_engineering_agent.py │
+# │ worker/main.py│ feature_engineering_service.py │
 # ├───────────────┼────────────────────────┤
 # │ Pane 5        │ Pane 4                 │
 # │ (shell)       │ momentum_service.py      │
@@ -54,10 +54,10 @@ tmux select-pane  -t $SESSION:0.0
 MCP_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $MCP_PANE 'source .venv/bin/activate && PYTHONPATH="$PWD" python mcp_server/app.py' C-m
 
-# 4. Pane 3 – feature engineering agent (split Pane 1 horizontally →)
+# 4. Pane 3 – feature engineering service (split Pane 1 horizontally →)
 tmux select-pane  -t $WORKER_PANE
 FE_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $FE_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/feature_engineering_agent.py' C-m
+tmux send-keys    -t $FE_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/feature_engineering_service.py' C-m
 
 # 5. Pane 4 – momentum strategy agent (split Pane 3 vertically ↓)
 tmux select-pane  -t $FE_PANE

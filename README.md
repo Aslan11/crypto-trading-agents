@@ -108,7 +108,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
      -d '{"exchange": "coinbaseexchange", "symbols": ["BTC/USD"], "interval_sec": 1}'
    ```
 3. `SubscribeCEXStream` records ticks to the `market_tick` signal.
-4. The feature engineering agent processes those ticks via `ComputeFeatureVector`.
+4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. The momentum service emits buy/sell signals using `EvaluateStrategyMomentum` and continues processing while the tool runs.
 6. The ensemble agent approves intents with `PreTradeRiskCheck` and publishes them to the `IntentBus`.
 7. The mock execution agent picks up approved intents and prints simulated order fills.
@@ -126,7 +126,7 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.
-- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK. Use `subscribe_vectors(symbol)` from `agents.feature_engineering_agent` to stream processed feature rows into your strategy logic.
+- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK. Use `subscribe_vectors(symbol)` from `agents.feature_engineering_service` to stream processed feature rows into your strategy logic.
 - Unit-test determinism with `make replay` to replay recent workflows.
 - Hot-reload – both MCP server and Python workers use `--watch` for instant feedback.
 - Deploy – push to `main`; CI builds a Docker image and promotes to your Temporal namespace.

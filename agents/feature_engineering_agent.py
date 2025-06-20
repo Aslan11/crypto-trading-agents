@@ -69,8 +69,7 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
             logger.error("Vector poll failed: %s", exc)
             events = []
         if not events:
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30)
+            await asyncio.sleep(POLL_INTERVAL)
             continue
         backoff = POLL_INTERVAL
         for evt in events:
@@ -125,7 +124,7 @@ async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIte
         while not STOP_EVENT.is_set():
             res = await handle.query("next_vector", symbol, last_ts)
             if not res:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(POLL_INTERVAL)
                 continue
             last_ts, vec = res
             yield vec
@@ -141,7 +140,7 @@ async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIte
                 async with session.get(url, params={"after": cursor}) as resp:
                     if resp.status == 200:
                         events = await resp.json()
-                        backoff = 1
+                        backoff = POLL_INTERVAL
                     else:
                         logger.warning("Vector poll error %s", resp.status)
                         events = []
@@ -150,8 +149,7 @@ async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIte
                 events = []
 
             if not events:
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30)
+                await asyncio.sleep(POLL_INTERVAL)
                 continue
             backoff = POLL_INTERVAL
             for evt in events:
@@ -213,8 +211,7 @@ async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
             logger.error("Signal poll failed: %s", exc)
             ticks = []
         if not ticks:
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30)
+            await asyncio.sleep(POLL_INTERVAL)
             continue
         backoff = POLL_INTERVAL
         for tick in ticks:

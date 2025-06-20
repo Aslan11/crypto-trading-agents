@@ -1,3 +1,5 @@
+"""Agent that computes feature vectors from raw market ticks."""
+
 from __future__ import annotations
 
 import asyncio
@@ -52,6 +54,7 @@ TASKS: set[asyncio.Task[Any]] = set()
 
 
 async def _poll_vectors(session: aiohttp.ClientSession) -> None:
+    # Continuously fetch newly computed feature vectors from the MCP server
     cursor = 0
     backoff = 1
     while not STOP_EVENT.is_set():
@@ -197,7 +200,9 @@ async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
 
 
 async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
+    # Track the last processed timestamp so we only fetch new ticks
     cursor = 0
+    # Basic exponential backoff when the MCP server returns no data
     backoff = 1
     while not STOP_EVENT.is_set():
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"

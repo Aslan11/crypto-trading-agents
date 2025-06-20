@@ -1,3 +1,5 @@
+"""Utility helpers shared across agents."""
+
 from __future__ import annotations
 
 

@@ -1,3 +1,5 @@
+"""Minimal MCP server exposing Temporal workflows over HTTP."""
+
 from __future__ import annotations
 
 import importlib

@@ -1,3 +1,5 @@
+"""Temporal workflow implementations backing the agents."""
+
 from __future__ import annotations
 
 from collections import deque

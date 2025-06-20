@@ -1,3 +1,5 @@
+"""Workflow that broadcasts approved intents to the MCP signal log."""
+
 from __future__ import annotations
 
 import asyncio

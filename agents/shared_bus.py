@@ -1,3 +1,5 @@
+"""Simple queue shared between agents for approved trade intents."""
+
 import asyncio
 
 APPROVED_INTENT_QUEUE: asyncio.Queue[dict] = asyncio.Queue()

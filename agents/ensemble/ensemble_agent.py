@@ -1,3 +1,5 @@
+"""Aggregate strategy signals and broadcast trade intents to other agents."""
+
 from __future__ import annotations
 
 import asyncio
@@ -168,6 +170,8 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
 
 
 async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, Any]) -> bool:
+    # Run the deterministic risk workflow and optionally consult an LLM
+    # for a human-style approval decision.
     client = await _get_client()
     wf_id = f"risk-{secrets.token_hex(8)}"
     try:

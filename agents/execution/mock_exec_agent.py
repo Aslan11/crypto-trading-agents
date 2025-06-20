@@ -1,3 +1,5 @@
+"""Mock execution agent that simulates order fills."""
+
 from __future__ import annotations
 
 import asyncio
@@ -81,6 +83,7 @@ async def _update_ledger(fill: dict) -> None:
 
 
 async def _place_order(_session: aiohttp.ClientSession | None, intent: dict) -> None:
+    # Basic balance and position checks before spawning the mock order workflow
     qty = Decimal(str(intent["qty"]))
     price = Decimal(str(intent["price"]))
     cost = qty * price

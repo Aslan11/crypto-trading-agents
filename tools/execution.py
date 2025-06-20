@@ -1,3 +1,5 @@
+"""Mock execution workflows used by the sample agents."""
+
 from __future__ import annotations
 
 import logging

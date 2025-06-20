@@ -1,3 +1,5 @@
+"""Interactive agent that starts data streams and chats with the user."""
+
 from __future__ import annotations
 
 import asyncio

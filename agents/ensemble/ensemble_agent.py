@@ -9,6 +9,7 @@ import signal
 from typing import Any, Dict
 
 import aiohttp
+import json
 
 import secrets
 
@@ -26,6 +27,8 @@ from tools.risk import PreTradeRiskCheck
 from agents.utils import print_banner, format_log
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
+from mcp import ClientSessionGroup
+from mcp.client.session_group import SseServerParameters
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -172,24 +175,26 @@ async def _poll_vectors(session: aiohttp.ClientSession) -> None:
 async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, Any]) -> bool:
     # Run the deterministic risk workflow and optionally consult an LLM
     # for a human-style approval decision.
-    client = await _get_client()
+    mcp_url = f"http://{MCP_HOST}:{MCP_PORT}"
     wf_id = f"risk-{secrets.token_hex(8)}"
+    server = SseServerParameters(url=mcp_url)
     try:
-        handle = await client.start_workflow(
-            PreTradeRiskCheck.run,
-            args=[wf_id, [intent]],
-            id=wf_id,
-            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
-        )
-        result = await handle.result()
+        async with ClientSessionGroup() as mcp_client:
+            await mcp_client.connect_to_server(server)
+            resp = await mcp_client.call_tool(
+                "PreTradeRiskCheck",
+                {"intent_id": wf_id, "intents": [intent]},
+            )
+        result = json.loads(resp.content[0].text) if resp.content else {}
     except Exception as exc:
-        logger.error("Risk workflow failed: %s", exc)
+        logger.error("Risk tool failed: %s", exc)
         return False
 
     if result.get("status") != "APPROVED":
         return False
 
-    status = await _get_ledger_status(client)
+    temporal_client = await _get_client()
+    status = await _get_ledger_status(temporal_client)
 
     if openai is None:
         return True

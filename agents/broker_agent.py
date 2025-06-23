@@ -9,11 +9,12 @@ import re
 from typing import List, Dict
 
 from temporalio.client import Client
+from mcp import ClientSessionGroup
+from mcp.client.session_group import SseServerParameters
 from temporalio.service import RPCError, RPCStatusCode
 from agents.workflows import ExecutionLedgerWorkflow
 from agents.utils import print_banner
 
-import aiohttp
 
 try:
     import openai
@@ -228,21 +229,18 @@ async def _start_stream(symbols: List[str]) -> None:
         return
 
     payload = {"exchange": EXCHANGE, "symbols": symbols}
-    url = f"http://{MCP_HOST}:{MCP_PORT}/tools/SubscribeCEXStream"
-    async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=30)
-    ) as session:
-        try:
-            async with session.post(url, json=payload) as resp:
-                if resp.status == 202:
-                    data = await resp.json()
-                    print(
-                        f"Started workflow {data['workflow_id']} run {data['run_id']}"
-                    )
-                else:
-                    print(f"Failed to start workflow: {resp.status}")
-        except Exception as exc:  # pragma: no cover - network errors
-            logger.error("HTTP request failed: %s", exc)
+    url = f"http://{MCP_HOST}:{MCP_PORT}"
+    server = SseServerParameters(url=url)
+    try:
+        async with ClientSessionGroup() as client:
+            await client.connect_to_server(server)
+            result = await client.call_tool("SubscribeCEXStream", payload)
+        if not result.isError:
+            print("Started stream")
+        else:
+            print("Failed to start stream")
+    except Exception as exc:  # pragma: no cover - network errors
+        logger.error("MCP tool call failed: %s", exc)
 
 
 async def _chat_loop(messages: list[dict]) -> None:

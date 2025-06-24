@@ -24,6 +24,7 @@ from agents.workflows import EnsembleWorkflow
 from tools.intent_bus import IntentBus
 from tools.risk import PreTradeRiskCheck
 from agents.utils import print_banner, format_log
+from agents.tool_activities import ToolActivities
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -212,12 +213,8 @@ async def _risk_check(_session: aiohttp.ClientSession | None, intent: Dict[str, 
     logger.info("Sending prompt to ChatGPT:\n%s", prompt)
 
     try:
-        client_ai = openai.AsyncOpenAI()
-        resp = await client_ai.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        reply = resp.choices[0].message.content.strip()
+        tool_activities = ToolActivities(openai)
+        reply = await tool_activities.agent_toolPlanner(prompt)
         if ":" in reply:
             decision_word, reason = reply.split(":", 1)
             decision = decision_word.strip().upper()

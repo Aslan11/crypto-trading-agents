@@ -7,7 +7,7 @@ import os
 import secrets
 from typing import Any, Dict, List
 
-from mcp.server.fastmcp import FastMCP, tool
+from mcp.server.fastmcp import FastMCP
 from temporalio.client import Client, RPCError, RPCStatusCode, WorkflowExecutionStatus
 from starlette.responses import JSONResponse, Response
 from starlette.requests import Request

@@ -1,6 +1,6 @@
 import pytest
 
-from agents.execution import mock_exec_agent as mea
+from agents.execution import mock_exec_service as mea
 
 class DummyHandle:
     async def query(self, what):

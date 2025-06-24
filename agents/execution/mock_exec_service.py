@@ -1,4 +1,4 @@
-"""Mock execution agent that simulates order fills."""
+"""Mock execution service that simulates order fills."""
 
 from __future__ import annotations
 
@@ -151,7 +151,7 @@ async def _run() -> None:
 
 async def main() -> None:
     print_banner(
-        "Mock Execution Agent",
+        "Mock Execution Service",
         "Simulate order execution",
     )
 

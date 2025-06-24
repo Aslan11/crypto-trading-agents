@@ -16,7 +16,7 @@ from agents.strategies.momentum_service import (
     _ensure_workflow as ensure_momentum,
     MOMENTUM_WF_ID,
 )
-from agents.execution.mock_exec_agent import (
+from agents.execution.mock_exec_service import (
     _ensure_workflow as ensure_ledger,
     LEDGER_WF_ID,
 )

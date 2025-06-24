@@ -3,14 +3,13 @@ import json
 import asyncio
 try:
     import openai
+    _openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 except Exception:  # pragma: no cover - optional dependency
     openai = None
+    _openai_client = None
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 import re
-
-if openai is not None:
-    openai.api_key = os.getenv("OPENAI_API_KEY")
 
 EXCHANGE = os.environ.get("EXCHANGE", "coinbaseexchange")
 
@@ -74,7 +73,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         print(f"Failed to fetch status: {exc}")
                     continue
 
-                if openai is None or not openai.api_key:
+                if _openai_client is None:
                     print("LLM unavailable; echoing command.")
                     continue
 
@@ -84,13 +83,13 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     for t in tools
                 ]
                 try:
-                    response = openai.ChatCompletion.create(
-                        model=os.environ.get("OPENAI_MODEL", "gpt-4-0613"),
+                    response = _openai_client.chat.completions.create(
+                        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                         messages=conversation,
-                        functions=functions,
-                        function_call="auto",
+                        tools=functions,
+                        tool_choice="auto",
                     )
-                    msg = response['choices'][0]['message']
+                    msg = response.choices[0].message
                 except Exception as exc:
                     print(f"LLM request failed: {exc}")
                     continue
@@ -106,12 +105,12 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         continue
                     conversation.append({"role": "function", "name": func_name, "content": json.dumps(result)})
                     try:
-                        followup = openai.ChatCompletion.create(
-                            model=os.environ.get("OPENAI_MODEL", "gpt-4-0613"),
+                        followup = _openai_client.chat.completions.create(
+                            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                             messages=conversation,
-                            functions=functions,
+                            tools=functions,
                         )
-                        assistant_msg = followup['choices'][0]['message']['content']
+                        assistant_msg = followup.choices[0].message.content or ""
                     except Exception as exc:
                         print(f"LLM request failed: {exc}")
                         continue

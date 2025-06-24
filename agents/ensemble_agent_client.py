@@ -5,7 +5,7 @@ import openai
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
     "You are a strategy ensemble agent. You aggregate trading signals from multiple strategies, "
@@ -43,13 +43,13 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080"):
                     {"name": tool.name, "description": tool.description, "parameters": tool.inputSchema}
                     for tool in tools
                 ]
-                response = openai.ChatCompletion.create(
-                    model=os.environ.get("OPENAI_MODEL", "gpt-4-0613"),
+                response = openai_client.chat.completions.create(
+                    model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                     messages=conversation,
-                    functions=functions,
-                    function_call="auto",
+                    tools=functions,
+                    tool_choice="auto",
                 )
-                msg = response['choices'][0]['message']
+                msg = response.choices[0].message
                 if msg.get("function_call"):
                     func_name = msg["function_call"]["name"]
                     func_args = json.loads(msg["function_call"].get("arguments") or "{}")

@@ -6,6 +6,7 @@ import asyncio
 import os
 import secrets
 from typing import Any, Dict, List
+from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
 from temporalio.client import Client, RPCError, RPCStatusCode, WorkflowExecutionStatus
@@ -26,6 +27,9 @@ app = FastMCP("crypto-trading-server")
 # Shared Temporal client
 _temporal_client: Client | None = None
 _client_lock = asyncio.Lock()
+
+# Simple in-memory signal log for backward compatibility
+signal_log: dict[str, list[dict]] = {}
 
 
 async def get_temporal_client() -> Client:
@@ -163,6 +167,28 @@ async def workflow_status(request: Request) -> Response:
         except Exception as exc:
             result = {"error": str(exc)}
     return JSONResponse({"status": status_name, "result": result})
+
+
+@app.custom_route("/signal/{name}", methods=["POST"])
+async def record_signal(request: Request) -> Response:
+    """Record a signal event for services still using HTTP polling."""
+    name = request.path_params["name"]
+    payload = await request.json()
+    ts = payload.get("ts")
+    if ts is None:
+        ts = int(datetime.utcnow().timestamp())
+        payload["ts"] = ts
+    signal_log.setdefault(name, []).append(payload)
+    return Response(status_code=204)
+
+
+@app.custom_route("/signal/{name}", methods=["GET"])
+async def fetch_signals(request: Request) -> Response:
+    """Return signals newer than the provided 'after' timestamp."""
+    name = request.path_params["name"]
+    after = int(request.query_params.get("after", "0"))
+    events = [e for e in signal_log.get(name, []) if e.get("ts", 0) > after]
+    return JSONResponse(events)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,32 @@ import asyncio
 import openai
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+import re
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+EXCHANGE = os.environ.get("EXCHANGE", "coinbaseexchange")
+
+
+def _parse_symbols(text: str) -> list[str]:
+    """Return list of crypto symbols in ``text``."""
+    return re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text.upper())
+
+
+async def _prompt_pairs() -> list[str]:
+    """Prompt the user for trading pairs."""
+    text = await asyncio.to_thread(input, "Pairs to trade (e.g. BTC/USD,ETH/USD): ")
+    return _parse_symbols(text)
+
+
+async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
+    if not symbols:
+        return
+    payload = {"exchange": EXCHANGE, "symbols": symbols}
+    try:
+        await session.call_tool("subscribe_cex_stream", payload)
+    except Exception as exc:
+        print(f"Failed to start stream: {exc}")
 
 SYSTEM_PROMPT = (
     "You are a trading broker agent. You manage execution of trades and the account state. "
@@ -14,8 +38,7 @@ SYSTEM_PROMPT = (
 )
 
 async def get_next_broker_command() -> str | None:
-    await asyncio.sleep(0)
-    return None
+    return await asyncio.to_thread(input, "> ")
 
 async def run_broker_agent(server_url: str = "http://localhost:8080"):
     url = server_url.rstrip("/") + "/mcp"
@@ -25,6 +48,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
             tools = (await session.list_tools()).tools
             conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
             print("[BrokerAgent] Connected with tools:", [t.name for t in tools])
+
+            pairs = await _prompt_pairs()
+            await _start_stream(session, pairs)
 
             while True:
                 user_request = await get_next_broker_command()

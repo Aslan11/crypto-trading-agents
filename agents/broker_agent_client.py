@@ -80,7 +80,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
 
                 conversation.append({"role": "user", "content": user_request})
                 functions = [
-                    {"name": t.name, "description": t.description, "parameters": t.input_schema}
+                    {"name": t.name, "description": t.description, "parameters": t.inputSchema}
                     for t in tools
                 ]
                 try:

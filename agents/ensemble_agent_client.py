@@ -40,7 +40,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080"):
                 )
                 conversation.append({"role": "user", "content": signal_str})
                 functions = [
-                    {"name": tool.name, "description": tool.description, "parameters": tool.input_schema}
+                    {"name": tool.name, "description": tool.description, "parameters": tool.inputSchema}
                     for tool in tools
                 ]
                 response = openai.ChatCompletion.create(

@@ -103,7 +103,7 @@ def _cross(prev: dict, curr: dict) -> str | None:
 async def _start_tool(
     session: aiohttp.ClientSession, signal_payload: dict
 ) -> tuple[str, str] | None:
-    url = f"http://{MCP_HOST}:{MCP_PORT}/tools/EvaluateStrategyMomentum"
+    url = f"http://{MCP_HOST}:{MCP_PORT}/tools/evaluate_strategy_momentum"
     payload = {"signal": signal_payload}
     try:
         async with session.post(url, json=payload) as resp:

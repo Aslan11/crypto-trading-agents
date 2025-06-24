@@ -56,8 +56,8 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
-| `EvaluateStrategyMomentum` | Log momentum signals (optional cooldown)     | Feature vector        |
-| `PreTradeRiskCheck`      | Validate intents against simple VaR limits     | Order intents         |
+| `evaluate_strategy_momentum` | Log momentum signals (optional cooldown)     | Feature vector        |
+| `pre_trade_risk_check`      | Validate intents against simple VaR limits     | Order intents         |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
 | `SignAndSendTx`          | Sign and broadcast an EVM transaction          | Execution             |
@@ -109,8 +109,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    ```
 3. `subscribe_cex_stream` records ticks to the `market_tick` signal.
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
-5. The momentum service emits buy/sell signals using `EvaluateStrategyMomentum` and continues processing while the tool runs.
-6. The ensemble agent approves intents with `PreTradeRiskCheck` and publishes them to the `IntentBus`.
+5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
+6. The ensemble agent approves intents with `pre_trade_risk_check` and publishes them to the `IntentBus`.
 7. The mock execution service picks up approved intents and prints simulated order fills.
 
 If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when starting workflows such as `subscribe_cex_stream`. Use trading pairs like `BTC/USD`. For private Coinbase endpoints, set `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` in your environment.

@@ -40,7 +40,7 @@ Temporal supplies resilient workflows while MCP gives agents a shared, tool-base
                                                   │ intents
                                                   ▼
                                          ┌──────────────────┐
-                                         │ Execution Agent  │
+                                         │ Execution Service│
                                          └────────┬─────────┘
                                                   │ fills
                                                   ▼
@@ -111,7 +111,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. The momentum service emits buy/sell signals using `EvaluateStrategyMomentum` and continues processing while the tool runs.
 6. The ensemble agent approves intents with `PreTradeRiskCheck` and publishes them to the `IntentBus`.
-7. The mock execution agent picks up approved intents and prints simulated order fills.
+7. The mock execution service picks up approved intents and prints simulated order fills.
 
 If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when starting workflows such as `SubscribeCEXStream`. Use trading pairs like `BTC/USD`. For private Coinbase endpoints, set `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` in your environment.
 

@@ -1,12 +1,16 @@
 import os
 import json
 import asyncio
-import openai
+try:
+    import openai
+except Exception:  # pragma: no cover - optional dependency
+    openai = None
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 import re
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+if openai is not None:
+    openai.api_key = os.getenv("OPENAI_API_KEY")
 
 EXCHANGE = os.environ.get("EXCHANGE", "coinbaseexchange")
 
@@ -28,6 +32,7 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
     payload = {"exchange": EXCHANGE, "symbols": symbols}
     try:
         await session.call_tool("subscribe_cex_stream", payload)
+        print(f"Started stream for: {', '.join(symbols)}")
     except Exception as exc:
         print(f"Failed to start stream: {exc}")
 
@@ -51,36 +56,65 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
 
             pairs = await _prompt_pairs()
             await _start_stream(session, pairs)
+            print("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
 
             while True:
                 user_request = await get_next_broker_command()
                 if user_request is None:
                     await asyncio.sleep(1)
                     continue
+
+                if user_request.strip().lower() in {"quit", "exit"}:
+                    break
+                if user_request.strip().lower() == "status":
+                    try:
+                        result = await session.call_tool("get_portfolio_status", {})
+                        print(json.dumps(result, indent=2))
+                    except Exception as exc:
+                        print(f"Failed to fetch status: {exc}")
+                    continue
+
+                if openai is None or not openai.api_key:
+                    print("LLM unavailable; echoing command.")
+                    continue
+
                 conversation.append({"role": "user", "content": user_request})
                 functions = [
                     {"name": t.name, "description": t.description, "parameters": t.input_schema}
                     for t in tools
                 ]
-                response = openai.ChatCompletion.create(
-                    model=os.environ.get("OPENAI_MODEL", "gpt-4-0613"),
-                    messages=conversation,
-                    functions=functions,
-                    function_call="auto",
-                )
-                msg = response['choices'][0]['message']
+                try:
+                    response = openai.ChatCompletion.create(
+                        model=os.environ.get("OPENAI_MODEL", "gpt-4-0613"),
+                        messages=conversation,
+                        functions=functions,
+                        function_call="auto",
+                    )
+                    msg = response['choices'][0]['message']
+                except Exception as exc:
+                    print(f"LLM request failed: {exc}")
+                    continue
+
                 if msg.get("function_call"):
                     func_name = msg["function_call"]["name"]
                     func_args = json.loads(msg["function_call"].get("arguments") or "{}")
                     print(f"[BrokerAgent] Invoking tool: {func_name}{func_args}")
-                    result = await session.call_tool(func_name, func_args)
+                    try:
+                        result = await session.call_tool(func_name, func_args)
+                    except Exception as exc:
+                        print(f"Tool call failed: {exc}")
+                        continue
                     conversation.append({"role": "function", "name": func_name, "content": json.dumps(result)})
-                    followup = openai.ChatCompletion.create(
-                        model=os.environ.get("OPENAI_MODEL", "gpt-4-0613"),
-                        messages=conversation,
-                        functions=functions,
-                    )
-                    assistant_msg = followup['choices'][0]['message']['content']
+                    try:
+                        followup = openai.ChatCompletion.create(
+                            model=os.environ.get("OPENAI_MODEL", "gpt-4-0613"),
+                            messages=conversation,
+                            functions=functions,
+                        )
+                        assistant_msg = followup['choices'][0]['message']['content']
+                    except Exception as exc:
+                        print(f"LLM request failed: {exc}")
+                        continue
                     conversation.append({"role": "assistant", "content": assistant_msg})
                     print(f"[BrokerAgent] Response: {assistant_msg}")
                 else:

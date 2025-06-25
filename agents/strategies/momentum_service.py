@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
+MCP_PATH = os.environ.get(
+    "MCP_BASE_PATH",
+    os.environ.get("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp"),
+).rstrip("/")
 COOLDOWN_SEC = int(os.environ.get("COOLDOWN_SEC", "30"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "0.5"))
@@ -103,7 +107,8 @@ def _cross(prev: dict, curr: dict) -> str | None:
 async def _start_tool(
     session: aiohttp.ClientSession, signal_payload: dict
 ) -> tuple[str, str] | None:
-    url = f"http://{MCP_HOST}:{MCP_PORT}/tools/evaluate_strategy_momentum"
+    base = f"http://{MCP_HOST}:{MCP_PORT}{MCP_PATH}"
+    url = f"{base}/tools/evaluate_strategy_momentum"
     payload = {"signal": signal_payload}
     try:
         async with session.post(url, json=payload) as resp:

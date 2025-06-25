@@ -103,7 +103,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 1. With the tmux session running, open a new terminal window.
 2. Kick off a market data workflow for Bitcoin:
    ```bash
-   curl -X POST http://localhost:8080/tools/subscribe_cex_stream \
+   curl -X POST http://localhost:8080/mcp/tools/subscribe_cex_stream \
      -H 'Content-Type: application/json' \
      -d '{"exchange": "coinbaseexchange", "symbols": ["BTC/USD"], "interval_sec": 1}'
    ```

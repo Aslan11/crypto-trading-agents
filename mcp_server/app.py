@@ -66,14 +66,20 @@ async def subscribe_cex_stream(exchange: str, symbols: List[str], interval_sec: 
         symbols,
         interval_sec,
     )
-    handle = await client.start_workflow(
-        SubscribeCEXStream.run,
-        exchange,
-        symbols,
-        interval_sec,
-        id=workflow_id,
-        task_queue="mcp-tools",
-    )
+    logger.debug("Launching workflow %s", workflow_id)
+    try:
+        handle = await client.start_workflow(
+            SubscribeCEXStream.run,
+            exchange,
+            symbols,
+            interval_sec,
+            id=workflow_id,
+            task_queue="mcp-tools",
+        )
+    except Exception:
+        logger.exception("Failed to start SubscribeCEXStream workflow %s", workflow_id)
+        raise
+    logger.debug("Workflow handle created: %s", handle)
     logger.info("Workflow %s started run %s", workflow_id, handle.run_id)
     return {"workflow_id": workflow_id, "run_id": handle.run_id}
 

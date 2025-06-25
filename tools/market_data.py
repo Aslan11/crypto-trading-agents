@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from temporalio import activity, workflow
 import aiohttp
 import os
+import logging
 
 
 class MarketTick(BaseModel):
@@ -25,6 +26,10 @@ MCP_PORT = os.environ.get("MCP_PORT", "8080")
 STREAM_CONTINUE_EVERY = int(os.environ.get("STREAM_CONTINUE_EVERY", "3600"))
 STREAM_HISTORY_LIMIT = int(os.environ.get("STREAM_HISTORY_LIMIT", "9000"))
 
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
 
 @activity.defn
 async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
@@ -35,6 +40,9 @@ async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
     try:
         data = await client.fetch_ticker(symbol)
         return MarketTick(exchange=exchange, symbol=symbol, data=data).model_dump()
+    except Exception as exc:
+        logger.error("Failed to fetch ticker %s:%s - %s", exchange, symbol, exc)
+        raise
     finally:
         await client.close()
 
@@ -47,8 +55,8 @@ async def record_tick(tick: dict) -> None:
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             await session.post(url, json=tick)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Failed to record tick: %s", exc)
 
 
 @workflow.defn

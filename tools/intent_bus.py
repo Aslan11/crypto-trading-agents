@@ -8,9 +8,14 @@ from datetime import timedelta
 
 import aiohttp
 from temporalio import activity, workflow
+import logging
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 @activity.defn
@@ -21,8 +26,8 @@ async def emit_intent(intent: dict) -> None:
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             await session.post(url, json=intent)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Failed to emit intent: %s", exc)
 
 
 @workflow.defn

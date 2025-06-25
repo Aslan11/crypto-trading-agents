@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import logging
 try:
     import openai
     _openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -13,6 +14,10 @@ import re
 
 EXCHANGE = os.environ.get("EXCHANGE", "coinbaseexchange")
 
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
 
 def _parse_symbols(text: str) -> list[str]:
     """Return list of crypto symbols in ``text``."""
@@ -21,8 +26,11 @@ def _parse_symbols(text: str) -> list[str]:
 
 async def _prompt_pairs() -> list[str]:
     """Prompt the user for trading pairs."""
+    logger.info("Prompting for trading pairs")
     text = await asyncio.to_thread(input, "Pairs to trade (e.g. BTC/USD,ETH/USD): ")
-    return _parse_symbols(text)
+    pairs = _parse_symbols(text)
+    logger.info("User selected pairs: %s", pairs)
+    return pairs
 
 
 async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
@@ -30,10 +38,11 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
         return
     payload = {"exchange": EXCHANGE, "symbols": symbols}
     try:
+        logger.info("Starting stream for %s", symbols)
         await session.call_tool("subscribe_cex_stream", payload)
-        print(f"Started stream for: {', '.join(symbols)}")
+        logger.info("Stream started for %s", symbols)
     except Exception as exc:
-        print(f"Failed to start stream: {exc}")
+        logger.error("Failed to start stream: %s", exc)
 
 SYSTEM_PROMPT = (
     "You are a trading broker agent. You manage execution of trades and the account state. "
@@ -46,16 +55,17 @@ async def get_next_broker_command() -> str | None:
 
 async def run_broker_agent(server_url: str = "http://localhost:8080"):
     url = server_url.rstrip("/") + "/mcp"
+    logger.info("Connecting to MCP server at %s", url)
     async with streamablehttp_client(url) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             tools = (await session.list_tools()).tools
             conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
-            print("[BrokerAgent] Connected with tools:", [t.name for t in tools])
+            logger.info("Connected with tools: %s", [t.name for t in tools])
 
             pairs = await _prompt_pairs()
             await _start_stream(session, pairs)
-            print("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
+            logger.info("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
 
             while True:
                 user_request = await get_next_broker_command()
@@ -68,15 +78,16 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 if user_request.strip().lower() == "status":
                     try:
                         result = await session.call_tool("get_portfolio_status", {})
-                        print(json.dumps(result, indent=2))
+                        logger.info("Status: %s", json.dumps(result))
                     except Exception as exc:
-                        print(f"Failed to fetch status: {exc}")
+                        logger.error("Failed to fetch status: %s", exc)
                     continue
 
                 if _openai_client is None:
-                    print("LLM unavailable; echoing command.")
+                    logger.warning("LLM unavailable; echoing command.")
                     continue
 
+                logger.info("User command: %s", user_request)
                 conversation.append({"role": "user", "content": user_request})
                 functions = [
                     {"name": t.name, "description": t.description, "parameters": t.inputSchema}
@@ -91,17 +102,17 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     )
                     msg = response.choices[0].message
                 except Exception as exc:
-                    print(f"LLM request failed: {exc}")
+                    logger.error("LLM request failed: %s", exc)
                     continue
 
                 if msg.get("function_call"):
                     func_name = msg["function_call"]["name"]
                     func_args = json.loads(msg["function_call"].get("arguments") or "{}")
-                    print(f"[BrokerAgent] Invoking tool: {func_name}{func_args}")
+                    logger.info("Invoking tool %s with %s", func_name, func_args)
                     try:
                         result = await session.call_tool(func_name, func_args)
                     except Exception as exc:
-                        print(f"Tool call failed: {exc}")
+                        logger.error("Tool call failed: %s", exc)
                         continue
                     conversation.append({"role": "function", "name": func_name, "content": json.dumps(result)})
                     try:
@@ -112,14 +123,14 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         )
                         assistant_msg = followup.choices[0].message.content or ""
                     except Exception as exc:
-                        print(f"LLM request failed: {exc}")
+                        logger.error("LLM request failed: %s", exc)
                         continue
                     conversation.append({"role": "assistant", "content": assistant_msg})
-                    print(f"[BrokerAgent] Response: {assistant_msg}")
+                    logger.info("Response: %s", assistant_msg)
                 else:
                     assistant_msg = msg.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
-                    print(f"[BrokerAgent] Response: {assistant_msg}")
+                    logger.info("Response: %s", assistant_msg)
                 conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
 
 if __name__ == "__main__":

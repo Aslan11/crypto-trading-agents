@@ -39,8 +39,18 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
     payload = {"exchange": EXCHANGE, "symbols": symbols}
     try:
         logger.info("Starting stream for %s", symbols)
-        await session.call_tool("subscribe_cex_stream", payload)
-        logger.info("Stream started for %s", symbols)
+        result = await session.call_tool("subscribe_cex_stream", payload)
+        wf_id = result.get("workflow_id")
+        run_id = result.get("run_id")
+        if wf_id and run_id:
+            logger.info(
+                "Stream started for %s via workflow %s run %s",
+                symbols,
+                wf_id,
+                run_id,
+            )
+        else:
+            logger.info("Stream started for %s", symbols)
     except Exception as exc:
         logger.error("Failed to start stream: %s", exc)
 

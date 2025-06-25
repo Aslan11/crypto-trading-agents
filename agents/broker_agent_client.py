@@ -2,6 +2,9 @@ import os
 import json
 import asyncio
 import logging
+from typing import Any
+
+from mcp.types import CallToolResult, TextContent
 try:
     import openai
     _openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -33,6 +36,22 @@ async def _prompt_pairs() -> list[str]:
     return pairs
 
 
+def _tool_result_data(result: Any) -> Any:
+    """Return JSON-friendly data from a tool call result."""
+    if isinstance(result, CallToolResult):
+        if result.content:
+            first = result.content[0]
+            if isinstance(first, TextContent):
+                try:
+                    return json.loads(first.text)
+                except Exception:
+                    return first.text
+        return [c.model_dump() if hasattr(c, "model_dump") else c for c in result.content]
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    return result
+
+
 async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
     if not symbols:
         return
@@ -40,8 +59,13 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
     try:
         logger.info("Starting stream for %s", symbols)
         result = await session.call_tool("subscribe_cex_stream", payload)
-        wf_id = result.get("workflow_id")
-        run_id = result.get("run_id")
+        data = _tool_result_data(result)
+        if isinstance(data, dict):
+            wf_id = data.get("workflow_id")
+            run_id = data.get("run_id")
+        else:
+            wf_id = None
+            run_id = None
         if wf_id and run_id:
             logger.info(
                 "Stream started for %s via workflow %s run %s",
@@ -88,7 +112,8 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 if user_request.strip().lower() == "status":
                     try:
                         result = await session.call_tool("get_portfolio_status", {})
-                        logger.info("Status: %s", json.dumps(result))
+                        status = _tool_result_data(result)
+                        logger.info("Status: %s", json.dumps(status))
                     except Exception as exc:
                         logger.error("Failed to fetch status: %s", exc)
                     continue
@@ -121,10 +146,11 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     logger.info("Invoking tool %s with %s", func_name, func_args)
                     try:
                         result = await session.call_tool(func_name, func_args)
+                        result_data = _tool_result_data(result)
                     except Exception as exc:
                         logger.error("Tool call failed: %s", exc)
                         continue
-                    conversation.append({"role": "function", "name": func_name, "content": json.dumps(result)})
+                    conversation.append({"role": "function", "name": func_name, "content": json.dumps(result_data)})
                     try:
                         followup = _openai_client.chat.completions.create(
                             model=os.environ.get("OPENAI_MODEL", "gpt-4o"),

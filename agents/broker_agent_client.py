@@ -19,6 +19,17 @@ logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(mess
 logger = logging.getLogger(__name__)
 
 
+def _parse_result(result: object) -> object:
+    """Extract JSON payload from a ``CallToolResult`` if needed."""
+    content = getattr(result, "content", None)
+    if content and isinstance(content, list) and hasattr(content[0], "text"):
+        try:
+            return json.loads(content[0].text)
+        except Exception:
+            return content[0].text
+    return result
+
+
 def _parse_symbols(text: str) -> list[str]:
     """Return list of crypto symbols in ``text``."""
     return re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text.upper())
@@ -40,8 +51,9 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
     try:
         logger.info("Starting stream for %s", symbols)
         result = await session.call_tool("subscribe_cex_stream", payload)
-        wf_id = result.get("workflow_id")
-        run_id = result.get("run_id")
+        data = _parse_result(result)
+        wf_id = data.get("workflow_id") if isinstance(data, dict) else None
+        run_id = data.get("run_id") if isinstance(data, dict) else None
         if wf_id and run_id:
             logger.info(
                 "Stream started for %s via workflow %s run %s",
@@ -88,7 +100,8 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 if user_request.strip().lower() == "status":
                     try:
                         result = await session.call_tool("get_portfolio_status", {})
-                        logger.info("Status: %s", json.dumps(result))
+                        data = _parse_result(result)
+                        logger.info("Status: %s", json.dumps(data))
                     except Exception as exc:
                         logger.error("Failed to fetch status: %s", exc)
                     continue

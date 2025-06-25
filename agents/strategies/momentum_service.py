@@ -110,8 +110,9 @@ async def _start_tool(
     base = f"http://{MCP_HOST}:{MCP_PORT}{MCP_PATH}"
     url = f"{base}/tools/evaluate_strategy_momentum"
     payload = {"signal": signal_payload}
+    headers = {"Accept": "application/json, text/event-stream"}
     try:
-        async with session.post(url, json=payload) as resp:
+        async with session.post(url, json=payload, headers=headers) as resp:
             if resp.status == 202:
                 data = await resp.json()
                 return data["workflow_id"], data["run_id"]

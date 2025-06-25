@@ -104,6 +104,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 2. Kick off a market data workflow for Bitcoin:
    ```bash
    curl -X POST http://localhost:8080/mcp/tools/subscribe_cex_stream \
+     -H 'Accept: application/json, text/event-stream' \
      -H 'Content-Type: application/json' \
      -d '{"exchange": "coinbaseexchange", "symbols": ["BTC/USD"], "interval_sec": 1}'
    ```

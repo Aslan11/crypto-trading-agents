@@ -161,25 +161,66 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
 
                 logger.info("User command: %s", user_request)
                 conversation.append({"role": "user", "content": user_request})
-                functions = [
-                    {"name": t.name, "description": t.description, "parameters": t.inputSchema}
+
+                tools_payload = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.inputSchema,
+                        },
+                    }
                     for t in tools
                 ]
+
                 try:
                     response = _openai_client.chat.completions.create(
                         model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                         messages=conversation,
-                        tools=functions,
+                        tools=tools_payload,
                         tool_choice="auto",
                     )
                     msg = response.choices[0].message
+                    msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
                 except Exception as exc:
                     logger.error("LLM request failed: %s", exc)
                     continue
 
-                if msg.get("function_call"):
-                    func_name = msg["function_call"]["name"]
-                    func_args = json.loads(msg["function_call"].get("arguments") or "{}")
+                if "tool_calls" in msg_dict:
+                    for call in msg_dict["tool_calls"]:
+                        func_name = call["function"]["name"]
+                        func_args = json.loads(call["function"].get("arguments") or "{}")
+                        logger.info("Invoking tool %s with %s", func_name, func_args)
+                        try:
+                            result = await session.call_tool(func_name, func_args)
+                            result_data = _tool_result_data(result)
+                        except Exception as exc:
+                            logger.error("Tool call failed: %s", exc)
+                            continue
+                        conversation.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call.get("id"),
+                                "content": json.dumps(result_data),
+                            }
+                        )
+
+                    try:
+                        followup = _openai_client.chat.completions.create(
+                            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                            messages=conversation,
+                            tools=tools_payload,
+                        )
+                        assistant_msg = followup.choices[0].message.content or ""
+                        conversation.append({"role": "assistant", "content": assistant_msg})
+                        logger.info("Response: %s", assistant_msg)
+                    except Exception as exc:
+                        logger.error("LLM request failed: %s", exc)
+                        continue
+                elif "function_call" in msg_dict:
+                    func_name = msg_dict["function_call"]["name"]
+                    func_args = json.loads(msg_dict["function_call"].get("arguments") or "{}")
                     logger.info("Invoking tool %s with %s", func_name, func_args)
                     try:
                         result = await session.call_tool(func_name, func_args)
@@ -192,19 +233,21 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         followup = _openai_client.chat.completions.create(
                             model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                             messages=conversation,
-                            tools=functions,
+                            tools=tools_payload,
                         )
                         assistant_msg = followup.choices[0].message.content or ""
+                        conversation.append({"role": "assistant", "content": assistant_msg})
+                        logger.info("Response: %s", assistant_msg)
                     except Exception as exc:
                         logger.error("LLM request failed: %s", exc)
                         continue
-                    conversation.append({"role": "assistant", "content": assistant_msg})
-                    logger.info("Response: %s", assistant_msg)
                 else:
-                    assistant_msg = msg.get("content", "")
+                    assistant_msg = msg_dict.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
                     logger.info("Response: %s", assistant_msg)
-                conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+                if len(conversation) > 20:
+                    conversation = [conversation[0]] + conversation[-19:]
 
 if __name__ == "__main__":
     asyncio.run(run_broker_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))

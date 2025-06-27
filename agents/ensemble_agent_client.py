@@ -1,11 +1,13 @@
 import os
 import json
 import asyncio
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 import aiohttp
 import openai
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.types import CallToolResult, TextContent
+import time
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -18,12 +20,31 @@ SYSTEM_PROMPT = (
     "then briefly explain the outcome."
 )
 
+
+def _tool_result_data(result: Any) -> Any:
+    """Return JSON-friendly data from a tool call result."""
+    if isinstance(result, CallToolResult):
+        if result.content:
+            first = result.content[0]
+            if isinstance(first, TextContent):
+                try:
+                    return json.loads(first.text)
+                except Exception:
+                    return first.text
+        return [
+            c.model_dump() if hasattr(c, "model_dump") else c
+            for c in result.content
+        ]
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    return result
+
 async def _latest_price(
     session: aiohttp.ClientSession, base_url: str, symbol: str
 ) -> float:
     """Return the most recent market price for ``symbol``."""
     url = base_url.rstrip("/") + "/signal/market_tick"
-    params = {"after": int(__import__("time").time()) - 60}
+    params = {"after": int(time.time()) - 60}
     try:
         async with session.get(url, params=params) as resp:
             if resp.status == 200:
@@ -103,9 +124,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     }
                     price = await _latest_price(http_session, base_url, intent["symbol"])
                     intent["price"] = price
-                    status = await session.call_tool("get_portfolio_status", {})
-                    positions = status.get("positions", {})
-                    cash = status.get("cash", 0.0)
+                    status_result = await session.call_tool("get_portfolio_status", {})
+                    status = _tool_result_data(status_result)
+                    positions = status.get("positions", {}) if isinstance(status, dict) else {}
+                    cash = status.get("cash", 0.0) if isinstance(status, dict) else 0.0
                     if (
                         intent["side"] == "SELL"
                         and positions.get(intent["symbol"], 0.0) <= 0.0

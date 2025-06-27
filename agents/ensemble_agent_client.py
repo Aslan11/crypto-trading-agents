@@ -67,6 +67,14 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                 async for incoming_signal in _stream_strategy_signals(
                     http_session, base_url
                 ):
+                    intent = {
+                        "symbol": incoming_signal.get("symbol"),
+                        "side": incoming_signal.get("side"),
+                        "qty": 1.0,
+                        "price": incoming_signal.get("price", 0.0),
+                        "ts": incoming_signal.get("ts"),
+                    }
+                    intent_id = f"{intent['side']}-{intent['symbol']}-{intent['ts']}"
                     signal_str = (
                         f"Strategy signal received: {json.dumps(incoming_signal)}. "
                         f"Decide whether to approve this trade intent."
@@ -105,6 +113,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         for tool_call in msg.tool_calls:
                             func_name = tool_call.function.name
                             func_args = json.loads(tool_call.function.arguments or "{}")
+                            if func_name == "pre_trade_risk_check" and "intents" not in func_args:
+                                func_args.setdefault("intent_id", intent_id)
+                                func_args["intents"] = [intent]
                             print(
                                 f"[EnsembleAgent] Tool requested: {func_name} {func_args}"
                             )
@@ -129,6 +140,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         )
                         func_name = msg.function_call.name
                         func_args = json.loads(msg.function_call.arguments or "{}")
+                        if func_name == "pre_trade_risk_check" and "intents" not in func_args:
+                            func_args.setdefault("intent_id", intent_id)
+                            func_args["intents"] = [intent]
                         print(
                             f"[EnsembleAgent] Tool requested: {func_name} {func_args}"
                         )

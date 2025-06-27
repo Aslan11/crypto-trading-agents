@@ -84,7 +84,7 @@ tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && PYTHONP
 # 9. Pane 8 – ensemble agent (split Pane 7 vertically ↓)
 tmux select-pane  -t $EXEC_PANE
 ENS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble/ensemble_agent.py' C-m
+tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble_agent_client.py' C-m
 
 # 10. Arrange all panes into a tiled layout for equal sizing
 tmux select-layout -t $SESSION:0 tiled

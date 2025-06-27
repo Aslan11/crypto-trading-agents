@@ -194,8 +194,14 @@ async def get_portfolio_status() -> Dict[str, Any]:
     cash = await handle.query("get_cash")
     positions = await handle.query("get_positions")
     entry_prices = await handle.query("get_entry_prices")
+    pnl = await handle.query("get_pnl")
     logger.info("Ledger status retrieved")
-    return {"cash": cash, "positions": positions, "entry_prices": entry_prices}
+    return {
+        "cash": cash,
+        "positions": positions,
+        "entry_prices": entry_prices,
+        "pnl": pnl,
+    }
 
 
 @app.custom_route("/workflow/{workflow_id}/{run_id}", methods=["GET"])

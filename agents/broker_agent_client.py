@@ -22,15 +22,43 @@ logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(mess
 logger = logging.getLogger(__name__)
 
 
+_NAME_TO_PAIR = {
+    "BTC": "BTC/USD",
+    "BITCOIN": "BTC/USD",
+    "XBT": "BTC/USD",
+    "ETH": "ETH/USD",
+    "ETHEREUM": "ETH/USD",
+    "DOGE": "DOGE/USD",
+    "DOGECOIN": "DOGE/USD",
+    "LTC": "LTC/USD",
+    "LITECOIN": "LTC/USD",
+    "ADA": "ADA/USD",
+    "CARDANO": "ADA/USD",
+    "SOL": "SOL/USD",
+    "SOLANA": "SOL/USD",
+}
+
+
 def _parse_symbols(text: str) -> list[str]:
-    """Return list of crypto symbols in ``text``."""
-    return re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text.upper())
+    """Return list of crypto symbols mentioned in ``text``."""
+    pairs = re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text.upper())
+    tokens = re.split(r"[^A-Z0-9]+", text.upper())
+    for token in tokens:
+        pair = _NAME_TO_PAIR.get(token)
+        if pair and pair not in pairs:
+            pairs.append(pair)
+    return pairs
 
 
 async def _prompt_pairs() -> list[str]:
     """Prompt the user for trading pairs."""
     logger.info("Prompting for trading pairs")
-    text = await asyncio.to_thread(input, "Pairs to trade (e.g. BTC/USD,ETH/USD): ")
+    prompt = (
+        "Which crypto pairs would you like to trade? "
+        "You can use natural language such as 'Ethereum and Bitcoin' "
+        "or specify symbols like 'BTC/USD, ETH/USD': "
+    )
+    text = await asyncio.to_thread(input, prompt)
     pairs = _parse_symbols(text)
     logger.info("User selected pairs: %s", pairs)
     return pairs
@@ -97,6 +125,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
             conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
             logger.info("Connected with tools: %s", [t.name for t in tools])
 
+            logger.info("Welcome to %s!", EXCHANGE)
             pairs = await _prompt_pairs()
             await _start_stream(session, pairs)
             logger.info("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
@@ -113,7 +142,15 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     try:
                         result = await session.call_tool("get_portfolio_status", {})
                         status = _tool_result_data(result)
-                        logger.info("Status: %s", json.dumps(status))
+                        cash = status.get("cash")
+                        pnl = status.get("pnl")
+                        positions = status.get("positions", {})
+                        logger.info(
+                            "Cash: %.2f, P&L: %.2f, Positions: %s",
+                            cash,
+                            pnl,
+                            json.dumps(positions),
+                        )
                     except Exception as exc:
                         logger.error("Failed to fetch status: %s", exc)
                     continue

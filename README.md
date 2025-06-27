@@ -103,7 +103,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 1. With the tmux session running, open a new terminal window.
 2. Kick off a market data workflow for Bitcoin:
    ```bash
-   curl -X POST http://localhost:8080/tools/subscribe_cex_stream \
+   curl -X POST http://localhost:8080/mcp/tools/subscribe_cex_stream \
+     -H 'Accept: application/json, text/event-stream' \
      -H 'Content-Type: application/json' \
      -d '{"exchange": "coinbaseexchange", "symbols": ["BTC/USD"], "interval_sec": 1}'
    ```
@@ -111,9 +112,10 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
 6. The ensemble agent approves intents with `pre_trade_risk_check` and publishes them to the `IntentBus`.
-7. The mock execution service picks up approved intents and prints simulated order fills.
+7. If you run the standalone mock execution service it will consume approved
+   intents and print simulated fills. When the ensemble agent calls
+   `place_mock_order` directly this service is optional.
 
-If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when starting workflows such as `subscribe_cex_stream`. Use trading pairs like `BTC/USD`. For private Coinbase endpoints, set `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` in your environment.
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*
 mechanism after a configurable number of cycles to prevent unbounded workflow

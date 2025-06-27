@@ -54,10 +54,10 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 
 | Tool (Workflow)            | Purpose                                                | Typical Triggers        |
 |----------------------------|--------------------------------------------------------|-------------------------|
-| `SubscribeCEXStream`     | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
+| `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
-| `EvaluateStrategyMomentum` | Log momentum signals (optional cooldown)     | Feature vector        |
-| `PreTradeRiskCheck`      | Validate intents against simple VaR limits     | Order intents         |
+| `evaluate_strategy_momentum` | Log momentum signals (optional cooldown)     | Feature vector        |
+| `pre_trade_risk_check`      | Validate intents against simple VaR limits     | Order intents         |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
 | `SignAndSendTx`          | Sign and broadcast an EVM transaction          | Execution             |
@@ -103,19 +103,21 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 1. With the tmux session running, open a new terminal window.
 2. Kick off a market data workflow for Bitcoin:
    ```bash
-   curl -X POST http://localhost:8080/tools/SubscribeCEXStream \
+   curl -X POST http://localhost:8080/mcp/tools/subscribe_cex_stream \
+     -H 'Accept: application/json, text/event-stream' \
      -H 'Content-Type: application/json' \
      -d '{"exchange": "coinbaseexchange", "symbols": ["BTC/USD"], "interval_sec": 1}'
    ```
-3. `SubscribeCEXStream` records ticks to the `market_tick` signal.
+3. `subscribe_cex_stream` records ticks to the `market_tick` signal.
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
-5. The momentum service emits buy/sell signals using `EvaluateStrategyMomentum` and continues processing while the tool runs.
-6. The ensemble agent approves intents with `PreTradeRiskCheck` and publishes them to the `IntentBus`.
-7. The mock execution service picks up approved intents and prints simulated order fills.
+5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
+6. The ensemble agent approves intents with `pre_trade_risk_check` and publishes them to the `IntentBus`.
+7. If you run the standalone mock execution service it will consume approved
+   intents and print simulated fills. When the ensemble agent calls
+   `place_mock_order` directly this service is optional.
 
-If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when starting workflows such as `SubscribeCEXStream`. Use trading pairs like `BTC/USD`. For private Coinbase endpoints, set `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` in your environment.
 
-`SubscribeCEXStream` automatically restarts itself via Temporal's *continue as new*
+`subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*
 mechanism after a configurable number of cycles to prevent unbounded workflow
 history growth. The default interval is one hour (3600 cycles) and can be
 changed by setting the `STREAM_CONTINUE_EVERY` environment variable. The workflow

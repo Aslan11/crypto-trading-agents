@@ -29,13 +29,13 @@ fi
 # │ worker/main.py│ feature_engineering_service.py │
 # ├───────────────┼────────────────────────┤
 # │ Pane 5        │ Pane 4                 │
-# │ (shell)       │ momentum_service.py      │
+# │ broker_agent_client.py │ momentum_service.py      │
 # ├───────────────┼────────────────────────┤
 # │ Pane 6        │ Pane 7                 │
-# │ shared_bus.py │ execution/mock_exec_service.py │
+# │ (shell)       │ execution/mock_exec_service.py │
 # ├───────────────┴────────────────────────┤
 # │ Pane 8                                │
-# │ ensemble/ensemble_agent.py            │
+# │ ensemble_agent_client.py              │
 # └────────────────────────────────────────┘
 ###############################################################################
 
@@ -69,7 +69,7 @@ tmux select-layout -t $SESSION:0 tiled
 # 6. Pane 5 – broker agent (split Pane 4 horizontally ←)
 tmux select-pane  -t $MOM_PANE
 BROKER_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $BROKER_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/broker_agent.py' C-m
+tmux send-keys    -t $BROKER_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/broker_agent_client.py' C-m
 
 # 7. Pane 6 – blank shell (split Pane 5 vertically ↓)
 tmux select-pane  -t $BROKER_PANE
@@ -84,7 +84,7 @@ tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && PYTHONP
 # 9. Pane 8 – ensemble agent (split Pane 7 vertically ↓)
 tmux select-pane  -t $EXEC_PANE
 ENS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && python -m agents.ensemble.ensemble_agent' C-m
+tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble_agent_client.py' C-m
 
 # 10. Arrange all panes into a tiled layout for equal sizing
 tmux select-layout -t $SESSION:0 tiled

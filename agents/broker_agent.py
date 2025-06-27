@@ -228,7 +228,7 @@ async def _start_stream(symbols: List[str]) -> None:
         return
 
     payload = {"exchange": EXCHANGE, "symbols": symbols}
-    url = f"http://{MCP_HOST}:{MCP_PORT}/tools/SubscribeCEXStream"
+    url = f"http://{MCP_HOST}:{MCP_PORT}/tools/subscribe_cex_stream"
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=30)
     ) as session:

@@ -7,11 +7,15 @@ import logging
 import os
 import signal
 import sys
+import json
 from pathlib import Path
 from typing import Any, AsyncIterator, Set
 
 
 import aiohttp
+from mcp import ClientSession as MCPClientSession
+from mcp.client.streamable_http import streamablehttp_client
+from mcp.types import CallToolResult, TextContent
 
 
 def _add_project_root_to_path() -> None:
@@ -33,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
+MCP_PATH = os.environ.get(
+    "MCP_BASE_PATH",
+    os.environ.get("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp"),
+).rstrip("/")
 COOLDOWN_SEC = int(os.environ.get("COOLDOWN_SEC", "30"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "0.5"))
@@ -100,44 +108,6 @@ def _cross(prev: dict, curr: dict) -> str | None:
     return None
 
 
-async def _start_tool(
-    session: aiohttp.ClientSession, signal_payload: dict
-) -> tuple[str, str] | None:
-    url = f"http://{MCP_HOST}:{MCP_PORT}/tools/EvaluateStrategyMomentum"
-    payload = {"signal": signal_payload}
-    try:
-        async with session.post(url, json=payload) as resp:
-            if resp.status == 202:
-                data = await resp.json()
-                return data["workflow_id"], data["run_id"]
-            logger.warning("Tool start error %s", resp.status)
-    except Exception as exc:
-        logger.error("Failed to start tool: %s", exc)
-    return None
-
-
-async def _poll_tool(
-    session: aiohttp.ClientSession, wf_id: str, run_id: str
-) -> dict | None:
-    url = f"http://{MCP_HOST}:{MCP_PORT}/workflow/{wf_id}/{run_id}"
-    while not STOP_EVENT.is_set():
-        await asyncio.sleep(POLL_INTERVAL)
-        try:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    logger.warning("Poll error %s", resp.status)
-                    continue
-                data = await resp.json()
-        except Exception as exc:  # pragma: no cover - network errors
-            logger.error("Workflow poll error: %s", exc)
-            continue
-        status = data.get("status")
-        if status == "COMPLETED":
-            return data.get("result")
-        if status != "RUNNING":
-            logger.error("Workflow %s ended with %s", wf_id, status)
-            return data.get("result")
-    return None
 
 
 async def _record_signal(session: aiohttp.ClientSession, payload: dict) -> None:
@@ -149,20 +119,43 @@ async def _record_signal(session: aiohttp.ClientSession, payload: dict) -> None:
         logger.error("Failed to record signal: %s", exc)
 
 
-async def _run_tool(session: aiohttp.ClientSession, payload: dict) -> None:
-    """Start momentum evaluation tool and record the result asynchronously."""
-    wf = await _start_tool(session, payload)
-    if not wf:
-        logger.warning("Failed to start momentum tool")
+def _tool_result_data(result: Any) -> Any:
+    """Return JSON-friendly data from a tool call result."""
+    if isinstance(result, CallToolResult):
+        if result.content:
+            first = result.content[0]
+            if isinstance(first, TextContent):
+                try:
+                    return json.loads(first.text)
+                except Exception:
+                    return first.text
+        return [
+            c.model_dump() if hasattr(c, "model_dump") else c
+            for c in result.content
+        ]
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    return result
+
+
+async def _run_tool(
+    http_session: aiohttp.ClientSession,
+    mcp_session: MCPClientSession,
+    payload: dict,
+) -> None:
+    """Call the momentum tool via FastMCP and record the result."""
+    try:
+        result = await mcp_session.call_tool(
+            "evaluate_strategy_momentum", {"signal": payload}
+        )
+    except Exception as exc:
+        logger.error("Failed to start momentum tool: %s", exc)
         return
-    wf_id, run_id = wf
-    result = await _poll_tool(session, wf_id, run_id)
-    logger.info(
-        "Tool completed with result:\n%s",
-        format_log(result),
-    )
-    if result:
-        await _record_signal(session, result)
+
+    data = _tool_result_data(result)
+    logger.info("Tool completed with result:\n%s", format_log(data))
+    if isinstance(data, dict):
+        await _record_signal(http_session, data)
 
 
 async def main() -> None:
@@ -175,45 +168,47 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, _handle_sigint)
 
-    async def _subscribe_all_vectors() -> AsyncIterator[tuple[str, dict]]:
+    async def _subscribe_all_vectors(
+        session: aiohttp.ClientSession,
+    ) -> AsyncIterator[tuple[str, dict]]:
         cursor = 0
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            while not STOP_EVENT.is_set():
-                try:
-                    async with session.get(url, params={"after": cursor}) as resp:
-                        if resp.status == 200:
-                            events = await resp.json()
-                        else:
-                            logger.warning("Vector poll error %s", resp.status)
-                            events = []
-                except Exception as exc:
-                    logger.error("Vector poll failed: %s", exc)
-                    events = []
+        while not STOP_EVENT.is_set():
+            try:
+                async with session.get(url, params={"after": cursor}) as resp:
+                    if resp.status == 200:
+                        events = await resp.json()
+                    else:
+                        logger.warning("Vector poll error %s", resp.status)
+                        events = []
+            except Exception as exc:
+                logger.error("Vector poll failed: %s", exc)
+                events = []
 
-                if not events:
-                    await asyncio.sleep(1)
+            if not events:
+                await asyncio.sleep(1)
+                continue
+
+            for evt in events:
+                if STOP_EVENT.is_set():
+                    return
+                sym = evt.get("symbol")
+                ts = evt.get("ts")
+                data = evt.get("data")
+                if sym is None or ts is None or not isinstance(data, dict):
                     continue
+                cursor = max(cursor, ts)
+                yield sym, data
 
-                for evt in events:
-                    if STOP_EVENT.is_set():
-                        return
-                    sym = evt.get("symbol")
-                    ts = evt.get("ts")
-                    data = evt.get("data")
-                    if sym is None or ts is None or not isinstance(data, dict):
-                        continue
-                    cursor = max(cursor, ts)
-                    yield sym, data
-
-    async def _run(session: aiohttp.ClientSession) -> None:
+    async def _run(
+        http_session: aiohttp.ClientSession, mcp_session: MCPClientSession
+    ) -> None:
         client = await _get_client()
         handles: dict[str, Any] = {}
         last_sig: dict[str, int] = {}
         tasks: Set[asyncio.Task] = set()
 
-        async for symbol, vector in _subscribe_all_vectors():
+        async for symbol, vector in _subscribe_all_vectors(http_session):
             if symbol not in handles:
                 await _ensure_workflow(client, symbol)
                 handles[symbol] = client.get_workflow_handle(_wf_id(symbol))
@@ -229,7 +224,9 @@ async def main() -> None:
             side = sig["side"]
             payload = {"symbol": symbol, "side": side, "ts": last_sig[symbol]}
             logger.info("Emitting %s signal for %s", side, symbol)
-            task = asyncio.create_task(_run_tool(session, payload))
+            task = asyncio.create_task(
+                _run_tool(http_session, mcp_session, payload)
+            )
             tasks.add(task)
             task.add_done_callback(tasks.discard)
 
@@ -237,8 +234,12 @@ async def main() -> None:
             await asyncio.gather(*tasks)
 
     timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        await _run(session)
+    async with aiohttp.ClientSession(timeout=timeout) as http_session:
+        mcp_url = f"http://{MCP_HOST}:{MCP_PORT}{MCP_PATH}"
+        async with streamablehttp_client(mcp_url) as (read_stream, write_stream, _):
+            async with MCPClientSession(read_stream, write_stream) as mcp_session:
+                await mcp_session.initialize()
+                await _run(http_session, mcp_session)
 
 
 if __name__ == "__main__":

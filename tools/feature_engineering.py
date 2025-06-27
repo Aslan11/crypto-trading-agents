@@ -11,12 +11,17 @@ from temporalio import activity, workflow
 import aiohttp
 import os
 import asyncio
+import logging
 
 SMA_SHORT_MIN = int(os.environ.get("SMA_SHORT_MIN", "1"))
 SMA_LONG_MIN = int(os.environ.get("SMA_LONG_MIN", "5"))
 VECTOR_WINDOW_SEC = int(os.environ.get("VECTOR_WINDOW_SEC", str(SMA_LONG_MIN * 60)))
 VECTOR_CONTINUE_EVERY = int(os.environ.get("VECTOR_CONTINUE_EVERY", "3600"))
 VECTOR_HISTORY_LIMIT = int(os.environ.get("VECTOR_HISTORY_LIMIT", "9000"))
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -85,8 +90,8 @@ async def record_vector(vector: dict) -> None:
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             await session.post(url, json=vector)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Failed to record vector: %s", exc)
 
 
 @workflow.defn

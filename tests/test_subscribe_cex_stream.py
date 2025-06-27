@@ -17,12 +17,11 @@ async def test_subscribe_cex_stream():
         client = TestClient(app)
         try:
             resp = client.post(
-                "/tools/SubscribeCEXStream",
+                "/tools/subscribe_cex_stream",
                 json={
                     "exchange": "coinbaseexchange",
                     "symbols": ["BTC/USD"],
                     "interval_sec": 0.1,
-                    "max_cycles": 2,
                 },
             )
             assert resp.status_code == 202

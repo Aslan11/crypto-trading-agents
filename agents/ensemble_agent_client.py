@@ -72,18 +72,21 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         f"Decide whether to approve this trade intent."
                     )
                     conversation.append({"role": "user", "content": signal_str})
-                    functions = [
+                    openai_tools = [
                         {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.inputSchema,
+                            "type": "function",
+                            "function": {
+                                "name": tool.name,
+                                "description": tool.description,
+                                "parameters": tool.inputSchema,
+                            },
                         }
                         for tool in tools
                     ]
                     response = openai_client.chat.completions.create(
                         model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                         messages=conversation,
-                        tools=functions,
+                        tools=openai_tools,
                         tool_choice="auto",
                     )
                     msg = response.choices[0].message

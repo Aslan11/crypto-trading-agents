@@ -112,7 +112,9 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
 6. The ensemble agent approves intents with `pre_trade_risk_check` and publishes them to the `IntentBus`.
-7. The mock execution service picks up approved intents and prints simulated order fills.
+7. If you run the standalone mock execution service it will consume approved
+   intents and print simulated fills. When the ensemble agent calls
+   `place_mock_order` directly this service is optional.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*

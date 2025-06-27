@@ -118,12 +118,11 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 func_args = json.loads(
                                     tool_call.function.arguments or "{}"
                                 )
-                                if (
-                                    func_name == "pre_trade_risk_check"
-                                    and "intents" not in func_args
-                                ):
+                                if func_name == "pre_trade_risk_check" and "intents" not in func_args:
                                     func_args.setdefault("intent_id", intent_id)
                                     func_args["intents"] = [intent]
+                                if func_name == "place_mock_order" and "intent" not in func_args:
+                                    func_args["intent"] = intent
                                 print(
                                     f"[EnsembleAgent] Tool requested: {func_name} {func_args}"
                                 )
@@ -148,12 +147,11 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             )
                             func_name = msg.function_call.name
                             func_args = json.loads(msg.function_call.arguments or "{}")
-                            if (
-                                func_name == "pre_trade_risk_check"
-                                and "intents" not in func_args
-                            ):
+                            if func_name == "pre_trade_risk_check" and "intents" not in func_args:
                                 func_args.setdefault("intent_id", intent_id)
                                 func_args["intents"] = [intent]
+                            if func_name == "place_mock_order" and "intent" not in func_args:
+                                func_args["intent"] = intent
                             print(
                                 f"[EnsembleAgent] Tool requested: {func_name} {func_args}"
                             )

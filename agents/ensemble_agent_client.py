@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+from typing import AsyncIterator
 import aiohttp
 import openai
 from mcp import ClientSession
@@ -17,7 +18,7 @@ SYSTEM_PROMPT = (
 
 async def _stream_strategy_signals(
     session: aiohttp.ClientSession, base_url: str
-) -> asyncio.AsyncIterator[dict]:
+) -> AsyncIterator[dict]:
     """Yield strategy signals from the MCP server."""
     cursor = 0
     url = base_url.rstrip("/") + "/signal/strategy_signal"

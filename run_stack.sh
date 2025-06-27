@@ -31,10 +31,7 @@ fi
 # │ Pane 5        │ Pane 4                 │
 # │ broker_agent_client.py │ momentum_service.py      │
 # ├───────────────┼────────────────────────┤
-# │ Pane 6        │ Pane 7                 │
-# │ (shell)       │ execution/mock_exec_service.py │
-# ├───────────────┴────────────────────────┤
-# │ Pane 8                                │
+# │ Pane 6                                │
 # │ ensemble_agent_client.py              │
 # └────────────────────────────────────────┘
 ###############################################################################
@@ -71,18 +68,8 @@ tmux select-pane  -t $MOM_PANE
 BROKER_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $BROKER_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/broker_agent_client.py' C-m
 
-# 7. Pane 6 – blank shell (split Pane 5 vertically ↓)
+# 7. Pane 6 – ensemble agent (split Pane 5 vertically ↓)
 tmux select-pane  -t $BROKER_PANE
-BLANK_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $BLANK_PANE 'sleep 2 && source .venv/bin/activate' C-m
-
-# 8. Pane 7 – mock execution service (split Pane 6 horizontally →)
-tmux select-pane  -t $BLANK_PANE
-EXEC_PANE=$(tmux split-window -h -P -F "#{pane_id}")
-tmux send-keys    -t $EXEC_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/execution/mock_exec_service.py' C-m
-
-# 9. Pane 8 – ensemble agent (split Pane 7 vertically ↓)
-tmux select-pane  -t $EXEC_PANE
 ENS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
 tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble_agent_client.py' C-m
 

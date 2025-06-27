@@ -114,7 +114,6 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 6. The ensemble agent approves intents with `pre_trade_risk_check` and publishes them to the `IntentBus`.
 7. The mock execution service picks up approved intents and prints simulated order fills.
 
-If Binance is blocked in your region, pass `"exchange": "coinbaseexchange"` when starting workflows such as `subscribe_cex_stream`. Use trading pairs like `BTC/USD`. For private Coinbase endpoints, set `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` in your environment.
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*
 mechanism after a configurable number of cycles to prevent unbounded workflow

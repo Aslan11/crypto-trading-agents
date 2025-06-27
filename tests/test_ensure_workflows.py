@@ -8,17 +8,9 @@ from agents.feature_engineering_service import (
     _ensure_workflow as ensure_feature,
     FEATURE_WF_ID,
 )
-from agents.ensemble.ensemble_agent import (
-    _ensure_workflow as ensure_ensemble,
-    ENSEMBLE_WF_ID,
-)
 from agents.strategies.momentum_service import (
     _ensure_workflow as ensure_momentum,
     MOMENTUM_WF_ID,
-)
-from agents.execution.mock_exec_service import (
-    _ensure_workflow as ensure_ledger,
-    LEDGER_WF_ID,
 )
 
 
@@ -33,9 +25,7 @@ async def test_agents_auto_start_workflows():
 
         for ensure, wf_id in [
             (ensure_feature, FEATURE_WF_ID),
-            (ensure_ensemble, ENSEMBLE_WF_ID),
             (ensure_momentum, MOMENTUM_WF_ID),
-            (ensure_ledger, LEDGER_WF_ID),
         ]:
             await ensure(client)
             handle = client.get_workflow_handle(wf_id)

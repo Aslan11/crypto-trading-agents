@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
     """Return the latest ticker for ``symbol`` from ``exchange``."""
     import ccxt.async_support as ccxt
-    exchange_cls = getattr(ccxt, exchange)
+    exchange_cls = getattr(ccxt, exchange.lower())
     client = exchange_cls()
     try:
         data = await client.fetch_ticker(symbol)

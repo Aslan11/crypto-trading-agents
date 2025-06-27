@@ -91,29 +91,65 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         }
                         for tool in tools
                     ]
-                    response = openai_client.chat.completions.create(
-                        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
-                        messages=conversation,
-                        tools=openai_tools,
-                        tool_choice="auto",
-                    )
-                    msg = response.choices[0].message
-
-                    # Newer versions of the OpenAI SDK return a ChatCompletionMessage
-                    # object. Inspect its attributes instead of treating it like a
-                    # dictionary.
-                    if getattr(msg, "tool_calls", None):
-                        conversation.append(
-                            {
-                                "role": msg.role,
-                                "content": msg.content,
-                                "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
-                            }
+                    while True:
+                        response = openai_client.chat.completions.create(
+                            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                            messages=conversation,
+                            tools=openai_tools,
+                            tool_choice="auto",
                         )
-                        for tool_call in msg.tool_calls:
-                            func_name = tool_call.function.name
-                            func_args = json.loads(tool_call.function.arguments or "{}")
-                            if func_name == "pre_trade_risk_check" and "intents" not in func_args:
+                        msg = response.choices[0].message
+
+                        # Newer versions of the OpenAI SDK return a ChatCompletionMessage
+                        # object. Inspect its attributes instead of treating it like a
+                        # dictionary.
+                        if getattr(msg, "tool_calls", None):
+                            conversation.append(
+                                {
+                                    "role": msg.role,
+                                    "content": msg.content,
+                                    "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+                                }
+                            )
+                            for tool_call in msg.tool_calls:
+                                func_name = tool_call.function.name
+                                func_args = json.loads(
+                                    tool_call.function.arguments or "{}"
+                                )
+                                if (
+                                    func_name == "pre_trade_risk_check"
+                                    and "intents" not in func_args
+                                ):
+                                    func_args.setdefault("intent_id", intent_id)
+                                    func_args["intents"] = [intent]
+                                print(
+                                    f"[EnsembleAgent] Tool requested: {func_name} {func_args}"
+                                )
+                                result = await session.call_tool(func_name, func_args)
+                                conversation.append(
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": tool_call.id,
+                                        "name": func_name,
+                                        "content": json.dumps(result.model_dump()),
+                                    }
+                                )
+                            continue
+
+                        if getattr(msg, "function_call", None):
+                            conversation.append(
+                                {
+                                    "role": msg.role,
+                                    "content": msg.content,
+                                    "function_call": msg.function_call.model_dump(),
+                                }
+                            )
+                            func_name = msg.function_call.name
+                            func_args = json.loads(msg.function_call.arguments or "{}")
+                            if (
+                                func_name == "pre_trade_risk_check"
+                                and "intents" not in func_args
+                            ):
                                 func_args.setdefault("intent_id", intent_id)
                                 func_args["intents"] = [intent]
                             print(
@@ -122,48 +158,22 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             result = await session.call_tool(func_name, func_args)
                             conversation.append(
                                 {
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
+                                    "role": "function",
                                     "name": func_name,
                                     "content": json.dumps(result.model_dump()),
                                 }
                             )
-                        continue
+                            continue
 
-                    if getattr(msg, "function_call", None):
+                        assistant_reply = msg.content or ""
                         conversation.append(
-                            {
-                                "role": msg.role,
-                                "content": msg.content,
-                                "function_call": msg.function_call.model_dump(),
-                            }
+                            {"role": "assistant", "content": assistant_reply}
                         )
-                        func_name = msg.function_call.name
-                        func_args = json.loads(msg.function_call.arguments or "{}")
-                        if func_name == "pre_trade_risk_check" and "intents" not in func_args:
-                            func_args.setdefault("intent_id", intent_id)
-                            func_args["intents"] = [intent]
-                        print(
-                            f"[EnsembleAgent] Tool requested: {func_name} {func_args}"
-                        )
-                        result = await session.call_tool(func_name, func_args)
-                        conversation.append(
-                            {
-                                "role": "function",
-                                "name": func_name,
-                                "content": json.dumps(result.model_dump()),
-                            }
-                        )
-                        continue
-
-                    assistant_reply = msg.content or ""
-                    conversation.append(
-                        {"role": "assistant", "content": assistant_reply}
-                    )
-                    print(f"[EnsembleAgent] Decision: {assistant_reply}")
-                    conversation = [
-                        {"role": "system", "content": SYSTEM_PROMPT}
-                    ]
+                        print(f"[EnsembleAgent] Decision: {assistant_reply}")
+                        conversation = [
+                            {"role": "system", "content": SYSTEM_PROMPT}
+                        ]
+                        break
 
 if __name__ == "__main__":
     asyncio.run(run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))

@@ -185,20 +185,20 @@ async def main() -> None:
                 logger.error("Vector poll failed: %s", exc)
                 events = []
 
-                if not events:
-                    await asyncio.sleep(1)
-                    continue
+            if not events:
+                await asyncio.sleep(1)
+                continue
 
-                for evt in events:
-                    if STOP_EVENT.is_set():
-                        return
-                    sym = evt.get("symbol")
-                    ts = evt.get("ts")
-                    data = evt.get("data")
-                    if sym is None or ts is None or not isinstance(data, dict):
-                        continue
-                    cursor = max(cursor, ts)
-                    yield sym, data
+            for evt in events:
+                if STOP_EVENT.is_set():
+                    return
+                sym = evt.get("symbol")
+                ts = evt.get("ts")
+                data = evt.get("data")
+                if sym is None or ts is None or not isinstance(data, dict):
+                    continue
+                cursor = max(cursor, ts)
+                yield sym, data
 
     async def _run(
         http_session: aiohttp.ClientSession, mcp_session: MCPClientSession

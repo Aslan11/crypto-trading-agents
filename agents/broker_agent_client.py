@@ -249,10 +249,14 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     except Exception as exc:
                         logger.error("LLM request failed: %s", exc)
                         continue
-                elif "function_call" in msg_dict:
+                elif msg_dict.get("function_call"):
                     conversation.append(msg_dict)
-                    func_name = msg_dict["function_call"]["name"]
-                    func_args = json.loads(msg_dict["function_call"].get("arguments") or "{}")
+                    function_call = msg_dict["function_call"]
+                    func_name = function_call.get("name")
+                    if not func_name:
+                        logger.error("Received function_call without name: %s", msg_dict)
+                        continue
+                    func_args = json.loads(function_call.get("arguments") or "{}")
                     logger.info("Invoking tool %s with %s", func_name, func_args)
                     try:
                         result = await session.call_tool(func_name, func_args)

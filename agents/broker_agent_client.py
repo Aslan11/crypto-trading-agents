@@ -41,12 +41,25 @@ _NAME_TO_PAIR = {
 
 def _parse_symbols(text: str) -> list[str]:
     """Return list of crypto symbols mentioned in ``text``."""
-    pairs = re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text.upper())
-    tokens = re.split(r"[^A-Z0-9]+", text.upper())
-    for token in tokens:
+    text = text.upper()
+    pairs: list[str] = []
+
+    # First look for explicit pair expressions like ``BTC/USD`` or ``BITCOIN/US``.
+    for raw in re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text):
+        base, _ = raw.split("/", 1)
+        mapped = _NAME_TO_PAIR.get(base)
+        if mapped and mapped not in pairs:
+            pairs.append(mapped)
+        elif raw not in pairs:
+            pairs.append(raw)
+
+    # Also consider individual tokens like ``BITCOIN`` and map them to canonical
+    # trading pairs.
+    for token in re.split(r"[^A-Z0-9]+", text):
         pair = _NAME_TO_PAIR.get(token)
         if pair and pair not in pairs:
             pairs.append(pair)
+
     return pairs
 
 

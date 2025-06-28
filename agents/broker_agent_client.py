@@ -217,9 +217,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     logger.error("LLM request failed: %s", exc)
                     continue
 
-                if "tool_calls" in msg_dict:
+                if "tool_calls" in msg_dict and msg_dict.get("tool_calls"):
                     conversation.append(msg_dict)
-                    for call in msg_dict["tool_calls"]:
+                    for call in msg_dict.get("tool_calls", []):
                         func_name = call["function"]["name"]
                         func_args = json.loads(call["function"].get("arguments") or "{}")
                         logger.info("Invoking tool %s with %s", func_name, func_args)

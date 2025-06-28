@@ -85,6 +85,10 @@ async def _prompt_pairs(conversation: list[dict[str, str]]) -> list[str]:
             assistant_msg = msg_dict.get("content", "")
             conversation.append({"role": "assistant", "content": assistant_msg})
             logger.info("Response: %s", assistant_msg)
+            pairs = _parse_symbols(assistant_msg)
+            if pairs:
+                logger.info("User selected pairs: %s", pairs)
+                return pairs
         except Exception as exc:
             logger.error("LLM request failed: %s", exc)
 

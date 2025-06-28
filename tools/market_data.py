@@ -38,6 +38,9 @@ async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
     exchange_cls = getattr(ccxt, exchange.lower())
     client = exchange_cls()
     try:
+        await client.load_markets()
+        if symbol not in getattr(client, "symbols", []):
+            raise ValueError(f"Unsupported trading pair {symbol} on {exchange}")
         data = await client.fetch_ticker(symbol)
         return MarketTick(exchange=exchange, symbol=symbol, data=data).model_dump()
     except Exception as exc:

@@ -50,18 +50,44 @@ def _parse_symbols(text: str) -> list[str]:
     return pairs
 
 
-async def _prompt_pairs() -> list[str]:
-    """Prompt the user for trading pairs."""
+async def _prompt_pairs(conversation: list[dict[str, str]]) -> list[str]:
+    """Prompt the user for trading pairs, allowing small talk."""
     logger.info("Prompting for trading pairs")
     prompt = (
         "Which crypto pairs would you like to trade? "
         "You can use natural language such as 'Ethereum and Bitcoin' "
         "or specify symbols like 'BTC/USD, ETH/USD': "
     )
-    text = await asyncio.to_thread(input, prompt)
-    pairs = _parse_symbols(text)
-    logger.info("User selected pairs: %s", pairs)
-    return pairs
+
+    while True:
+        text = await asyncio.to_thread(input, prompt)
+        if text.strip().lower() in {"quit", "exit"}:
+            return []
+
+        pairs = _parse_symbols(text)
+        if pairs:
+            logger.info("User selected pairs: %s", pairs)
+            return pairs
+
+        conversation.append({"role": "user", "content": text})
+
+        if _openai_client is None:
+            logger.info("Please specify trading pairs like BTC/USD")
+            continue
+
+        try:
+            response = _openai_client.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                messages=conversation,
+            )
+            msg = response.choices[0].message
+            msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
+            assistant_msg = msg_dict.get("content", "")
+            conversation.append({"role": "assistant", "content": assistant_msg})
+            logger.info("Response: %s", assistant_msg)
+        except Exception as exc:
+            logger.error("LLM request failed: %s", exc)
+
 
 
 def _tool_result_data(result: Any) -> Any:
@@ -126,7 +152,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
             logger.info("Connected with tools: %s", [t.name for t in tools])
 
             logger.info("Welcome to %s!", EXCHANGE)
-            pairs = await _prompt_pairs()
+            pairs = await _prompt_pairs(conversation)
             await _start_stream(session, pairs)
             logger.info("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
 

@@ -3,6 +3,7 @@ import json
 import os
 import logging
 from typing import Dict, List
+import re
 import contextlib
 
 import aiohttp
@@ -34,11 +35,20 @@ class TickerApp(App):
     def __init__(self) -> None:
         super().__init__()
         self.data: Dict[str, List[float]] = {}
+        self.symbol_map: Dict[str, str] = {}
         self.cursor = 0
         self.watcher: asyncio.Task | None = None
 
     def compose(self) -> ComposeResult:
         yield TabbedContent()
+
+    @staticmethod
+    def _pane_id(sym: str) -> str:
+        """Return a safe DOM id derived from ``sym``."""
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "-", sym)
+        if re.match(r"^[0-9]", safe):
+            safe = f"sym-{safe}"
+        return safe
 
     async def on_mount(self) -> None:
         self.tabbed = self.query_one(TabbedContent)
@@ -99,8 +109,10 @@ class TickerApp(App):
                                 price = data.get("mid")
                                 if isinstance(price, (int, float)):
                                     logger.debug("%s price=%s ts=%s", sym, price, ts)
-                                    self.data.setdefault(sym, []).append(price)
-                                    self.data[sym] = self.data[sym][-120:]
+                                    key = self._pane_id(sym)
+                                    self.symbol_map[key] = sym
+                                    self.data.setdefault(key, []).append(price)
+                                    self.data[key] = self.data[key][-120:]
                                     await self.ensure_tab(sym)
                             if isinstance(ts, int):
                                 self.cursor = max(self.cursor, ts)
@@ -111,9 +123,10 @@ class TickerApp(App):
 
     async def ensure_tab(self, sym: str) -> None:
         """Create a tab for ``sym`` if it doesn't already exist."""
+        pane_id = self._pane_id(sym)
 
         try:
-            self.tabbed.get_pane(sym)
+            self.tabbed.get_pane(pane_id)
         except NoMatches:
             logger.info("Creating tab for %s", sym)
             try:
@@ -124,11 +137,11 @@ class TickerApp(App):
                 await self.tabbed.remove_pane("__wait")
 
             await self.tabbed.add_pane(
-                TabPane(sym, Static("Waiting for data…"), id=sym)
+                TabPane(sym, Static("Waiting for data…"), id=pane_id)
             )
 
             if self.tabbed.active in (None, "__wait"):
-                self.tabbed.active = sym
+                self.tabbed.active = pane_id
         else:
             logger.debug("Tab for %s already exists", sym)
 

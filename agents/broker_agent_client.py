@@ -82,39 +82,14 @@ def _tool_result_data(result: Any) -> Any:
     return result
 
 
-async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
-    if not symbols:
-        return
-    payload = {"symbols": symbols}
-    try:
-        logger.info("Starting stream for %s", symbols)
-        result = await session.call_tool("subscribe_cex_stream", payload)
-        data = _tool_result_data(result)
-        if isinstance(data, dict):
-            wf_id = data.get("workflow_id")
-            run_id = data.get("run_id")
-        else:
-            wf_id = None
-            run_id = None
-        if wf_id and run_id:
-            logger.info(
-                "Stream started for %s via workflow %s run %s",
-                symbols,
-                wf_id,
-                run_id,
-            )
-        else:
-            logger.info("Stream started for %s", symbols)
-    except Exception as exc:
-        logger.error("Failed to start stream: %s", exc)
-
 SYSTEM_PROMPT = (
     "You are a trading broker agent operating on the Coinbase exchange. "
     "Ask the user which of these trading pairs they want to trade: "
     "BTC/USD, ETH/USD, DOGE/USD, LTC/USD, ADA/USD, SOL/USD, DOT/USD. "
     "Only trade pairs you know are available on Coinbase. "
     "You manage execution of trades and the account state. "
-    "When asked to execute a trade or query account status, use the appropriate tool and report the result."
+    "When asked to execute a trade or query account status, use the appropriate tool and report the result. "
+    "As soon as the user confirms their desired pairs, automatically begin streaming market data for them via the `start_market_stream` tool."
 )
 
 async def get_next_broker_command() -> str | None:
@@ -180,7 +155,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 except Exception as exc:
                     logger.error("LLM request failed: %s", exc)
 
-            await _start_stream(session, pairs)
+            if pairs:
+                logger.info("User selected pairs: %s", pairs)
+            
             logger.info("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
 
             while True:

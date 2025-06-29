@@ -35,7 +35,7 @@ class TickerApp(App):
     async def on_mount(self) -> None:
         self.tabbed = self.query_one(TabbedContent)
         await self.tabbed.add_pane(TabPane("Waiting for pairs…", id="__wait"))
-        await self.tabbed.switch_pane("__wait")
+        self.tabbed.active = "__wait"
         self.watcher = asyncio.create_task(self.watch_vectors())
         self.set_interval(REFRESH_SEC, self.update_current_tab)
 
@@ -83,7 +83,7 @@ class TickerApp(App):
             if self.tabbed.get_pane("__wait"):
                 await self.tabbed.remove_pane("__wait")
             await self.tabbed.add_pane(TabPane(sym, id=sym))
-            await self.tabbed.switch_pane(sym)
+            self.tabbed.active = sym
 
     def update_current_tab(self) -> None:
         pane = self.tabbed.active_pane

@@ -20,6 +20,6 @@ dependencies = [
     "openai>=1.86.0",
     "fastmcp>=2.9.2",
     "pytest>=8.4.1",
-    "textual>=1.0,<1.5",
+    "textual>=0.48,<0.50",
     "plotille>=5.0.0",
 ]

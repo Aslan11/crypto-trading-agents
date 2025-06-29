@@ -8,6 +8,7 @@ import aiohttp
 import plotille
 from textual.app import App, ComposeResult
 from textual.widgets._tabbed_content import TabPane, TabbedContent, Tabs
+from textual.widgets import Static
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -34,7 +35,9 @@ class TickerApp(App):
 
     async def on_mount(self) -> None:
         self.tabbed = self.query_one(TabbedContent)
-        await self.tabbed.add_pane(TabPane("Waiting for pairs…", id="__wait"))
+        await self.tabbed.add_pane(
+            TabPane("Waiting", Static("Waiting for pairs…"), id="__wait")
+        )
         self.tabbed.active = "__wait"
         self.watcher = asyncio.create_task(self.watch_vectors())
         self.set_interval(REFRESH_SEC, self.update_current_tab)
@@ -82,15 +85,20 @@ class TickerApp(App):
         if self.tabbed.get_pane(sym) is None:
             if self.tabbed.get_pane("__wait"):
                 await self.tabbed.remove_pane("__wait")
-            await self.tabbed.add_pane(TabPane(sym, id=sym))
+            await self.tabbed.add_pane(
+                TabPane(sym, Static("Waiting for data…"), id=sym)
+            )
             self.tabbed.active = sym
 
     def update_current_tab(self) -> None:
         pane = self.tabbed.active_pane
-        if pane and pane.id and pane.id in self.data:
-            pane.update(self.render_graph(pane.id))
-        elif pane and pane.id == "__wait":
-            pane.update("Waiting for pairs…")
+        if not pane:
+            return
+        static = pane.query_one(Static)
+        if pane.id and pane.id in self.data:
+            static.update(self.render_graph(pane.id))
+        elif pane.id == "__wait":
+            static.update("Waiting for pairs…")
 
     def render_graph(self, sym: str) -> str:
         prices = self.data.get(sym, [])

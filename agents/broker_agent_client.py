@@ -13,56 +13,12 @@ except Exception:  # pragma: no cover - optional dependency
     _openai_client = None
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-import re
 
 EXCHANGE = "coinbaseexchange"
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
-
-
-_NAME_TO_PAIR = {
-    "BTC": "BTC/USD",
-    "BITCOIN": "BTC/USD",
-    "XBT": "BTC/USD",
-    "ETH": "ETH/USD",
-    "ETHEREUM": "ETH/USD",
-    "DOGE": "DOGE/USD",
-    "DOGECOIN": "DOGE/USD",
-    "LTC": "LTC/USD",
-    "LITECOIN": "LTC/USD",
-    "ADA": "ADA/USD",
-    "CARDANO": "ADA/USD",
-    "SOL": "SOL/USD",
-    "SOLANA": "SOL/USD",
-    "DOT": "DOT/USD",
-    "POLKADOT": "DOT/USD",
-}
-
-
-def _parse_symbols(text: str) -> list[str]:
-    """Return list of crypto symbols mentioned in ``text``."""
-    text = text.upper()
-    pairs: list[str] = []
-
-    # First look for explicit pair expressions like ``BTC/USD`` or ``BITCOIN/US``.
-    for raw in re.findall(r"[A-Z0-9]+/[A-Z0-9]+", text):
-        base, _ = raw.split("/", 1)
-        mapped = _NAME_TO_PAIR.get(base)
-        if mapped and mapped not in pairs:
-            pairs.append(mapped)
-        elif raw not in pairs:
-            pairs.append(raw)
-
-    # Also consider individual tokens like ``BITCOIN`` and map them to canonical
-    # trading pairs.
-    for token in re.split(r"[^A-Z0-9]+", text):
-        pair = _NAME_TO_PAIR.get(token)
-        if pair and pair not in pairs:
-            pairs.append(pair)
-
-    return pairs
 
 
 
@@ -106,9 +62,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
             logger.info("Connected with tools: %s", [t.name for t in tools])
 
             logger.info("Welcome to %s!", EXCHANGE)
-            pairs: list[str] = []
 
-            # Let the broker agent ask for trading pairs
             if _openai_client is not None:
                 try:
                     response = _openai_client.chat.completions.create(
@@ -122,42 +76,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     logger.info("Agent: %s", assistant_msg)
                 except Exception as exc:
                     logger.error("LLM request failed: %s", exc)
-                    logger.info("Please specify trading pairs like BTC/USD")
             else:
                 logger.info("Please specify trading pairs like BTC/USD")
 
-            while not pairs:
-                user_text = await asyncio.to_thread(input, "> ")
-                if user_text.strip().lower() in {"quit", "exit"}:
-                    return
-                pairs = _parse_symbols(user_text)
-                if pairs:
-                    logger.info("User selected pairs: %s", pairs)
-                    break
-                conversation.append({"role": "user", "content": user_text})
-                if _openai_client is None:
-                    logger.info("Please specify trading pairs like BTC/USD")
-                    continue
-                try:
-                    followup = _openai_client.chat.completions.create(
-                        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
-                        messages=conversation,
-                    )
-                    msg = followup.choices[0].message
-                    msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
-                    assistant_msg = msg_dict.get("content", "")
-                    conversation.append({"role": "assistant", "content": assistant_msg})
-                    logger.info("Agent: %s", assistant_msg)
-                    pairs = _parse_symbols(assistant_msg)
-                    if pairs:
-                        logger.info("User selected pairs: %s", pairs)
-                        break
-                except Exception as exc:
-                    logger.error("LLM request failed: %s", exc)
-
-            if pairs:
-                logger.info("User selected pairs: %s", pairs)
-            
             logger.info("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
 
             while True:

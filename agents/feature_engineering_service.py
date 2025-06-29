@@ -15,7 +15,7 @@ from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
 from agents.workflows import FeatureStoreWorkflow
-from agents.utils import print_banner, format_log
+from agents.utils import print_banner, format_log, sse_events
 
 
 def _add_project_root_to_path() -> None:
@@ -54,35 +54,16 @@ TASKS: set[asyncio.Task[Any]] = set()
 
 
 async def _poll_vectors(session: aiohttp.ClientSession) -> None:
-    # Continuously fetch newly computed feature vectors from the MCP server
-    cursor = 0
-    backoff = 1
-    while not STOP_EVENT.is_set():
-        url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
-        try:
-            async with session.get(url, params={"after": cursor}) as resp:
-                if resp.status == 200:
-                    events = await resp.json()
-                    backoff = 1
-                else:
-                    logger.warning("Vector poll error %s", resp.status)
-                    events = []
-        except Exception as exc:
-            logger.error("Vector poll failed: %s", exc)
-            events = []
-        if not events:
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30)
+    """Stream feature vectors from the MCP server via SSE."""
+
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
+    async for evt in sse_events(session, url, stop=STOP_EVENT, log=logger):
+        symbol = evt.get("symbol")
+        ts = evt.get("ts")
+        data = evt.get("data")
+        if symbol is None or ts is None or not isinstance(data, dict):
             continue
-        backoff = 1
-        for evt in events:
-            symbol = evt.get("symbol")
-            ts = evt.get("ts")
-            data = evt.get("data")
-            if symbol is None or ts is None or not isinstance(data, dict):
-                continue
-            await _store_vector(symbol, ts, data)
-            cursor = max(cursor, ts)
+        await _store_vector(symbol, ts, data)
 
 
 async def _get_client() -> Client:
@@ -133,40 +114,18 @@ async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIte
             yield vec
         return
 
-    cursor = 0
-    timeout = aiohttp.ClientTimeout(total=30)
-    backoff = 1
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
+    timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        while not STOP_EVENT.is_set():
-            try:
-                async with session.get(url, params={"after": cursor}) as resp:
-                    if resp.status == 200:
-                        events = await resp.json()
-                        backoff = 1
-                    else:
-                        logger.warning("Vector poll error %s", resp.status)
-                        events = []
-            except Exception as exc:
-                logger.error("Vector poll failed: %s", exc)
-                events = []
-
-            if not events:
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30)
+        async for evt in sse_events(session, url, stop=STOP_EVENT, log=logger):
+            if STOP_EVENT.is_set():
+                return
+            sym = evt.get("symbol")
+            ts = evt.get("ts")
+            data = evt.get("data")
+            if sym != symbol or ts is None or not isinstance(data, dict):
                 continue
-
-            backoff = 1
-            for evt in events:
-                if STOP_EVENT.is_set():
-                    return
-                sym = evt.get("symbol")
-                ts = evt.get("ts")
-                data = evt.get("data")
-                if sym != symbol or ts is None or not isinstance(data, dict):
-                    continue
-                cursor = max(cursor, ts)
-                yield data
+            yield data
 
 
 async def _store_vector(symbol: str, ts: int, vector: dict) -> None:
@@ -200,38 +159,17 @@ async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
 
 
 async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
-    # Track the last processed timestamp so we only fetch new ticks
-    cursor = 0
-    # Basic exponential backoff when the MCP server returns no data
-    backoff = 1
-    while not STOP_EVENT.is_set():
-        url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
-        try:
-            async with session.get(url, params={"after": cursor}) as resp:
-                if resp.status == 200:
-                    ticks = await resp.json()
-                    backoff = 1
-                else:
-                    logger.warning("Signal poll error %s", resp.status)
-                    ticks = []
-        except Exception as exc:
-            logger.error("Signal poll failed: %s", exc)
-            ticks = []
-        if not ticks:
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30)
+    """Stream market ticks from the MCP server via SSE."""
+
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
+    async for tick in sse_events(session, url, stop=STOP_EVENT, log=logger):
+        symbol = tick.get("symbol")
+        ts = tick.get("ts")
+        if symbol is None or ts is None:
             continue
-        backoff = 1
-        for tick in ticks:
-            symbol = tick.get("symbol")
-            ts = tick.get("ts")
-            if symbol is None or ts is None:
-                continue
-            task = asyncio.create_task(_signal_tick(client, symbol, tick))
-            TASKS.add(task)
-            task.add_done_callback(TASKS.discard)
-            cursor = max(cursor, ts)
-        await asyncio.sleep(1)
+        task = asyncio.create_task(_signal_tick(client, symbol, tick))
+        TASKS.add(task)
+        task.add_done_callback(TASKS.discard)
 
 
 async def _shutdown() -> None:

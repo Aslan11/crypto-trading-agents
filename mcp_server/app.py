@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
-from typing import Any, Dict, List
+from typing import Any, Dict, List, AsyncIterator
+import json
 from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
 import logging
 from temporalio.client import Client, RPCError, RPCStatusCode, WorkflowExecutionStatus
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.requests import Request
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -247,12 +248,21 @@ async def record_signal(request: Request) -> Response:
 
 @app.custom_route("/signal/{name}", methods=["GET"])
 async def fetch_signals(request: Request) -> Response:
-    """Return signals newer than the provided 'after' timestamp."""
+    """Stream signals via Server-Sent Events."""
     name = request.path_params["name"]
     after = int(request.query_params.get("after", "0"))
-    events = [e for e in signal_log.get(name, []) if e.get("ts", 0) > after]
-    logger.debug("Fetched %d signals for %s after %s", len(events), name, after)
-    return JSONResponse(events)
+
+    async def event_stream() -> AsyncIterator[str]:
+        cursor = after
+        while True:
+            events = [e for e in signal_log.get(name, []) if e.get("ts", 0) > cursor]
+            for evt in events:
+                cursor = max(cursor, evt.get("ts", 0))
+                yield f"data: {json.dumps(evt)}\n\n"
+            await asyncio.sleep(0.1)
+
+    logger.debug("Starting SSE stream for %s after %s", name, after)
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

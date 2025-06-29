@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import deque
-from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Tuple
 
@@ -117,7 +116,7 @@ class MomentumWorkflow:
             if not side:
                 self.vectors.popleft()
                 continue
-            now = int(datetime.utcnow().timestamp())
+            now = int(workflow.now().timestamp())
             if now - self.last_sent < self.cooldown:
                 self.vectors.popleft()
                 continue

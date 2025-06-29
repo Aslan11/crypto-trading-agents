@@ -55,24 +55,34 @@ async def _latest_price(
     """Return the most recent market price for ``symbol``."""
     url = base_url.rstrip("/") + "/signal/market_tick"
     params = {"after": int(time.time()) - 60}
+    headers = {"Accept": "text/event-stream"}
+    last_price = 0.0
+    end_time = asyncio.get_event_loop().time() + 2
     try:
-        async with session.get(url, params=params) as resp:
-            if resp.status == 200:
-                events = await resp.json()
-            else:
-                events = []
+        async with session.get(url, params=params, headers=headers) as resp:
+            if resp.status != 200:
+                return 0.0
+            while asyncio.get_event_loop().time() < end_time:
+                line = await resp.content.readline()
+                if not line:
+                    break
+                text = line.decode().strip()
+                if not text or not text.startswith("data:"):
+                    continue
+                try:
+                    evt = json.loads(text[5:].strip())
+                except Exception:
+                    continue
+                if evt.get("symbol") != symbol:
+                    continue
+                data = evt.get("data", {})
+                if "last" in data:
+                    last_price = float(data["last"])
+                elif {"bid", "ask"}.issubset(data):
+                    last_price = (float(data["bid"]) + float(data["ask"])) / 2
     except Exception:
         return 0.0
 
-    last_price = 0.0
-    for evt in events:
-        if evt.get("symbol") != symbol:
-            continue
-        data = evt.get("data", {})
-        if "last" in data:
-            last_price = float(data["last"])
-        elif {"bid", "ask"}.issubset(data):
-            last_price = (float(data["bid"]) + float(data["ask"])) / 2
     return last_price
 
 async def _stream_strategy_signals(

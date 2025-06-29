@@ -7,3 +7,9 @@ def test_parse_symbols_handles_names():
     pairs = _parse_symbols("How about Ethereum & Bitcoin?")
     assert "ETH/USD" in pairs
     assert "BTC/USD" in pairs
+
+
+def test_parse_symbols_includes_dot():
+    pairs = _parse_symbols("Polkadot and Bitcoin")
+    assert "DOT/USD" in pairs
+    assert "BTC/USD" in pairs

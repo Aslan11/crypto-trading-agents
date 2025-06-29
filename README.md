@@ -85,7 +85,7 @@ make dev-up        # spins up Temporal + infra via docker-compose
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# Start MCP server 
+# Start MCP server
 python mcp_server/app.py
 ```
 Point your agent workers at `localhost:8080` (default MCP port) and confirm health at <http://localhost:8080/healthz>.
@@ -106,8 +106,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    curl -X POST http://localhost:8080/mcp/tools/subscribe_cex_stream \
      -H 'Accept: application/json, text/event-stream' \
      -H 'Content-Type: application/json' \
-     -d '{"exchange": "coinbaseexchange", "symbols": ["BTC/USD"], "interval_sec": 1}'
-   ```
+     -d '{"symbols": ["BTC/USD"], "interval_sec": 1}'
+  ```
 3. `subscribe_cex_stream` records ticks to the `market_tick` signal.
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.

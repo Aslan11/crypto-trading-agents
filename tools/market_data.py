@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
+import logging
+import os
 from typing import Any, List
 
+import aiohttp
 from pydantic import BaseModel
 from temporalio import activity, workflow
-import aiohttp
-import os
-import logging
 
 
 class MarketTick(BaseModel):
@@ -31,17 +32,20 @@ logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(mess
 logger = logging.getLogger(__name__)
 
 
+
+COINBASE_ID = "coinbaseexchange"
+
+
 @activity.defn
-async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
-    """Return the latest ticker for ``symbol`` from ``exchange``."""
+async def fetch_ticker(symbol: str) -> dict[str, Any]:
+    """Return the latest ticker for ``symbol`` from Coinbase."""
     import ccxt.async_support as ccxt
-    exchange_cls = getattr(ccxt, exchange.lower())
-    client = exchange_cls()
+    client = ccxt.coinbaseexchange()
     try:
         data = await client.fetch_ticker(symbol)
-        return MarketTick(exchange=exchange, symbol=symbol, data=data).model_dump()
+        return MarketTick(exchange=COINBASE_ID, symbol=symbol, data=data).model_dump()
     except Exception as exc:
-        logger.error("Failed to fetch ticker %s:%s - %s", exchange, symbol, exc)
+        logger.error("Failed to fetch ticker %s:%s - %s", COINBASE_ID, symbol, exc)
         raise
     finally:
         await client.close()
@@ -66,7 +70,6 @@ class SubscribeCEXStream:
     @workflow.run
     async def run(
         self,
-        exchange: str,
         symbols: List[str],
         interval_sec: int = 1,
         max_cycles: int | None = None,
@@ -76,12 +79,17 @@ class SubscribeCEXStream:
         """Stream tickers indefinitely, continuing as new periodically."""
         cycles = 0
         while True:
-            for symbol in symbols:
-                ticker = await workflow.execute_activity(
-                    fetch_ticker,
-                    args=[exchange, symbol],
-                    schedule_to_close_timeout=timedelta(seconds=10),
-                )
+            tickers = await asyncio.gather(
+                *[
+                    workflow.execute_activity(
+                        fetch_ticker,
+                        args=[symbol],
+                        schedule_to_close_timeout=timedelta(seconds=10),
+                    )
+                    for symbol in symbols
+                ]
+            )
+            for ticker in tickers:
                 await workflow.execute_activity(
                     record_tick,
                     ticker,
@@ -96,7 +104,6 @@ class SubscribeCEXStream:
             if hist_len >= history_limit or workflow.info().is_continue_as_new_suggested():
                 await workflow.continue_as_new(
                     args=[
-                        exchange,
                         symbols,
                         interval_sec,
                         max_cycles,
@@ -107,7 +114,6 @@ class SubscribeCEXStream:
             if cycles >= continue_every:
                 await workflow.continue_as_new(
                     args=[
-                        exchange,
                         symbols,
                         interval_sec,
                         max_cycles,

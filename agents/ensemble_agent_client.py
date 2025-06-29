@@ -81,25 +81,32 @@ async def _stream_strategy_signals(
     """Yield strategy signals from the MCP server."""
     cursor = 0
     url = base_url.rstrip("/") + "/signal/strategy_signal"
+    headers = {"Accept": "text/event-stream"}
+
     while True:
         try:
-            async with session.get(url, params={"after": cursor}) as resp:
-                if resp.status == 200:
-                    events = await resp.json()
-                else:
-                    events = []
+            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+                if resp.status != 200:
+                    await asyncio.sleep(1)
+                    continue
+
+                while True:
+                    line = await resp.content.readline()
+                    if not line:
+                        break
+                    text = line.decode().strip()
+                    if not text or not text.startswith("data:"):
+                        continue
+                    try:
+                        evt = json.loads(text[5:].strip())
+                    except Exception:
+                        continue
+                    ts = evt.get("ts")
+                    if ts is not None:
+                        cursor = max(cursor, ts)
+                    yield evt
         except Exception:
-            events = []
-
-        if not events:
             await asyncio.sleep(1)
-            continue
-
-        for evt in events:
-            ts = evt.get("ts")
-            if ts is not None:
-                cursor = max(cursor, ts)
-            yield evt
 
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and react to strategy signals."""

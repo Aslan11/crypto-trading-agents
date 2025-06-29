@@ -12,7 +12,8 @@ import time
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are a strategy ensemble agent. You aggregate trading signals from multiple strategies, "
+    "You are a strategy ensemble agent. You take note of the current status of the portfolio, "
+    "aggregate trading signals from multiple strategies, "
     "perform risk checks, and autonomously execute trades that pass those checks. "
     "You have tools for fetching the current status of the portfolio, risk assessment, "
     "broadcasting intents, and placing mock orders. Always call these tools yourself."

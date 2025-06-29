@@ -37,10 +37,13 @@ logger = logging.getLogger(__name__)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
-MCP_PATH = os.environ.get(
-    "MCP_BASE_PATH",
-    os.environ.get("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp"),
-).rstrip("/")
+MCP_PATH = (
+    os.environ.get(
+        "MCP_BASE_PATH",
+        os.environ.get("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp"),
+    ).rstrip("/")
+    + "/"
+)
 COOLDOWN_SEC = int(os.environ.get("COOLDOWN_SEC", "30"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "0.5"))

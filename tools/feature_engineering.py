@@ -145,6 +145,10 @@ class ComputeFeatureVector:
                     pruned.append(t)
             self._ticks = pruned
 
+            if not self._ticks:
+                # Wait for a new tick if all have expired
+                continue
+
             vector = await workflow.execute_activity(
                 compute_indicators,
                 self._ticks,

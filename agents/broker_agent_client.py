@@ -85,31 +85,13 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
             else:
                 print("[BrokerAgent] Please specify trading pairs like BTC/USD")
 
-            print("[BrokerAgent] Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
+
+            print("[BrokerAgent] Enter trading instructions (e.g. 'buy 1 BTC/USD').")
 
             while True:
                 user_request = await get_next_broker_command()
                 if user_request is None:
                     await asyncio.sleep(1)
-                    continue
-
-                if user_request.strip().lower() in {"quit", "exit"}:
-                    break
-                if user_request.strip().lower() == "status":
-                    try:
-                        result = await session.call_tool("get_portfolio_status", {})
-                        status = _tool_result_data(result)
-                        cash = status.get("cash")
-                        pnl = status.get("pnl")
-                        positions = status.get("positions", {})
-                        logger.info(
-                            "Cash: %.2f, P&L: %.2f, Positions: %s",
-                            cash,
-                            pnl,
-                            json.dumps(positions),
-                        )
-                    except Exception as exc:
-                        logger.error("Failed to fetch status: %s", exc)
                     continue
 
                 if _openai_client is None:

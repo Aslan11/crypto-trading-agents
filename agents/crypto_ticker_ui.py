@@ -9,6 +9,7 @@ import plotille
 from textual.app import App, ComposeResult
 from textual.widgets._tabbed_content import TabPane, TabbedContent, Tabs
 from textual.widgets import Static
+from textual.css.query import NoMatches
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -59,7 +60,10 @@ class TickerApp(App):
                         if resp.status != 200:
                             await asyncio.sleep(1)
                             continue
-                        async for line in resp.content:
+                        while True:
+                            line = await resp.content.readline()
+                            if not line:
+                                break
                             text = line.decode().strip()
                             if not text.startswith("data:"):
                                 continue
@@ -82,13 +86,23 @@ class TickerApp(App):
                     await asyncio.sleep(1)
 
     async def ensure_tab(self, sym: str) -> None:
-        if self.tabbed.get_pane(sym) is None:
-            if self.tabbed.get_pane("__wait"):
+        """Create a tab for ``sym`` if it doesn't already exist and activate it."""
+
+        try:
+            self.tabbed.get_pane(sym)
+        except NoMatches:
+            try:
+                self.tabbed.get_pane("__wait")
+            except NoMatches:
+                pass
+            else:
                 await self.tabbed.remove_pane("__wait")
+
             await self.tabbed.add_pane(
                 TabPane(sym, Static("Waiting for data…"), id=sym)
             )
-            self.tabbed.active = sym
+
+        self.tabbed.active = sym
 
     def update_current_tab(self) -> None:
         pane = self.tabbed.active_pane

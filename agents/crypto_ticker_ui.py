@@ -1,101 +1,121 @@
 import asyncio
 import json
 import os
-import signal
-from typing import Dict, Any
+from typing import Dict, List
+import contextlib
 
 import aiohttp
-from rich.console import Console
-from rich.table import Table
-from rich.live import Live
+import plotille
+from textual.app import App, ComposeResult
+from textual.widgets._tabbed_content import TabPane, TabbedContent, Tabs
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
+
 REFRESH_SEC = float(os.environ.get("TICKER_REFRESH", "1"))
 
-# Symbol -> latest vector data
-LATEST: Dict[str, Dict[str, Any]] = {}
-STOP = asyncio.Event()
+class TickerApp(App):
+    """A simple Textual app displaying a ticker per symbol in tabs."""
 
+    BINDINGS = [
+        ("left", "previous_tab", "Prev"),
+        ("right", "next_tab", "Next"),
+        ("q", "quit", "Quit"),
+    ]
 
-def _handle_sigint() -> None:
-    STOP.set()
+    def __init__(self) -> None:
+        super().__init__()
+        self.data: Dict[str, List[float]] = {}
+        self.cursor = 0
+        self.watcher: asyncio.Task | None = None
 
+    def compose(self) -> ComposeResult:
+        yield TabbedContent()
 
-def build_table() -> Table:
-    table = Table(title="Crypto Tickrs")
-    table.add_column("Pair")
-    table.add_column("Price", justify="right")
-    table.add_column("1m %", justify="right")
-    if not LATEST:
-        table.add_row("[italic]Waiting for pairs...[/]", "", "")
-        return table
-    for sym in sorted(LATEST):
-        data = LATEST[sym]
-        price = data.get("mid")
-        ret1m = data.get("ret1m")
-        price_str = f"{price:.2f}" if isinstance(price, (int, float)) else "-"
-        if isinstance(ret1m, (int, float)):
-            color = "green" if ret1m >= 0 else "red"
-            ret_str = f"[{color}]{ret1m:+.2f}%[/]"
-        else:
-            ret_str = "-"
-        table.add_row(sym, price_str, ret_str)
-    return table
+    async def on_mount(self) -> None:
+        self.tabbed = self.query_one(TabbedContent)
+        await self.tabbed.add_pane(TabPane("Waiting for pairs…", id="__wait"))
+        await self.tabbed.switch_pane("__wait")
+        self.watcher = asyncio.create_task(self.watch_vectors())
+        self.set_interval(REFRESH_SEC, self.update_current_tab)
 
+    async def on_unmount(self) -> None:
+        if self.watcher:
+            self.watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.watcher
 
-async def watch_vectors() -> None:
-    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
-    headers = {"Accept": "text/event-stream"}
-    cursor = 0
-    timeout = aiohttp.ClientTimeout(total=None)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        while not STOP.is_set():
-            try:
-                async with session.get(url, params={"after": cursor}, headers=headers) as resp:
-                    if resp.status != 200:
-                        await asyncio.sleep(1)
-                        continue
-                    while not STOP.is_set():
-                        line = await resp.content.readline()
-                        if not line:
-                            break
-                        text = line.decode().strip()
-                        if not text.startswith("data:"):
+    async def watch_vectors(self) -> None:
+        url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
+        headers = {"Accept": "text/event-stream"}
+        timeout = aiohttp.ClientTimeout(total=None)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                try:
+                    async with session.get(url, params={"after": self.cursor}, headers=headers) as resp:
+                        if resp.status != 200:
+                            await asyncio.sleep(1)
                             continue
-                        try:
-                            evt = json.loads(text[5:].strip())
-                        except Exception:
-                            continue
-                        sym = evt.get("symbol")
-                        ts = evt.get("ts")
-                        data = evt.get("data")
-                        if sym and isinstance(data, dict):
-                            LATEST[sym] = data
-                        if isinstance(ts, int):
-                            cursor = max(cursor, ts)
-            except Exception:
-                await asyncio.sleep(1)
+                        async for line in resp.content:
+                            text = line.decode().strip()
+                            if not text.startswith("data:"):
+                                continue
+                            try:
+                                evt = json.loads(text[5:].strip())
+                            except Exception:
+                                continue
+                            sym = evt.get("symbol")
+                            ts = evt.get("ts")
+                            data = evt.get("data")
+                            if sym and isinstance(data, dict):
+                                price = data.get("mid")
+                                if isinstance(price, (int, float)):
+                                    self.data.setdefault(sym, []).append(price)
+                                    self.data[sym] = self.data[sym][-120:]
+                                    await self.ensure_tab(sym)
+                            if isinstance(ts, int):
+                                self.cursor = max(self.cursor, ts)
+                except Exception:
+                    await asyncio.sleep(1)
 
+    async def ensure_tab(self, sym: str) -> None:
+        if self.tabbed.get_pane(sym) is None:
+            if self.tabbed.get_pane("__wait"):
+                await self.tabbed.remove_pane("__wait")
+            await self.tabbed.add_pane(TabPane(sym, id=sym))
+            await self.tabbed.switch_pane(sym)
 
-async def run_ui() -> None:
-    console = Console()
-    with Live(build_table(), console=console, refresh_per_second=4) as live:
-        while not STOP.is_set():
-            live.update(build_table())
-            await asyncio.sleep(REFRESH_SEC)
+    def update_current_tab(self) -> None:
+        pane = self.tabbed.active_pane
+        if pane and pane.id and pane.id in self.data:
+            pane.update(self.render_graph(pane.id))
+        elif pane and pane.id == "__wait":
+            pane.update("Waiting for pairs…")
 
+    def render_graph(self, sym: str) -> str:
+        prices = self.data.get(sym, [])
+        if len(prices) < 2:
+            return "Waiting for data…"
+        width = max(10, self.size.width - 4)
+        height = max(4, self.size.height - 6)
+        fig = plotille.Figure()
+        fig.width = width
+        fig.height = height
+        fig.set_x_limits(min_=0, max_=len(prices) - 1)
+        fig.set_y_limits(min_=min(prices), max_=max(prices))
+        fig.color_mode = None
+        fig.plot(range(len(prices)), prices)
+        return fig.show(legend=False)
 
-async def main() -> None:
-    loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, _handle_sigint)
-    watcher = asyncio.create_task(watch_vectors())
-    try:
-        await run_ui()
-    finally:
-        STOP.set()
-        await watcher
+    def action_next_tab(self) -> None:
+        self.query_one(Tabs).action_next_tab()
+
+    def action_previous_tab(self) -> None:
+        self.query_one(Tabs).action_previous_tab()
+
+    def action_quit(self) -> None:
+        self.exit()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    TickerApp().run()

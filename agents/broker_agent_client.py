@@ -65,49 +65,6 @@ def _parse_symbols(text: str) -> list[str]:
     return pairs
 
 
-async def _prompt_pairs(conversation: list[dict[str, str]]) -> list[str]:
-    """Prompt the user for trading pairs, allowing small talk."""
-    logger.info("Prompting for trading pairs")
-    prompt = (
-        "Which crypto pairs would you like to trade? "
-        "You can use natural language such as 'Ethereum and Bitcoin' "
-        "or specify symbols like 'BTC/USD, ETH/USD': "
-    )
-
-    while True:
-        text = await asyncio.to_thread(input, prompt)
-        if text.strip().lower() in {"quit", "exit"}:
-            return []
-
-        pairs = _parse_symbols(text)
-        if pairs:
-            logger.info("User selected pairs: %s", pairs)
-            return pairs
-
-        conversation.append({"role": "user", "content": text})
-
-        if _openai_client is None:
-            logger.info("Please specify trading pairs like BTC/USD")
-            continue
-
-        try:
-            response = _openai_client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
-                messages=conversation,
-            )
-            msg = response.choices[0].message
-            msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
-            assistant_msg = msg_dict.get("content", "")
-            conversation.append({"role": "assistant", "content": assistant_msg})
-            logger.info("Response: %s", assistant_msg)
-            pairs = _parse_symbols(assistant_msg)
-            if pairs:
-                logger.info("User selected pairs: %s", pairs)
-                return pairs
-        except Exception as exc:
-            logger.error("LLM request failed: %s", exc)
-
-
 
 def _tool_result_data(result: Any) -> Any:
     """Return JSON-friendly data from a tool call result."""
@@ -152,8 +109,11 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
         logger.error("Failed to start stream: %s", exc)
 
 SYSTEM_PROMPT = (
-    "You are a trading broker agent. You manage execution of trades and the account state. "
-    "You have tools to place orders, check portfolio status, and handle transactions. "
+    "You are a trading broker agent operating on the Coinbase exchange. "
+    "Ask the user which of these trading pairs they want to trade: "
+    "BTC/USD, ETH/USD, DOGE/USD, LTC/USD, ADA/USD, SOL/USD, DOT/USD. "
+    "Only trade pairs you know are available on Coinbase. "
+    "You manage execution of trades and the account state. "
     "When asked to execute a trade or query account status, use the appropriate tool and report the result."
 )
 
@@ -171,7 +131,55 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
             logger.info("Connected with tools: %s", [t.name for t in tools])
 
             logger.info("Welcome to %s!", EXCHANGE)
-            pairs = await _prompt_pairs(conversation)
+            pairs: list[str] = []
+
+            # Let the broker agent ask for trading pairs
+            if _openai_client is not None:
+                try:
+                    response = _openai_client.chat.completions.create(
+                        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                        messages=conversation,
+                    )
+                    msg = response.choices[0].message
+                    msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
+                    assistant_msg = msg_dict.get("content", "")
+                    conversation.append({"role": "assistant", "content": assistant_msg})
+                    logger.info("Agent: %s", assistant_msg)
+                except Exception as exc:
+                    logger.error("LLM request failed: %s", exc)
+                    logger.info("Please specify trading pairs like BTC/USD")
+            else:
+                logger.info("Please specify trading pairs like BTC/USD")
+
+            while not pairs:
+                user_text = await asyncio.to_thread(input, "> ")
+                if user_text.strip().lower() in {"quit", "exit"}:
+                    return
+                pairs = _parse_symbols(user_text)
+                if pairs:
+                    logger.info("User selected pairs: %s", pairs)
+                    break
+                conversation.append({"role": "user", "content": user_text})
+                if _openai_client is None:
+                    logger.info("Please specify trading pairs like BTC/USD")
+                    continue
+                try:
+                    followup = _openai_client.chat.completions.create(
+                        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                        messages=conversation,
+                    )
+                    msg = followup.choices[0].message
+                    msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
+                    assistant_msg = msg_dict.get("content", "")
+                    conversation.append({"role": "assistant", "content": assistant_msg})
+                    logger.info("Agent: %s", assistant_msg)
+                    pairs = _parse_symbols(assistant_msg)
+                    if pairs:
+                        logger.info("User selected pairs: %s", pairs)
+                        break
+                except Exception as exc:
+                    logger.error("LLM request failed: %s", exc)
+
             await _start_stream(session, pairs)
             logger.info("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
 

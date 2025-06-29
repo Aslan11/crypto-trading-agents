@@ -56,6 +56,8 @@ logging.basicConfig(
 STOP_EVENT = asyncio.Event()
 MOMENTUM_WF_ID = "momentum-agent"
 TEMPORAL_CLIENT: Client | None = None
+STOP_SYMBOLS: set[str] = set()
+_STOP_CURSOR = 0
 
 
 async def _get_client() -> Client:
@@ -120,6 +122,26 @@ async def _record_signal(session: aiohttp.ClientSession, payload: dict) -> None:
         await session.post(url, json=payload)
     except Exception as exc:  # pragma: no cover - network errors
         logger.error("Failed to record signal: %s", exc)
+
+
+async def _update_stop_symbols(session: aiohttp.ClientSession) -> None:
+    """Fetch momentum stop signals and update ``STOP_SYMBOLS``."""
+    global _STOP_CURSOR
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/momentum_stop"
+    try:
+        async with session.get(url, params={"after": _STOP_CURSOR}) as resp:
+            if resp.status != 200:
+                return
+            events = await resp.json()
+    except Exception:
+        return
+
+    for evt in events:
+        sym = evt.get("symbol")
+        ts = evt.get("ts", 0)
+        if sym:
+            STOP_SYMBOLS.add(sym)
+        _STOP_CURSOR = max(_STOP_CURSOR, ts)
 
 
 def _tool_result_data(result: Any) -> Any:
@@ -212,6 +234,13 @@ async def main() -> None:
         tasks: Set[asyncio.Task] = set()
 
         async for symbol, vector in _subscribe_all_vectors(http_session):
+            await _update_stop_symbols(http_session)
+            if symbol in STOP_SYMBOLS:
+                if symbol in handles:
+                    handles.pop(symbol, None)
+                    last_sig.pop(symbol, None)
+                    logger.info("Momentum service stopped watching %s", symbol)
+                continue
             if symbol not in handles:
                 await _ensure_workflow(client, symbol)
                 handles[symbol] = client.get_workflow_handle(_wf_id(symbol))

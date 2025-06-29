@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover - optional dependency
     _openai_client = None
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+import aiohttp
 import re
 
 EXCHANGE = os.environ.get("EXCHANGE", "coinbaseexchange")
@@ -149,6 +150,18 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
     except Exception as exc:
         logger.error("Failed to start stream: %s", exc)
 
+
+async def _send_stop_signal(symbol: str, server_url: str) -> None:
+    """Notify the momentum service to stop tracking ``symbol``."""
+    url = server_url.rstrip("/") + "/signal/momentum_stop"
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as http:
+        try:
+            await http.post(url, json={"symbol": symbol})
+            logger.info("Requested stop for %s", symbol)
+        except Exception as exc:  # pragma: no cover - network errors
+            logger.error("Failed to send stop signal: %s", exc)
+
 SYSTEM_PROMPT = (
     "You are a trading broker agent. You manage execution of trades and the account state. "
     "You have tools to place orders, check portfolio status, and handle transactions. "
@@ -196,6 +209,15 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         )
                     except Exception as exc:
                         logger.error("Failed to fetch status: %s", exc)
+                    continue
+
+                if user_request.strip().lower().startswith("stop"):
+                    pairs = _parse_symbols(user_request)
+                    if not pairs:
+                        logger.info("No recognizable pair to stop")
+                        continue
+                    for pair in pairs:
+                        await _send_stop_signal(pair, server_url)
                     continue
 
                 if _openai_client is None:

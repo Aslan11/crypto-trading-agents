@@ -7,6 +7,7 @@ import os
 import secrets
 from typing import Any, Dict, List
 from datetime import datetime
+from pydantic import BaseModel, ConfigDict
 
 from mcp.server.fastmcp import FastMCP
 import logging
@@ -37,6 +38,55 @@ _client_lock = asyncio.Lock()
 signal_log: dict[str, list[dict]] = {}
 
 
+class StreamRequest(BaseModel):
+    """Parameters for starting a market data stream."""
+
+    symbols: List[str]
+    interval_sec: int = 1
+
+
+class MomentumSignal(BaseModel):
+    """Arbitrary strategy signal payload."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class OrderIntent(BaseModel):
+    """Order execution intent."""
+
+    side: str
+    symbol: str
+    qty: float
+    price: float
+    model_config = ConfigDict(extra="allow")
+
+
+class RiskCheckRequest(BaseModel):
+    """Request payload for :func:`pre_trade_risk_check`."""
+
+    intent_id: str
+    intents: List[OrderIntent]
+
+
+class RawTransaction(BaseModel):
+    """Unsigned Ethereum transaction."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class WorkflowRef(BaseModel):
+    """Reference to a started workflow."""
+
+    workflow_id: str
+    run_id: str
+
+
+class TxResult(BaseModel):
+    """Transaction broadcast result."""
+
+    tx_hash: str
+
+
 async def get_temporal_client() -> Client:
     """Connect to Temporal server (lazy singleton)."""
     global _temporal_client
@@ -51,11 +101,18 @@ async def get_temporal_client() -> Client:
     return _temporal_client
 
 
-@app.tool(annotations={"title": "Subscribe CEX Stream", "readOnlyHint": True})
-async def subscribe_cex_stream(
-    symbols: List[str], interval_sec: int = 1
-) -> Dict[str, str]:
+@app.tool(
+    annotations={
+        "title": "Subscribe CEX Stream",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "openWorldHint": True,
+    }
+)
+async def subscribe_cex_stream(request: StreamRequest) -> WorkflowRef:
     """Start a durable workflow to stream market data from a CEX."""
+    symbols = request.symbols
+    interval_sec = request.interval_sec
     client = await get_temporal_client()
     workflow_id = f"stream-{secrets.token_hex(4)}"
     logger.info(
@@ -76,28 +133,40 @@ async def subscribe_cex_stream(
         raise
     logger.debug("Workflow handle created: %s", handle)
     logger.info("Workflow %s started run %s", workflow_id, handle.run_id)
-    return {"workflow_id": workflow_id, "run_id": handle.run_id}
+    return WorkflowRef(workflow_id=workflow_id, run_id=handle.run_id)
 
 
-@app.tool(annotations={"title": "Start Market Stream", "readOnlyHint": True})
-async def start_market_stream(
-    symbols: List[str], interval_sec: int = 1
-) -> Dict[str, str]:
-    """Convenience wrapper around ``subscribe_cex_stream``."""
-    return await subscribe_cex_stream(symbols, interval_sec)
+@app.tool(
+    annotations={
+        "title": "Start Market Stream",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "openWorldHint": True,
+    }
+)
+async def start_market_stream(request: StreamRequest) -> WorkflowRef:
+    """Begin streaming market data for the requested symbols."""
+    return await subscribe_cex_stream(request)
 
 
-@app.tool(annotations={"title": "Evaluate Momentum Strategy", "readOnlyHint": True})
+@app.tool(
+    annotations={
+        "title": "Evaluate Momentum Strategy",
+        "readOnlyHint": True,
+        "openWorldHint": False,
+    }
+)
 async def evaluate_strategy_momentum(
-    signal: Dict[str, Any], cooldown_sec: int = 0
+    signal: MomentumSignal, cooldown_sec: int = 0
 ) -> Dict[str, Any]:
     """Invoke the momentum strategy evaluation workflow."""
+    payload = signal.model_dump()
     client = await get_temporal_client()
     workflow_id = f"momentum-{secrets.token_hex(4)}"
     logger.info("Evaluating momentum strategy: cooldown=%s", cooldown_sec)
     handle = await client.start_workflow(
         EvaluateStrategyMomentum.run,
-        args=[signal, cooldown_sec or None],
+        args=[payload, cooldown_sec or None],
         id=workflow_id,
         task_queue="mcp-tools",
     )
@@ -106,11 +175,17 @@ async def evaluate_strategy_momentum(
     return result
 
 
-@app.tool(annotations={"title": "Pre-Trade Risk Check", "readOnlyHint": True})
-async def pre_trade_risk_check(
-    intent_id: str, intents: List[Dict[str, Any]]
-) -> Dict[str, str]:
+@app.tool(
+    annotations={
+        "title": "Pre-Trade Risk Check",
+        "readOnlyHint": True,
+        "openWorldHint": False,
+    }
+)
+async def pre_trade_risk_check(request: RiskCheckRequest) -> Dict[str, str]:
     """Run a pre-trade risk check on proposed order intents."""
+    intent_id = request.intent_id
+    intents = [i.model_dump() for i in request.intents]
     client = await get_temporal_client()
     workflow_id = f"risk-{intent_id}"
     logger.info("Starting PreTradeRiskCheck %s for %d intents", intent_id, len(intents))
@@ -130,16 +205,18 @@ async def pre_trade_risk_check(
         "title": "Place Mock Order",
         "readOnlyHint": False,
         "destructiveHint": False,
+        "openWorldHint": False,
     }
 )
-async def place_mock_order(intent: Dict[str, Any]) -> Dict[str, Any]:
+async def place_mock_order(intent: OrderIntent) -> Dict[str, Any]:
     """Simulate executing an order intent."""
+    intent_dict = intent.model_dump()
     client = await get_temporal_client()
     workflow_id = f"order-{secrets.token_hex(4)}"
     logger.info("Placing mock order via workflow %s", workflow_id)
     handle = await client.start_workflow(
         PlaceMockOrder.run,
-        intent,
+        intent_dict,
         id=workflow_id,
         task_queue="mcp-tools",
     )
@@ -159,30 +236,38 @@ async def place_mock_order(intent: Dict[str, Any]) -> Dict[str, Any]:
     annotations={
         "title": "Sign and Send Transaction",
         "readOnlyHint": False,
+        "destructiveHint": False,
         "openWorldHint": True,
     }
 )
 async def sign_and_send_tx(
-    raw_tx: Dict[str, Any], wallet_label: str, rpc_url: str
-) -> Dict[str, str]:
-    """Sign an EVM transaction and broadcast it."""
+    raw_tx: RawTransaction, wallet_label: str, rpc_url: str
+) -> TxResult:
+    """Sign a transaction with the named wallet and broadcast it."""
+    tx_payload = raw_tx.model_dump()
     client = await get_temporal_client()
     workflow_id = f"tx-{secrets.token_hex(4)}"
     logger.info("Signing and sending tx via workflow %s", workflow_id)
     handle = await client.start_workflow(
         SignAndSendTx.run,
-        args=[raw_tx, wallet_label, rpc_url],
+        args=[tx_payload, wallet_label, rpc_url],
         id=workflow_id,
         task_queue="mcp-tools",
     )
     result: Dict[str, str] = await handle.result()
     logger.info("Tx workflow %s completed", workflow_id)
-    return result
+    return TxResult(**result)
 
 
-@app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})
+@app.tool(
+    annotations={
+        "title": "Get Portfolio Status",
+        "readOnlyHint": True,
+        "openWorldHint": False,
+    }
+)
 async def get_portfolio_status() -> Dict[str, Any]:
-    """Retrieve current portfolio cash and positions from the ledger."""
+    """Return current cash, open positions and PnL from the ledger."""
     client = await get_temporal_client()
     wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
     logger.info("Fetching portfolio status from %s", wf_id)

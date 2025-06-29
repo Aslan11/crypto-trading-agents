@@ -113,7 +113,8 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp"
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    # Streaming strategy signals requires an indefinite timeout
+    timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
         async with streamablehttp_client(mcp_url) as (
             read_stream,

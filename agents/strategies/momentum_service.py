@@ -241,7 +241,8 @@ async def main() -> None:
         if tasks:
             await asyncio.gather(*tasks)
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    # SSE connections may remain open; disable the default timeout
+    timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
         mcp_url = f"http://{MCP_HOST}:{MCP_PORT}{MCP_PATH}"
         async with streamablehttp_client(mcp_url) as (read_stream, write_stream, _):

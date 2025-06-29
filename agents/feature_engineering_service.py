@@ -145,7 +145,8 @@ async def subscribe_vectors(symbol: str, *, use_local: bool = False) -> AsyncIte
         return
 
     cursor = 0
-    timeout = aiohttp.ClientTimeout(total=30)
+    # Disable total timeout since SSE streams may stay open indefinitely
+    timeout = aiohttp.ClientTimeout(total=None)
     backoff = 1
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
     headers = {"Accept": "text/event-stream"}
@@ -275,7 +276,8 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, STOP_EVENT.set)
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    # Streams of ticks and vectors may be long-lived; disable request timeout
+    timeout = aiohttp.ClientTimeout(total=None)
     temporal_client = await _get_client()
     await _ensure_workflow(temporal_client)
     async with aiohttp.ClientSession(timeout=timeout) as session:

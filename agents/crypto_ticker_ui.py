@@ -176,8 +176,7 @@ class TickerApp(App):
             lo -= 1
             hi += 1
         fig.set_y_limits(min_=lo, max_=hi)
-        fig.color_mode = None
-        fig.plot(range(len(prices)), prices)
+        fig.plot(range(len(prices)), prices, lc=None)
         return fig.show(legend=False)
 
     def action_next_tab(self) -> None:

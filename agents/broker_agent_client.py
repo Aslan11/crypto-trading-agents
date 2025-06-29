@@ -159,7 +159,7 @@ async def get_next_broker_command() -> str | None:
     return await asyncio.to_thread(input, "> ")
 
 async def run_broker_agent(server_url: str = "http://localhost:8080"):
-    url = server_url.rstrip("/") + "/mcp"
+    url = server_url.rstrip("/") + "/mcp/"
     logger.info("Connecting to MCP server at %s", url)
     async with streamablehttp_client(url) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:

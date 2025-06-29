@@ -31,8 +31,8 @@ fi
 # │ Pane 5        │ Pane 4                 │
 # │ broker_agent_client.py │ momentum_service.py      │
 # ├───────────────┼────────────────────────┤
-# │ Pane 6                                │
-# │ ensemble_agent_client.py              │
+# │ Pane 6        │ Pane 7                 │
+# │ ensemble_agent_client.py │ crypto_ticker_ui_service.py │
 # └────────────────────────────────────────┘
 ###############################################################################
 
@@ -73,9 +73,14 @@ tmux select-pane  -t $BROKER_PANE
 ENS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
 tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble_agent_client.py' C-m
 
-# 10. Arrange all panes into a tiled layout for equal sizing
+# 8. Pane 7 – crypto ticker UI (split Pane 6 horizontally →)
+tmux select-pane  -t $ENS_PANE
+TICKER_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+tmux send-keys    -t $TICKER_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/crypto_ticker_ui_service.py' C-m
+
+# 9. Arrange all panes into a tiled layout for equal sizing
 tmux select-layout -t $SESSION:0 tiled
 
-# 11. Attach user to session
+# 10. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane
 exec tmux attach -t $SESSION

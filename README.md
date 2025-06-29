@@ -85,7 +85,10 @@ make dev-up        # spins up Temporal + infra via docker-compose
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# Start MCP server 
+# Configure the exchange used by the broker agent (any ccxt id)
+export EXCHANGE=coinbaseexchange
+
+# Start MCP server
 python mcp_server/app.py
 ```
 Point your agent workers at `localhost:8080` (default MCP port) and confirm health at <http://localhost:8080/healthz>.

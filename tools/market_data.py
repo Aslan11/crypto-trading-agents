@@ -31,13 +31,21 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+# Map common exchange names to ccxt classes
+EXCHANGE_ALIASES = {
+    "coinbase": "coinbaseexchange",
+    "coinbasepro": "coinbaseexchange",
+    "coinbase-exchange": "coinbaseexchange",
+}
+
 
 @activity.defn
 async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
     """Return the latest ticker for ``symbol`` from ``exchange``."""
     import ccxt.async_support as ccxt
+    canonical = EXCHANGE_ALIASES.get(exchange.lower(), exchange.lower())
     try:
-        exchange_cls = getattr(ccxt, exchange.lower())
+        exchange_cls = getattr(ccxt, canonical)
     except AttributeError as exc:
         raise ValueError(f"Unsupported exchange: {exchange}") from exc
     client = exchange_cls()

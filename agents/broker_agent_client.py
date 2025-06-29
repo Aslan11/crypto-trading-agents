@@ -36,6 +36,8 @@ _NAME_TO_PAIR = {
     "CARDANO": "ADA/USD",
     "SOL": "SOL/USD",
     "SOLANA": "SOL/USD",
+    "DOT": "DOT/USD",
+    "POLKADOT": "DOT/USD",
 }
 
 

@@ -176,32 +176,37 @@ async def main() -> None:
     ) -> AsyncIterator[tuple[str, dict]]:
         cursor = 0
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
+        headers = {"Accept": "text/event-stream"}
+
         while not STOP_EVENT.is_set():
             try:
-                async with session.get(url, params={"after": cursor}) as resp:
-                    if resp.status == 200:
-                        events = await resp.json()
-                    else:
-                        logger.warning("Vector poll error %s", resp.status)
-                        events = []
+                async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+                    if resp.status != 200:
+                        logger.warning("Vector stream error %s", resp.status)
+                        await asyncio.sleep(1)
+                        continue
+
+                    while not STOP_EVENT.is_set():
+                        line = await resp.content.readline()
+                        if not line:
+                            break
+                        text = line.decode().strip()
+                        if not text or not text.startswith("data:"):
+                            continue
+                        try:
+                            evt = json.loads(text[5:].strip())
+                        except Exception:
+                            continue
+                        sym = evt.get("symbol")
+                        ts = evt.get("ts")
+                        data = evt.get("data")
+                        if sym is None or ts is None or not isinstance(data, dict):
+                            continue
+                        cursor = max(cursor, ts)
+                        yield sym, data
             except Exception as exc:
-                logger.error("Vector poll failed: %s", exc)
-                events = []
-
-            if not events:
+                logger.error("Vector stream failed: %s", exc)
                 await asyncio.sleep(1)
-                continue
-
-            for evt in events:
-                if STOP_EVENT.is_set():
-                    return
-                sym = evt.get("symbol")
-                ts = evt.get("ts")
-                data = evt.get("data")
-                if sym is None or ts is None or not isinstance(data, dict):
-                    continue
-                cursor = max(cursor, ts)
-                yield sym, data
 
     async def _run(
         http_session: aiohttp.ClientSession, mcp_session: MCPClientSession
@@ -236,7 +241,8 @@ async def main() -> None:
         if tasks:
             await asyncio.gather(*tasks)
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    # SSE connections may remain open; disable the default timeout
+    timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
         mcp_url = f"http://{MCP_HOST}:{MCP_PORT}{MCP_PATH}"
         async with streamablehttp_client(mcp_url) as (read_stream, write_stream, _):

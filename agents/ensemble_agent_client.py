@@ -55,24 +55,34 @@ async def _latest_price(
     """Return the most recent market price for ``symbol``."""
     url = base_url.rstrip("/") + "/signal/market_tick"
     params = {"after": int(time.time()) - 60}
+    headers = {"Accept": "text/event-stream"}
+    last_price = 0.0
+    end_time = asyncio.get_event_loop().time() + 2
     try:
-        async with session.get(url, params=params) as resp:
-            if resp.status == 200:
-                events = await resp.json()
-            else:
-                events = []
+        async with session.get(url, params=params, headers=headers) as resp:
+            if resp.status != 200:
+                return 0.0
+            while asyncio.get_event_loop().time() < end_time:
+                line = await resp.content.readline()
+                if not line:
+                    break
+                text = line.decode().strip()
+                if not text or not text.startswith("data:"):
+                    continue
+                try:
+                    evt = json.loads(text[5:].strip())
+                except Exception:
+                    continue
+                if evt.get("symbol") != symbol:
+                    continue
+                data = evt.get("data", {})
+                if "last" in data:
+                    last_price = float(data["last"])
+                elif {"bid", "ask"}.issubset(data):
+                    last_price = (float(data["bid"]) + float(data["ask"])) / 2
     except Exception:
         return 0.0
 
-    last_price = 0.0
-    for evt in events:
-        if evt.get("symbol") != symbol:
-            continue
-        data = evt.get("data", {})
-        if "last" in data:
-            last_price = float(data["last"])
-        elif {"bid", "ask"}.issubset(data):
-            last_price = (float(data["bid"]) + float(data["ask"])) / 2
     return last_price
 
 async def _stream_strategy_signals(
@@ -81,32 +91,40 @@ async def _stream_strategy_signals(
     """Yield strategy signals from the MCP server."""
     cursor = 0
     url = base_url.rstrip("/") + "/signal/strategy_signal"
+    headers = {"Accept": "text/event-stream"}
+
     while True:
         try:
-            async with session.get(url, params={"after": cursor}) as resp:
-                if resp.status == 200:
-                    events = await resp.json()
-                else:
-                    events = []
+            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+                if resp.status != 200:
+                    await asyncio.sleep(1)
+                    continue
+
+                while True:
+                    line = await resp.content.readline()
+                    if not line:
+                        break
+                    text = line.decode().strip()
+                    if not text or not text.startswith("data:"):
+                        continue
+                    try:
+                        evt = json.loads(text[5:].strip())
+                    except Exception:
+                        continue
+                    ts = evt.get("ts")
+                    if ts is not None:
+                        cursor = max(cursor, ts)
+                    yield evt
         except Exception:
-            events = []
-
-        if not events:
             await asyncio.sleep(1)
-            continue
-
-        for evt in events:
-            ts = evt.get("ts")
-            if ts is not None:
-                cursor = max(cursor, ts)
-            yield evt
 
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and react to strategy signals."""
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp"
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    # Streaming strategy signals requires an indefinite timeout
+    timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
         async with streamablehttp_client(mcp_url) as (
             read_stream,

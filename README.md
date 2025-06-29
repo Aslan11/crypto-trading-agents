@@ -55,7 +55,7 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 | Tool (Workflow)            | Purpose                                                | Typical Triggers        |
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
-| `start_market_stream`    | Begin streaming market data for selected pairs | After user selection  |
+| `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
 | `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
 | `evaluate_strategy_momentum` | Log momentum signals (optional cooldown)     | Feature vector        |
 | `pre_trade_risk_check`      | Validate intents against simple VaR limits     | Order intents         |
@@ -109,6 +109,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
      -H 'Content-Type: application/json' \
      -d '{"symbols": ["BTC/USD"], "interval_sec": 1}'
    ```
+   The `broker_agent_client` does this automatically once you select trading pairs.
 3. `start_market_stream` records ticks to the `market_tick` signal.
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.

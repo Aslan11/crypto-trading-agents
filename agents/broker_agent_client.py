@@ -88,7 +88,8 @@ SYSTEM_PROMPT = (
     "BTC/USD, ETH/USD, DOGE/USD, LTC/USD, ADA/USD, SOL/USD, DOT/USD. "
     "Only trade pairs you know are available on Coinbase. "
     "You manage execution of trades and the account state. "
-    "When asked to execute a trade or query account status, use the appropriate tool and report the result."
+    "When asked to execute a trade or query account status, use the appropriate tool and report the result. "
+    "As soon as the user confirms their desired pairs, automatically begin streaming market data for them via the `start_market_stream` tool."
 )
 
 async def get_next_broker_command() -> str | None:

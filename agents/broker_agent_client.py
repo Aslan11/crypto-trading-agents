@@ -15,7 +15,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 import re
 
-EXCHANGE = os.environ.get("EXCHANGE", "coinbaseexchange")
+EXCHANGE = "coinbaseexchange"
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
@@ -128,7 +128,7 @@ def _tool_result_data(result: Any) -> Any:
 async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
     if not symbols:
         return
-    payload = {"exchange": EXCHANGE, "symbols": symbols}
+    payload = {"symbols": symbols}
     try:
         logger.info("Starting stream for %s", symbols)
         result = await session.call_tool("subscribe_cex_stream", payload)

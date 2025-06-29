@@ -53,14 +53,13 @@ async def get_temporal_client() -> Client:
 
 @app.tool(annotations={"title": "Subscribe CEX Stream", "readOnlyHint": True})
 async def subscribe_cex_stream(
-    exchange: str, symbols: List[str], interval_sec: int = 1
+    symbols: List[str], interval_sec: int = 1
 ) -> Dict[str, str]:
     """Start a durable workflow to stream market data from a CEX."""
     client = await get_temporal_client()
     workflow_id = f"stream-{secrets.token_hex(4)}"
     logger.info(
-        "Starting SubscribeCEXStream: %s %s interval=%s",
-        exchange,
+        "Starting SubscribeCEXStream: coinbase %s interval=%s",
         symbols,
         interval_sec,
     )
@@ -68,7 +67,7 @@ async def subscribe_cex_stream(
     try:
         handle = await client.start_workflow(
             SubscribeCEXStream.run,
-            args=[exchange, symbols, interval_sec],
+            args=[symbols, interval_sec],
             id=workflow_id,
             task_queue="mcp-tools",
         )

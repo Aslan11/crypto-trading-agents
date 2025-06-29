@@ -28,7 +28,7 @@ def _add_project_root_to_path() -> None:
 _add_project_root_to_path()
 from agents.feature_engineering_service import subscribe_vectors  # noqa: E402
 from agents.workflows import MomentumWorkflow  # noqa: E402
-from agents.utils import print_banner, format_log
+from agents.utils import print_banner, format_log, sse_events
 from temporalio.client import Client  # noqa: E402
 from temporalio.service import RPCError, RPCStatusCode  # noqa: E402
 
@@ -174,34 +174,16 @@ async def main() -> None:
     async def _subscribe_all_vectors(
         session: aiohttp.ClientSession,
     ) -> AsyncIterator[tuple[str, dict]]:
-        cursor = 0
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
-        while not STOP_EVENT.is_set():
-            try:
-                async with session.get(url, params={"after": cursor}) as resp:
-                    if resp.status == 200:
-                        events = await resp.json()
-                    else:
-                        logger.warning("Vector poll error %s", resp.status)
-                        events = []
-            except Exception as exc:
-                logger.error("Vector poll failed: %s", exc)
-                events = []
-
-            if not events:
-                await asyncio.sleep(1)
+        async for evt in sse_events(session, url, stop=STOP_EVENT, log=logger):
+            if STOP_EVENT.is_set():
+                return
+            sym = evt.get("symbol")
+            data = evt.get("data")
+            ts = evt.get("ts")
+            if sym is None or ts is None or not isinstance(data, dict):
                 continue
-
-            for evt in events:
-                if STOP_EVENT.is_set():
-                    return
-                sym = evt.get("symbol")
-                ts = evt.get("ts")
-                data = evt.get("data")
-                if sym is None or ts is None or not isinstance(data, dict):
-                    continue
-                cursor = max(cursor, ts)
-                yield sym, data
+            yield sym, data
 
     async def _run(
         http_session: aiohttp.ClientSession, mcp_session: MCPClientSession

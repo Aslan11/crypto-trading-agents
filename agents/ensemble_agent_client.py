@@ -11,6 +11,8 @@ RESET = "\033[0m"
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult, TextContent
+
+from agents.utils import sse_events
 import time
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -54,52 +56,26 @@ async def _latest_price(
 ) -> float:
     """Return the most recent market price for ``symbol``."""
     url = base_url.rstrip("/") + "/signal/market_tick"
-    params = {"after": int(time.time()) - 60}
-    try:
-        async with session.get(url, params=params) as resp:
-            if resp.status == 200:
-                events = await resp.json()
-            else:
-                events = []
-    except Exception:
-        return 0.0
-
-    last_price = 0.0
-    for evt in events:
-        if evt.get("symbol") != symbol:
-            continue
-        data = evt.get("data", {})
-        if "last" in data:
-            last_price = float(data["last"])
-        elif {"bid", "ask"}.issubset(data):
-            last_price = (float(data["bid"]) + float(data["ask"])) / 2
-    return last_price
+    gen = sse_events(session, url, after=int(time.time()) - 60)
+    async with asyncio.timeout(5):
+        async for evt in gen:
+            if evt.get("symbol") != symbol:
+                continue
+            data = evt.get("data", {})
+            if "last" in data:
+                return float(data["last"])
+            if {"bid", "ask"}.issubset(data):
+                return (float(data["bid"]) + float(data["ask"])) / 2
+    await gen.aclose()
+    return 0.0
 
 async def _stream_strategy_signals(
     session: aiohttp.ClientSession, base_url: str
 ) -> AsyncIterator[dict]:
     """Yield strategy signals from the MCP server."""
-    cursor = 0
     url = base_url.rstrip("/") + "/signal/strategy_signal"
-    while True:
-        try:
-            async with session.get(url, params={"after": cursor}) as resp:
-                if resp.status == 200:
-                    events = await resp.json()
-                else:
-                    events = []
-        except Exception:
-            events = []
-
-        if not events:
-            await asyncio.sleep(1)
-            continue
-
-        for evt in events:
-            ts = evt.get("ts")
-            if ts is not None:
-                cursor = max(cursor, ts)
-            yield evt
+    async for evt in sse_events(session, url):
+        yield evt
 
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and react to strategy signals."""

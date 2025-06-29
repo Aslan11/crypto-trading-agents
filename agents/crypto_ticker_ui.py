@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import logging
 from typing import Dict, List
 import contextlib
 
@@ -14,6 +15,11 @@ MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
 REFRESH_SEC = float(os.environ.get("TICKER_REFRESH", "1"))
+
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 class TickerApp(App):
@@ -40,6 +46,7 @@ class TickerApp(App):
             TabPane("Waiting", Static("Waiting for pairs…"), id="__wait")
         )
         self.tabbed.active = "__wait"
+        logger.info("Ticker UI mounted, awaiting data from %s:%s", MCP_HOST, MCP_PORT)
         self.watcher = asyncio.create_task(self.watch_vectors())
         self.set_interval(REFRESH_SEC, self.update_current_tab)
 
@@ -48,6 +55,7 @@ class TickerApp(App):
             self.watcher.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self.watcher
+        logger.info("Ticker UI shutting down")
 
     async def watch_vectors(self) -> None:
         """Continuously fetch feature vectors from the MCP server."""
@@ -60,9 +68,11 @@ class TickerApp(App):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
                 try:
+                    logger.info("Connecting to %s", url)
                     async with session.get(
                         url, params={"after": self.cursor}, headers=headers
                     ) as resp:
+                        logger.info("SSE connected with status %s", resp.status)
                         if resp.status != 200:
                             await asyncio.sleep(backoff)
                             backoff = min(backoff * 2, 30)
@@ -79,6 +89,7 @@ class TickerApp(App):
                             try:
                                 evt = json.loads(text[5:].strip())
                             except Exception:
+                                logger.exception("Failed to parse SSE line: %s", text)
                                 continue
 
                             sym = evt.get("symbol")
@@ -87,12 +98,14 @@ class TickerApp(App):
                             if sym and isinstance(data, dict):
                                 price = data.get("mid")
                                 if isinstance(price, (int, float)):
+                                    logger.debug("%s price=%s ts=%s", sym, price, ts)
                                     self.data.setdefault(sym, []).append(price)
                                     self.data[sym] = self.data[sym][-120:]
                                     await self.ensure_tab(sym)
                             if isinstance(ts, int):
                                 self.cursor = max(self.cursor, ts)
-                except Exception:
+                except Exception as exc:
+                    logger.warning("SSE error: %s", exc)
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 30)
 
@@ -102,6 +115,7 @@ class TickerApp(App):
         try:
             self.tabbed.get_pane(sym)
         except NoMatches:
+            logger.info("Creating tab for %s", sym)
             try:
                 self.tabbed.get_pane("__wait")
             except NoMatches:
@@ -115,11 +129,14 @@ class TickerApp(App):
 
             if self.tabbed.active in (None, "__wait"):
                 self.tabbed.active = sym
+        else:
+            logger.debug("Tab for %s already exists", sym)
 
     def update_current_tab(self) -> None:
         pane = self.tabbed.active_pane
         if not pane:
             return
+        logger.debug("Updating pane %s", pane.id)
         static = pane.query_one(Static)
         if pane.id and pane.id in self.data:
             static.update(self.render_graph(pane.id))
@@ -130,6 +147,7 @@ class TickerApp(App):
         prices = self.data.get(sym, [])
         if len(prices) < 2:
             return "Waiting for data…"
+        logger.debug("Rendering graph for %s with %d points", sym, len(prices))
         width = max(10, self.size.width - 4)
         height = max(4, self.size.height - 6)
         fig = plotille.Figure()

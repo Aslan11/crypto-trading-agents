@@ -257,6 +257,7 @@ async def fetch_signals(request: Request) -> Response:
         cursor = after
         idx = 0
         events = signal_log.setdefault(name, [])
+        logger.info("Client connected to %s after %s", name, after)
         # Skip past events before ``cursor``
         while idx < len(events) and events[idx].get("ts", 0) <= cursor:
             idx += 1
@@ -269,8 +270,10 @@ async def fetch_signals(request: Request) -> Response:
                 ts = evt.get("ts", 0)
                 if ts > cursor:
                     cursor = ts
+                logger.debug("Sending %s event %s", name, evt)
                 yield f"data: {json.dumps(evt)}\n\n"
             await asyncio.sleep(0.1)
+        logger.info("Client disconnected from %s", name)
 
     logger.debug("Starting signal stream for %s after %s", name, after)
     return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -104,12 +104,12 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 1. With the tmux session running, open a new terminal window.
 2. Kick off a market data workflow for Bitcoin:
    ```bash
-   curl -X POST http://localhost:8080/mcp/tools/subscribe_cex_stream \
+   curl -X POST http://localhost:8080/mcp/tools/start_market_stream \
      -H 'Accept: application/json, text/event-stream' \
      -H 'Content-Type: application/json' \
      -d '{"symbols": ["BTC/USD"], "interval_sec": 1}'
-  ```
-3. `subscribe_cex_stream` records ticks to the `market_tick` signal.
+   ```
+3. `start_market_stream` records ticks to the `market_tick` signal.
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
 6. The ensemble agent approves intents with `pre_trade_risk_check`, then

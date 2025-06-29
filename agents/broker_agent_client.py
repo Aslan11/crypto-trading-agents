@@ -82,34 +82,6 @@ def _tool_result_data(result: Any) -> Any:
     return result
 
 
-async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
-    if not symbols:
-        return
-    payload = {"symbols": symbols}
-    try:
-        logger.info("Starting stream for %s", symbols)
-        result = await session.call_tool("start_market_stream", payload)
-        data = _tool_result_data(result)
-        if isinstance(data, dict):
-            wf_id = data.get("workflow_id")
-            run_id = data.get("run_id")
-        else:
-            wf_id = None
-            run_id = None
-        if wf_id and run_id:
-            logger.info(
-                "Stream started for %s via workflow %s run %s",
-                symbols,
-                wf_id,
-                run_id,
-            )
-        else:
-            logger.info("Stream started for %s", symbols)
-    except Exception as exc:
-        logger.error("Failed to start stream: %s", exc)
-
-
-
 SYSTEM_PROMPT = (
     "You are a trading broker agent operating on the Coinbase exchange. "
     "Ask the user which of these trading pairs they want to trade: "
@@ -182,7 +154,29 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 except Exception as exc:
                     logger.error("LLM request failed: %s", exc)
 
-            await _start_stream(session, pairs)
+            if pairs:
+                payload = {"symbols": pairs}
+                try:
+                    logger.info("Starting stream for %s", pairs)
+                    result = await session.call_tool("start_market_stream", payload)
+                    data = _tool_result_data(result)
+                    if isinstance(data, dict):
+                        wf_id = data.get("workflow_id")
+                        run_id = data.get("run_id")
+                    else:
+                        wf_id = None
+                        run_id = None
+                    if wf_id and run_id:
+                        logger.info(
+                            "Stream started for %s via workflow %s run %s",
+                            pairs,
+                            wf_id,
+                            run_id,
+                        )
+                    else:
+                        logger.info("Stream started for %s", pairs)
+                except Exception as exc:
+                    logger.error("Failed to start stream: %s", exc)
             logger.info("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
 
             while True:

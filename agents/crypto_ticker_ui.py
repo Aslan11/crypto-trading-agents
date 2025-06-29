@@ -7,14 +7,14 @@ import contextlib
 import aiohttp
 import plotille
 from textual.app import App, ComposeResult
-from textual.widgets._tabbed_content import TabPane, TabbedContent, Tabs
-from textual.widgets import Static
+from textual.widgets import TabbedContent, TabPane, Tabs, Static
 from textual.css.query import NoMatches
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
 REFRESH_SEC = float(os.environ.get("TICKER_REFRESH", "1"))
+
 
 class TickerApp(App):
     """A simple Textual app displaying a ticker per symbol in tabs."""
@@ -97,7 +97,7 @@ class TickerApp(App):
                     backoff = min(backoff * 2, 30)
 
     async def ensure_tab(self, sym: str) -> None:
-        """Create a tab for ``sym`` if it doesn't already exist and activate it."""
+        """Create a tab for ``sym`` if it doesn't already exist."""
 
         try:
             self.tabbed.get_pane(sym)
@@ -113,7 +113,8 @@ class TickerApp(App):
                 TabPane(sym, Static("Waiting for data…"), id=sym)
             )
 
-        self.tabbed.active = sym
+            if self.tabbed.active in (None, "__wait"):
+                self.tabbed.active = sym
 
     def update_current_tab(self) -> None:
         pane = self.tabbed.active_pane
@@ -145,10 +146,12 @@ class TickerApp(App):
         return fig.show(legend=False)
 
     def action_next_tab(self) -> None:
-        self.query_one(Tabs).action_next_tab()
+        with contextlib.suppress(NoMatches):
+            self.query_one(Tabs).action_next_tab()
 
     def action_previous_tab(self) -> None:
-        self.query_one(Tabs).action_previous_tab()
+        with contextlib.suppress(NoMatches):
+            self.query_one(Tabs).action_previous_tab()
 
     def action_quit(self) -> None:
         self.exit()

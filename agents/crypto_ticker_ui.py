@@ -50,27 +50,36 @@ class TickerApp(App):
                 await self.watcher
 
     async def watch_vectors(self) -> None:
+        """Continuously fetch feature vectors from the MCP server."""
+
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/feature_vector"
         headers = {"Accept": "text/event-stream"}
         timeout = aiohttp.ClientTimeout(total=None)
+        backoff = 1
+
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
                 try:
-                    async with session.get(url, params={"after": self.cursor}, headers=headers) as resp:
+                    async with session.get(
+                        url, params={"after": self.cursor}, headers=headers
+                    ) as resp:
                         if resp.status != 200:
-                            await asyncio.sleep(1)
+                            await asyncio.sleep(backoff)
+                            backoff = min(backoff * 2, 30)
                             continue
-                        while True:
-                            line = await resp.content.readline()
+
+                        backoff = 1
+                        async for line in resp.content:
                             if not line:
                                 break
                             text = line.decode().strip()
-                            if not text.startswith("data:"):
+                            if not text or not text.startswith("data:"):
                                 continue
                             try:
                                 evt = json.loads(text[5:].strip())
                             except Exception:
                                 continue
+
                             sym = evt.get("symbol")
                             ts = evt.get("ts")
                             data = evt.get("data")
@@ -83,7 +92,8 @@ class TickerApp(App):
                             if isinstance(ts, int):
                                 self.cursor = max(self.cursor, ts)
                 except Exception:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30)
 
     async def ensure_tab(self, sym: str) -> None:
         """Create a tab for ``sym`` if it doesn't already exist and activate it."""
@@ -124,7 +134,11 @@ class TickerApp(App):
         fig.width = width
         fig.height = height
         fig.set_x_limits(min_=0, max_=len(prices) - 1)
-        fig.set_y_limits(min_=min(prices), max_=max(prices))
+        lo, hi = min(prices), max(prices)
+        if lo == hi:
+            lo -= 1
+            hi += 1
+        fig.set_y_limits(min_=lo, max_=hi)
         fig.color_mode = None
         fig.plot(range(len(prices)), prices)
         return fig.show(legend=False)

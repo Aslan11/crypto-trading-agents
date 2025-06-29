@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
-from typing import Any, List
 import asyncio
+from datetime import timedelta
+import logging
+import os
+from typing import Any, List
 
+import aiohttp
 from pydantic import BaseModel
 from temporalio import activity, workflow
-import aiohttp
-import os
-import logging
 
 
 class MarketTick(BaseModel):
@@ -36,7 +36,10 @@ logger = logging.getLogger(__name__)
 async def fetch_ticker(exchange: str, symbol: str) -> dict[str, Any]:
     """Return the latest ticker for ``symbol`` from ``exchange``."""
     import ccxt.async_support as ccxt
-    exchange_cls = getattr(ccxt, exchange.lower())
+    try:
+        exchange_cls = getattr(ccxt, exchange.lower())
+    except AttributeError as exc:
+        raise ValueError(f"Unsupported exchange: {exchange}") from exc
     client = exchange_cls()
     try:
         data = await client.fetch_ticker(symbol)

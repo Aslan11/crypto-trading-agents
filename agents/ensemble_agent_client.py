@@ -4,6 +4,10 @@ import asyncio
 from typing import Any, AsyncIterator
 import aiohttp
 import openai
+
+ORANGE = "\033[33m"
+PINK = "\033[95m"
+RESET = "\033[0m"
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult, TextContent
@@ -192,7 +196,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 if func_name == "place_mock_order" and "intent" not in func_args:
                                     func_args["intent"] = intent
                                 print(
-                                    f"[EnsembleAgent] Tool requested: {func_name} {func_args}"
+                                    f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                                 )
                                 result = await session.call_tool(func_name, func_args)
                                 conversation.append(
@@ -221,7 +225,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             if func_name == "place_mock_order" and "intent" not in func_args:
                                 func_args["intent"] = intent
                             print(
-                                f"[EnsembleAgent] Tool requested: {func_name} {func_args}"
+                                f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                             )
                             result = await session.call_tool(func_name, func_args)
                             conversation.append(
@@ -237,7 +241,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         conversation.append(
                             {"role": "assistant", "content": assistant_reply}
                         )
-                        print(f"[EnsembleAgent] Decision: {assistant_reply}")
+                        print(f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}")
                         conversation = [
                             {"role": "system", "content": SYSTEM_PROMPT}
                         ]

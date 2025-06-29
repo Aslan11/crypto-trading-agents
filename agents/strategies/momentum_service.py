@@ -237,9 +237,30 @@ async def main() -> None:
             await _update_stop_symbols(http_session)
             if symbol in STOP_SYMBOLS:
                 if symbol in handles:
-                    handles.pop(symbol, None)
+                    handle = handles.pop(symbol)
                     last_sig.pop(symbol, None)
+                    try:
+                        await handle.terminate(reason="stopped")
+                    except RPCError as err:
+                        if err.status != RPCStatusCode.NOT_FOUND:
+                            logger.error(
+                                "Failed to terminate momentum workflow for %s: %s",
+                                symbol,
+                                err,
+                            )
                     logger.info("Momentum service stopped watching %s", symbol)
+                # Also terminate the feature engineering workflow if present
+                feature_id = f"feature-{symbol.replace('/', '-')}"
+                feature_handle = client.get_workflow_handle(feature_id)
+                try:
+                    await feature_handle.terminate(reason="stopped")
+                except RPCError as err:
+                    if err.status != RPCStatusCode.NOT_FOUND:
+                        logger.error(
+                            "Failed to terminate feature workflow for %s: %s",
+                            symbol,
+                            err,
+                        )
                 continue
             if symbol not in handles:
                 await _ensure_workflow(client, symbol)

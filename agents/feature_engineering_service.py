@@ -51,6 +51,28 @@ VECTOR_HISTORY_LIMIT = int(os.environ.get("VECTOR_HISTORY_LIMIT", "9000"))
 
 STOP_EVENT = asyncio.Event()
 TASKS: set[asyncio.Task[Any]] = set()
+STOP_SYMBOLS: set[str] = set()
+_STOP_CURSOR = 0
+
+
+async def _update_stop_symbols(session: aiohttp.ClientSession) -> None:
+    """Fetch momentum stop signals and update ``STOP_SYMBOLS``."""
+    global _STOP_CURSOR
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/momentum_stop"
+    try:
+        async with session.get(url, params={"after": _STOP_CURSOR}) as resp:
+            if resp.status != 200:
+                return
+            events = await resp.json()
+    except Exception:
+        return
+
+    for evt in events:
+        sym = evt.get("symbol")
+        ts = evt.get("ts", 0)
+        if sym:
+            STOP_SYMBOLS.add(sym)
+        _STOP_CURSOR = max(_STOP_CURSOR, ts)
 
 
 async def _poll_vectors(session: aiohttp.ClientSession) -> None:
@@ -205,6 +227,7 @@ async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
     # Basic exponential backoff when the MCP server returns no data
     backoff = 1
     while not STOP_EVENT.is_set():
+        await _update_stop_symbols(session)
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
         try:
             async with session.get(url, params={"after": cursor}) as resp:
@@ -226,6 +249,18 @@ async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
             symbol = tick.get("symbol")
             ts = tick.get("ts")
             if symbol is None or ts is None:
+                continue
+            if symbol in STOP_SYMBOLS:
+                handle = client.get_workflow_handle(f"feature-{symbol.replace('/', '-')}")
+                try:
+                    await handle.terminate(reason="stopped")
+                except RPCError as err:
+                    if err.status != RPCStatusCode.NOT_FOUND:
+                        logger.error(
+                            "Failed to terminate feature workflow for %s: %s",
+                            symbol,
+                            err,
+                        )
                 continue
             task = asyncio.create_task(_signal_tick(client, symbol, tick))
             TASKS.add(task)

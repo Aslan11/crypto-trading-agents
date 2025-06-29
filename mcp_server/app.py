@@ -204,6 +204,15 @@ async def get_portfolio_status() -> Dict[str, Any]:
     }
 
 
+@app.tool(annotations={"title": "Stop Momentum Pair", "readOnlyHint": False})
+async def stop_momentum_pair(symbol: str) -> Dict[str, Any]:
+    """Signal the momentum service to stop tracking ``symbol``."""
+    ts = int(datetime.utcnow().timestamp())
+    signal_log.setdefault("momentum_stop", []).append({"symbol": symbol, "ts": ts})
+    logger.info("Recorded stop for %s", symbol)
+    return {"status": "ok", "symbol": symbol, "ts": ts}
+
+
 @app.custom_route("/workflow/{workflow_id}/{run_id}", methods=["GET"])
 async def workflow_status(request: Request) -> Response:
     workflow_id = request.path_params["workflow_id"]

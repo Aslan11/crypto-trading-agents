@@ -227,7 +227,6 @@ async def _poll_ticks(session: aiohttp.ClientSession, client: Client) -> None:
     # Basic exponential backoff when the MCP server returns no data
     backoff = 1
     while not STOP_EVENT.is_set():
-        await _update_stop_symbols(session)
         url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
         try:
             async with session.get(url, params={"after": cursor}) as resp:
@@ -275,6 +274,21 @@ async def _shutdown() -> None:
     await asyncio.gather(*TASKS, return_exceptions=True)
 
 
+async def _watch_stop_symbols(session: aiohttp.ClientSession, client: Client) -> None:
+    """Periodically terminate workflows for any stopped symbols."""
+    while not STOP_EVENT.is_set():
+        await _update_stop_symbols(session)
+        for sym in list(STOP_SYMBOLS):
+            handle = client.get_workflow_handle(f"feature-{sym.replace('/', '-')}")
+            try:
+                await handle.terminate(reason="stopped")
+            except RPCError as err:
+                if err.status != RPCStatusCode.NOT_FOUND:
+                    logger.error("Failed to terminate feature workflow for %s: %s", sym, err)
+            await asyncio.sleep(0)  # yield control
+        await asyncio.sleep(1)
+
+
 async def main() -> None:
     """Run the feature engineering service."""
 
@@ -292,10 +306,12 @@ async def main() -> None:
     async with aiohttp.ClientSession(timeout=timeout) as session:
         tick_task = asyncio.create_task(_poll_ticks(session, temporal_client))
         vec_task = asyncio.create_task(_poll_vectors(session))
+        stop_task = asyncio.create_task(_watch_stop_symbols(session, temporal_client))
         await STOP_EVENT.wait()
         tick_task.cancel()
         vec_task.cancel()
-        await asyncio.gather(tick_task, vec_task, return_exceptions=True)
+        stop_task.cancel()
+        await asyncio.gather(tick_task, vec_task, stop_task, return_exceptions=True)
         await _shutdown()
 
 

@@ -183,6 +183,39 @@ async def _run_tool(
         await _record_signal(http_session, data)
 
 
+async def _watch_stop_symbols(
+    session: aiohttp.ClientSession, client: Client, handles: dict[str, Any]
+) -> None:
+    """Poll for stop signals and terminate workflows as needed."""
+    while not STOP_EVENT.is_set():
+        await _update_stop_symbols(session)
+        for sym in list(STOP_SYMBOLS):
+            if sym in handles:
+                handle = handles.pop(sym)
+                try:
+                    await handle.terminate(reason="stopped")
+                except RPCError as err:
+                    if err.status != RPCStatusCode.NOT_FOUND:
+                        logger.error(
+                            "Failed to terminate momentum workflow for %s: %s",
+                            sym,
+                            err,
+                        )
+                logger.info("Momentum service stopped watching %s", sym)
+            feature_id = f"feature-{sym.replace('/', '-')}"
+            feature_handle = client.get_workflow_handle(feature_id)
+            try:
+                await feature_handle.terminate(reason="stopped")
+            except RPCError as err:
+                if err.status != RPCStatusCode.NOT_FOUND:
+                    logger.error(
+                        "Failed to terminate feature workflow for %s: %s",
+                        sym,
+                        err,
+                    )
+        await asyncio.sleep(1)
+
+
 async def main() -> None:
     """Run the momentum strategy service."""
     print_banner(
@@ -232,9 +265,11 @@ async def main() -> None:
         handles: dict[str, Any] = {}
         last_sig: dict[str, int] = {}
         tasks: Set[asyncio.Task] = set()
+        stop_task = asyncio.create_task(
+            _watch_stop_symbols(http_session, client, handles)
+        )
 
         async for symbol, vector in _subscribe_all_vectors(http_session):
-            await _update_stop_symbols(http_session)
             if symbol in STOP_SYMBOLS:
                 if symbol in handles:
                     handle = handles.pop(symbol)
@@ -283,6 +318,8 @@ async def main() -> None:
             tasks.add(task)
             task.add_done_callback(tasks.discard)
 
+        stop_task.cancel()
+        await asyncio.gather(stop_task, return_exceptions=True)
         if tasks:
             await asyncio.gather(*tasks)
 

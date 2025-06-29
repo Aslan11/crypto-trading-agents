@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any, List
+import asyncio
 
 from pydantic import BaseModel
 from temporalio import activity, workflow
@@ -76,12 +77,17 @@ class SubscribeCEXStream:
         """Stream tickers indefinitely, continuing as new periodically."""
         cycles = 0
         while True:
-            for symbol in symbols:
-                ticker = await workflow.execute_activity(
-                    fetch_ticker,
-                    args=[exchange, symbol],
-                    schedule_to_close_timeout=timedelta(seconds=10),
-                )
+            tickers = await asyncio.gather(
+                *[
+                    workflow.execute_activity(
+                        fetch_ticker,
+                        args=[exchange, symbol],
+                        schedule_to_close_timeout=timedelta(seconds=10),
+                    )
+                    for symbol in symbols
+                ]
+            )
+            for ticker in tickers:
                 await workflow.execute_activity(
                     record_tick,
                     ticker,

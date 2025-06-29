@@ -17,8 +17,11 @@ FETCH_INTERVAL = float(1)
 MAX_POINTS = 60
 
 
-def _fetch_prices(client: ccxt.coinbaseexchange, prices: Dict[str, Deque[float]]) -> None:
-    for pair in PAIRS:
+def _fetch_prices(
+    client: ccxt.coinbaseexchange, prices: Dict[str, Deque[float]]
+) -> None:
+    """Populate ``prices`` with the latest quotes for the tracked pairs."""
+    for pair in prices.keys():
         try:
             ticker = client.fetch_ticker(pair)
             prices[pair].append(ticker["last"])
@@ -40,18 +43,29 @@ def _sparkline(data: List[float], width: int) -> str:
     return "".join(chars[int((v - mn) * scale)] for v in values)
 
 
-def _draw(stdscr: curses.window, selection: int, prices: Dict[str, Deque[float]]) -> None:
+def _draw(
+    stdscr: curses.window,
+    selection: int,
+    tracked: List[str],
+    prices: Dict[str, Deque[float]],
+) -> None:
+    """Render menu and price charts."""
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     menu_w = 16
     for i, item in enumerate(MENU):
+        marker = "✓ " if item in tracked else "  "
         attr = curses.A_REVERSE if i == selection else curses.A_NORMAL
-        stdscr.addnstr(i, 0, item.ljust(menu_w - 1), menu_w - 1, attr)
+        stdscr.addnstr(i, 0, marker + item.ljust(menu_w - 2), menu_w, attr)
 
     chart_w = max(10, width - menu_w - 1)
     rows = height - 2
-    pairs = PAIRS if selection == 0 else [MENU[selection]]
-    for idx, pair in enumerate(pairs):
+    shown = (
+        tracked
+        if selection == 0
+        else [MENU[selection]] if MENU[selection] in tracked else []
+    )
+    for idx, pair in enumerate(shown):
         if idx * 3 + 2 >= rows:
             break
         data = list(prices[pair])
@@ -59,7 +73,14 @@ def _draw(stdscr: curses.window, selection: int, prices: Dict[str, Deque[float]]
         last = data[-1] if data else 0.0
         y = idx * 3
         stdscr.addnstr(y, menu_w, f"{pair} {last:.2f}", chart_w)
-        stdscr.addnstr(y + 1, menu_w, line, chart_w)
+        if len(data) >= 2:
+            color = curses.color_pair(1 if last >= data[0] else 2)
+        else:
+            color = curses.A_NORMAL
+        stdscr.addnstr(y + 1, menu_w, line, chart_w, color)
+
+    if not tracked:
+        stdscr.addnstr(0, menu_w, "No pairs selected", chart_w)
 
     stdscr.refresh()
 
@@ -67,9 +88,14 @@ def _draw(stdscr: curses.window, selection: int, prices: Dict[str, Deque[float]]
 def main(stdscr: curses.window) -> None:
     curses.curs_set(0)
     stdscr.nodelay(True)
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_GREEN, -1)
+    curses.init_pair(2, curses.COLOR_RED, -1)
     selection = 0
     client = ccxt.coinbaseexchange()
-    prices: Dict[str, Deque[float]] = {p: deque(maxlen=MAX_POINTS) for p in PAIRS}
+    tracked: List[str] = []
+    prices: Dict[str, Deque[float]] = {}
     last_fetch = 0.0
 
     running = True
@@ -88,13 +114,22 @@ def main(stdscr: curses.window) -> None:
             selection = (selection + 1) % len(MENU)
         elif key in (ord("q"), ord("Q")):
             break
+        elif key in (curses.KEY_ENTER, ord("\n"), ord("\r"), ord(" ")):
+            item = MENU[selection]
+            if item in PAIRS:
+                if item in tracked:
+                    tracked.remove(item)
+                    prices.pop(item, None)
+                else:
+                    tracked.append(item)
+                    prices[item] = deque(maxlen=MAX_POINTS)
 
         now = time.time()
-        if now - last_fetch >= FETCH_INTERVAL:
+        if tracked and now - last_fetch >= FETCH_INTERVAL:
             last_fetch = now
             _fetch_prices(client, prices)
 
-        _draw(stdscr, selection, prices)
+        _draw(stdscr, selection, tracked, prices)
         time.sleep(0.1)
 
 

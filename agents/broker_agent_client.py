@@ -2,6 +2,10 @@ import os
 import json
 import asyncio
 import logging
+
+ORANGE = "\033[33m"
+PINK = "\033[95m"
+RESET = "\033[0m"
 from typing import Any
 
 from mcp.types import CallToolResult, TextContent
@@ -16,7 +20,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 EXCHANGE = "coinbaseexchange"
 
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "WARNING")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -59,9 +63,11 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
             await session.initialize()
             tools = (await session.list_tools()).tools
             conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
-            logger.info("Connected with tools: %s", [t.name for t in tools])
+            print(
+                f"[BrokerAgent] Connected to MCP server with tools: {[t.name for t in tools]}"
+            )
 
-            logger.info("Welcome to %s!", EXCHANGE)
+            print(f"[BrokerAgent] Welcome to {EXCHANGE}!")
 
             if _openai_client is not None:
                 try:
@@ -73,13 +79,13 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
                     assistant_msg = msg_dict.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
-                    logger.info("Agent: %s", assistant_msg)
+                    print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                 except Exception as exc:
                     logger.error("LLM request failed: %s", exc)
             else:
-                logger.info("Please specify trading pairs like BTC/USD")
+                print("[BrokerAgent] Please specify trading pairs like BTC/USD")
 
-            logger.info("Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
+            print("[BrokerAgent] Type trade commands like 'buy 1 BTC/USD' or 'status'. 'quit' exits.")
 
             while True:
                 user_request = await get_next_broker_command()
@@ -143,7 +149,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     for call in msg_dict.get("tool_calls", []):
                         func_name = call["function"]["name"]
                         func_args = json.loads(call["function"].get("arguments") or "{}")
-                        logger.info("Invoking tool %s with %s", func_name, func_args)
+                        print(f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}")
                         try:
                             result = await session.call_tool(func_name, func_args)
                             result_data = _tool_result_data(result)
@@ -166,7 +172,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         )
                         assistant_msg = followup.choices[0].message.content or ""
                         conversation.append({"role": "assistant", "content": assistant_msg})
-                        logger.info("Response: %s", assistant_msg)
+                        print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                     except Exception as exc:
                         logger.error("LLM request failed: %s", exc)
                         continue
@@ -178,7 +184,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         logger.error("Received function_call without name: %s", msg_dict)
                         continue
                     func_args = json.loads(function_call.get("arguments") or "{}")
-                    logger.info("Invoking tool %s with %s", func_name, func_args)
+                    print(f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}")
                     try:
                         result = await session.call_tool(func_name, func_args)
                         result_data = _tool_result_data(result)
@@ -194,14 +200,14 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         )
                         assistant_msg = followup.choices[0].message.content or ""
                         conversation.append({"role": "assistant", "content": assistant_msg})
-                        logger.info("Response: %s", assistant_msg)
+                        print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                     except Exception as exc:
                         logger.error("LLM request failed: %s", exc)
                         continue
                 else:
                     assistant_msg = msg_dict.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
-                    logger.info("Response: %s", assistant_msg)
+                    print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
 
                 if len(conversation) > 20:
                     conversation = [conversation[0]] + conversation[-19:]

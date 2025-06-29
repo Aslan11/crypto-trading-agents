@@ -69,7 +69,8 @@ class TickerApp(App):
                             continue
 
                         backoff = 1
-                        async for line in resp.content:
+                        while True:
+                            line = await resp.content.readline()
                             if not line:
                                 break
                             text = line.decode().strip()

@@ -19,7 +19,11 @@ REFRESH_SEC = float(os.environ.get("TICKER_REFRESH", "1"))
 
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="[%(asctime)s] %(levelname)s: %(message)s",
+    filename=os.environ.get("TICKER_LOG", "crypto_ticker_ui.log"),
+)
 logger = logging.getLogger(__name__)
 
 
@@ -45,8 +49,8 @@ class TickerApp(App):
     @staticmethod
     def _pane_id(sym: str) -> str:
         """Return a safe DOM id derived from ``sym``."""
-        safe = re.sub(r"[^a-zA-Z0-9_-]", "-", sym)
-        if re.match(r"^[0-9]", safe):
+        safe = re.sub(r"[^0-9A-Za-z_-]", "-", sym)
+        if safe and safe[0].isdigit():
             safe = f"sym-{safe}"
         return safe
 

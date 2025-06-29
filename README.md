@@ -55,6 +55,7 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 | Tool (Workflow)            | Purpose                                                | Typical Triggers        |
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
+| `start_market_stream`    | Begin streaming market data for selected pairs | After user selection  |
 | `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
 | `evaluate_strategy_momentum` | Log momentum signals (optional cooldown)     | Feature vector        |
 | `pre_trade_risk_check`      | Validate intents against simple VaR limits     | Order intents         |

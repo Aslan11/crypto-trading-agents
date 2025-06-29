@@ -79,6 +79,14 @@ async def subscribe_cex_stream(
     return {"workflow_id": workflow_id, "run_id": handle.run_id}
 
 
+@app.tool(annotations={"title": "Start Market Stream", "readOnlyHint": True})
+async def start_market_stream(
+    symbols: List[str], interval_sec: int = 1
+) -> Dict[str, str]:
+    """Convenience wrapper around ``subscribe_cex_stream``."""
+    return await subscribe_cex_stream(symbols, interval_sec)
+
+
 @app.tool(annotations={"title": "Evaluate Momentum Strategy", "readOnlyHint": True})
 async def evaluate_strategy_momentum(
     signal: Dict[str, Any], cooldown_sec: int = 0

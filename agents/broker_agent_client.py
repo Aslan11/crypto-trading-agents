@@ -88,7 +88,7 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
     payload = {"symbols": symbols}
     try:
         logger.info("Starting stream for %s", symbols)
-        result = await session.call_tool("subscribe_cex_stream", payload)
+        result = await session.call_tool("start_market_stream", payload)
         data = _tool_result_data(result)
         if isinstance(data, dict):
             wf_id = data.get("workflow_id")
@@ -107,6 +107,8 @@ async def _start_stream(session: ClientSession, symbols: list[str]) -> None:
             logger.info("Stream started for %s", symbols)
     except Exception as exc:
         logger.error("Failed to start stream: %s", exc)
+
+
 
 SYSTEM_PROMPT = (
     "You are a trading broker agent operating on the Coinbase exchange. "

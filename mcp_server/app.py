@@ -36,6 +36,30 @@ _client_lock = asyncio.Lock()
 # Simple in-memory signal log for backward compatibility
 signal_log: dict[str, list[dict]] = {}
 
+_NAME_TO_PAIR = {
+    "BTC": "BTC/USD",
+    "BITCOIN": "BTC/USD",
+    "XBT": "BTC/USD",
+    "ETH": "ETH/USD",
+    "ETHEREUM": "ETH/USD",
+    "DOGE": "DOGE/USD",
+    "DOGECOIN": "DOGE/USD",
+    "LTC": "LTC/USD",
+    "LITECOIN": "LTC/USD",
+    "ADA": "ADA/USD",
+    "CARDANO": "ADA/USD",
+    "SOL": "SOL/USD",
+    "SOLANA": "SOL/USD",
+}
+
+def _normalize_pair(symbol: str) -> str:
+    """Return canonical pair string for ``symbol``."""
+    sym = symbol.upper()
+    if "/" in sym:
+        base = sym.split("/", 1)[0]
+        return _NAME_TO_PAIR.get(base, sym)
+    return _NAME_TO_PAIR.get(sym, sym)
+
 
 async def get_temporal_client() -> Client:
     """Connect to Temporal server (lazy singleton)."""
@@ -207,10 +231,11 @@ async def get_portfolio_status() -> Dict[str, Any]:
 @app.tool(annotations={"title": "Stop Momentum Pair", "readOnlyHint": False})
 async def stop_momentum_pair(symbol: str) -> Dict[str, Any]:
     """Signal the momentum service to stop tracking ``symbol``."""
+    pair = _normalize_pair(symbol)
     ts = int(datetime.utcnow().timestamp())
-    signal_log.setdefault("momentum_stop", []).append({"symbol": symbol, "ts": ts})
-    logger.info("Recorded stop for %s", symbol)
-    return {"status": "ok", "symbol": symbol, "ts": ts}
+    signal_log.setdefault("momentum_stop", []).append({"symbol": pair, "ts": ts})
+    logger.info("Recorded stop for %s", pair)
+    return {"status": "ok", "symbol": pair, "ts": ts}
 
 
 @app.custom_route("/workflow/{workflow_id}/{run_id}", methods=["GET"])

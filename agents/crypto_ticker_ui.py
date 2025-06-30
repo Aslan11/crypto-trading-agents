@@ -174,7 +174,8 @@ class TickerApp(App):
             height,
         )
         width = max(10, width - 2)
-        height = max(4, height - 2)
+        # account for axis labels and our header so we do not overflow the pane
+        fig_height = max(1, height - 5)
 
         # take only as many points as can be shown
         data = prices[-width:]
@@ -196,12 +197,12 @@ class TickerApp(App):
             ),
         )
         fig.width = width
-        fig.height = height
+        fig.height = fig_height
         fig.origin = False
         fig.set_x_limits(min_=0, max_=len(data) - 1)
         fig.set_y_limits(min_=lo, max_=hi)
 
-        y_delta = (hi - lo) / height
+        y_delta = (hi - lo) / fig_height
 
         def _fmt(v: float) -> str:
             return f"{v:.2f}"
@@ -217,7 +218,14 @@ class TickerApp(App):
 
         fig.y_ticks_fkt = _y_tick
         fig.plot(xs, data, lc=None)
-        return fig.show(legend=False)
+        graph = fig.show(legend=False)
+
+        header = f" High: {hi:.2f} ".center(width, "─")
+        header = f"┌{header}┐"
+
+        lines = [header] + graph.splitlines()
+        # Trim to available height
+        return "\n".join(lines[:height])
 
     def action_next_tab(self) -> None:
         with contextlib.suppress(NoMatches):

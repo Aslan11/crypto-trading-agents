@@ -153,9 +153,28 @@ class ComputeFeatureVector:
         window_sec: int = VECTOR_WINDOW_SEC,
         continue_every: int = VECTOR_CONTINUE_EVERY,
         history_limit: int = VECTOR_HISTORY_LIMIT,
+        history: list[dict] | None = None,
     ) -> None:
+        """Process ticks and emit feature vectors indefinitely.
+
+        Parameters
+        ----------
+        symbol:
+            Trading pair in ``BASE/QUOTE`` format.
+        window_sec:
+            Sliding window size for feature calculation.
+        continue_every:
+            Number of cycles before continuing as new.
+        history_limit:
+            Maximum workflow history events before continuing as new.
+        history:
+            Previously stored ticks carried over from a prior run.
+        """
+
         self.symbol = symbol
         self.window_sec = window_sec
+        if history is not None:
+            self._history = list(history)
         cycles = 0
         while True:
             # Wait for a new tick to be signalled via the event. We use
@@ -204,6 +223,7 @@ class ComputeFeatureVector:
                         window_sec,
                         continue_every,
                         history_limit,
+                        self._history,
                     ]
                 )
             if cycles >= continue_every:
@@ -213,5 +233,6 @@ class ComputeFeatureVector:
                         window_sec,
                         continue_every,
                         history_limit,
+                        self._history,
                     ]
                 )

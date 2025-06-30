@@ -181,6 +181,27 @@ async def sign_and_send_tx(
     return result
 
 
+@app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
+async def get_historical_ticks(symbol: str, days: int = 7) -> List[Dict[str, float]]:
+    """Return recent ticks for ``symbol`` so the agent can analyze them."""
+    cutoff = int(datetime.utcnow().timestamp()) - days * 86400
+    events = signal_log.get("market_tick", [])
+    ticks: List[Dict[str, float]] = []
+    for e in events:
+        if e.get("symbol") != symbol or e.get("ts", 0) < cutoff:
+            continue
+        data = e.get("data", {})
+        if "last" in data:
+            price = float(data["last"])
+        elif {"bid", "ask"}.issubset(data):
+            price = (float(data["bid"]) + float(data["ask"])) / 2
+        else:
+            continue
+        ticks.append({"ts": e.get("ts"), "price": price})
+    logger.info("Returning %d ticks for %s", len(ticks), symbol)
+    return ticks
+
+
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})
 async def get_portfolio_status() -> Dict[str, Any]:
     """Retrieve current portfolio cash and positions from the ledger."""

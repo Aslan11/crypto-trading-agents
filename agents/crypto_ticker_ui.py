@@ -156,17 +156,25 @@ class TickerApp(App):
         logger.debug("Updating pane %s", pane.id)
         static = pane.query_one(Static)
         if pane.id and pane.id in self.data:
-            static.update(self.render_graph(pane.id))
+            width = static.size.width
+            height = static.size.height
+            static.update(self.render_graph(pane.id, width, height))
         elif pane.id == "__wait":
             static.update("Waiting for pairs…")
 
-    def render_graph(self, sym: str) -> str:
+    def render_graph(self, sym: str, width: int, height: int) -> str:
         prices = self.data.get(sym, [])
         if len(prices) < 2:
             return "Waiting for data…"
-        logger.debug("Rendering graph for %s with %d points", sym, len(prices))
-        width = max(10, self.size.width - 4)
-        height = max(4, self.size.height - 6)
+        logger.debug(
+            "Rendering graph for %s with %d points (%dx%d)",
+            sym,
+            len(prices),
+            width,
+            height,
+        )
+        width = max(10, width - 2)
+        height = max(4, height - 2)
         fig = plotille.Figure()
         fig.width = width
         fig.height = height

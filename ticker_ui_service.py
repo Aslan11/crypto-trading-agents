@@ -206,11 +206,24 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
                     tabbar.update(symbols)
                     for s in symbols:
                         data.setdefault(s, deque(maxlen=360))
-                elif evt.get("type") == "tick":
+                else:
                     sym = evt.get("symbol")
+                    if not sym:
+                        continue
+                    if sym not in tabbar.tabs:
+                        tabbar.tabs.append(sym)
                     price = evt.get("price")
+                    if price is None:
+                        d = evt.get("data", {})
+                        if "last" in d:
+                            price = d["last"]
+                        elif {"bid", "ask"}.issubset(d):
+                            price = (d["bid"] + d["ask"]) / 2
                     ts = evt.get("ts")
-                    if sym is not None and price is not None:
+                    if ts is None:
+                        ts_ms = evt.get("data", {}).get("timestamp")
+                        ts = int(ts_ms / 1000) if ts_ms is not None else int(time.time())
+                    if price is not None:
                         data.setdefault(sym, deque(maxlen=360)).append((ts, float(price)))
         except queue.Empty:
             pass
@@ -243,7 +256,7 @@ def main() -> None:
     parser.add_argument("--demo", action="store_true", help="Run with demo data")
     parser.add_argument(
         "--url",
-        default="http://localhost:8080/prices/stream",
+        default="http://localhost:8080/signal/market_tick",
         help="SSE stream URL",
     )
     args = parser.parse_args()

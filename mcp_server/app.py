@@ -25,7 +25,6 @@ from tools.strategy_signal import EvaluateStrategyMomentum
 from tools.risk import PreTradeRiskCheck
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
-from tools.performance import compute_performance
 from agents.workflows import ExecutionLedgerWorkflow
 
 # Initialize FastMCP
@@ -182,14 +181,25 @@ async def sign_and_send_tx(
     return result
 
 
-@app.tool(annotations={"title": "Get Historical Performance", "readOnlyHint": True})
-async def get_historical_performance(symbol: str, days: int = 7) -> Dict[str, float]:
-    """Compute recent performance metrics for ``symbol`` based on recorded ticks."""
+@app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
+async def get_historical_ticks(symbol: str, days: int = 7) -> List[Dict[str, float]]:
+    """Return recent ticks for ``symbol`` so the agent can analyze them."""
     cutoff = int(datetime.utcnow().timestamp()) - days * 86400
     events = signal_log.get("market_tick", [])
-    ticks = [e for e in events if e.get("symbol") == symbol and e.get("ts", 0) >= cutoff]
-    logger.info("Computing performance for %s from %d ticks", symbol, len(ticks))
-    return compute_performance(ticks)
+    ticks: List[Dict[str, float]] = []
+    for e in events:
+        if e.get("symbol") != symbol or e.get("ts", 0) < cutoff:
+            continue
+        data = e.get("data", {})
+        if "last" in data:
+            price = float(data["last"])
+        elif {"bid", "ask"}.issubset(data):
+            price = (float(data["bid"]) + float(data["ask"])) / 2
+        else:
+            continue
+        ticks.append({"ts": e.get("ts"), "price": price})
+    logger.info("Returning %d ticks for %s", len(ticks), symbol)
+    return ticks
 
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})

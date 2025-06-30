@@ -28,7 +28,7 @@ BORDER = 1
 # internal padding inside bordered regions
 PADDING = 1
 LABEL_WIDTH = 14
-LABEL_PAD = 10
+LABEL_PAD = 3
 X_AXIS_HEIGHT = 1
 BORDER_COLOR = 4
 

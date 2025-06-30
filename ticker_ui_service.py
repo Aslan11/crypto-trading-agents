@@ -27,9 +27,10 @@ BRAILLE_DOTS = [
 BORDER = 1
 # internal padding inside bordered regions
 PADDING = 1
-LABEL_WIDTH = 10
+LABEL_WIDTH = 14
 LABEL_PAD = 10
 X_AXIS_HEIGHT = 1
+BORDER_COLOR = 4
 
 
 class TabBar:
@@ -52,7 +53,9 @@ class TabBar:
     def draw(self, win: "curses._CursesWindow") -> None:
         h, w = win.getmaxyx()
         win.erase()
+        win.attron(curses.color_pair(BORDER_COLOR))
         win.box()
+        win.attroff(curses.color_pair(BORDER_COLOR))
         y = BORDER + PADDING
         x = BORDER + PADDING
         for idx, name in enumerate(self.tabs):
@@ -100,7 +103,9 @@ class BrailleChart:
     def draw(self, win: "curses._CursesWindow", data: Deque[Tuple[int, float]]) -> None:
         h, w = win.getmaxyx()
         win.erase()
+        win.attron(curses.color_pair(BORDER_COLOR))
         win.box()
+        win.attroff(curses.color_pair(BORDER_COLOR))
 
         inner_x = BORDER + PADDING
         inner_y = BORDER + PADDING
@@ -151,11 +156,12 @@ class BrailleChart:
         for cy in range(chart_h):
             label = " " * LABEL_WIDTH
             if cy == 0:
-                label = f"{max_p:.2f}".rjust(LABEL_WIDTH)
+                label = f"High {max_p:.2f}"
             elif cy == chart_h // 2:
-                label = f"{mid_p:.2f}".rjust(LABEL_WIDTH)
+                label = f"Avg  {mid_p:.2f}"
             elif cy == chart_h - 1:
-                label = f"{min_p:.2f}".rjust(LABEL_WIDTH)
+                label = f"Low  {min_p:.2f}"
+            label = label.rjust(LABEL_WIDTH)
             win.addstr(inner_y + cy, inner_x, label)
             for cx in range(chart_w):
                 ch = chr(0x2800 + bits[cy][cx])
@@ -222,6 +228,14 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
     curses.init_pair(1, curses.COLOR_WHITE, -1)
     curses.init_pair(2, curses.COLOR_GREEN, -1)
     curses.init_pair(3, curses.COLOR_RED, -1)
+    # approximate orange if extended colors are available
+    orange = 208 if curses.COLORS >= 16 else curses.COLOR_YELLOW
+    try:
+        if curses.can_change_color() and curses.COLORS >= 16:
+            curses.init_color(orange, 1000, 647, 0)
+    except Exception:
+        pass
+    curses.init_pair(4, orange, -1)
     stdscr.nodelay(True)
     stdscr.timeout(100)
 

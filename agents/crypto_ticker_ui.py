@@ -175,16 +175,38 @@ class TickerApp(App):
         )
         width = max(10, width - 2)
         height = max(4, height - 2)
-        fig = plotille.Figure()
-        fig.width = width
-        fig.height = height
-        fig.set_x_limits(min_=0, max_=len(prices) - 1)
-        lo, hi = min(prices), max(prices)
+
+        # take only as many points as can be shown
+        data = prices[-width:]
+        xs = range(len(data))
+
+        lo = min(data)
+        hi = max(data)
+        mean = sum(data) / len(data)
+
         if lo == hi:
             lo -= 1
             hi += 1
+
+        fig = plotille.Figure()
+        fig.width = width
+        fig.height = height
+        fig.set_x_limits(min_=0, max_=len(data) - 1)
         fig.set_y_limits(min_=lo, max_=hi)
-        fig.plot(range(len(prices)), prices, lc=None)
+
+        y_delta = (hi - lo) / height
+
+        def _y_tick(val: float, nxt: float) -> float | str:
+            if abs(val - lo) <= y_delta / 2:
+                return lo
+            if val <= mean < nxt:
+                return mean
+            if val >= hi - y_delta / 2:
+                return hi
+            return ""
+
+        fig.y_ticks_fkt = _y_tick
+        fig.plot(xs, data, lc=None)
         return fig.show(legend=False)
 
     def action_next_tab(self) -> None:

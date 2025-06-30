@@ -109,7 +109,7 @@ class ComputeFeatureVector:
 
     @workflow.query
     def historical_ticks(self, since_ts: int = 0) -> list[dict]:
-        """Return stored ticks newer than ``since_ts``.
+        """Return stored ticks newer than ``since_ts`` sorted oldest to newest.
 
         Parameters
         ----------
@@ -133,7 +133,7 @@ class ComputeFeatureVector:
             else:
                 continue
             ticks.append({"ts": ts, "price": price})
-        return ticks
+        return sorted(ticks, key=lambda x: x["ts"])
 
     @workflow.signal
     def market_tick(self, tick: dict) -> None:
@@ -191,7 +191,10 @@ class ComputeFeatureVector:
             )
             cycles += 1
             hist_len = workflow.info().get_current_history_length()
-            if hist_len >= history_limit or workflow.info().is_continue_as_new_suggested():
+            if (
+                hist_len >= history_limit
+                or workflow.info().is_continue_as_new_suggested()
+            ):
                 await workflow.continue_as_new(
                     args=[
                         symbol,

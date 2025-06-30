@@ -25,7 +25,8 @@ BRAILLE_DOTS = [
 
 # layout constants
 BORDER = 1
-PADDING = 3
+# internal padding inside bordered regions
+PADDING = 1
 LABEL_WIDTH = 10
 LABEL_PAD = 10
 X_AXIS_HEIGHT = 1

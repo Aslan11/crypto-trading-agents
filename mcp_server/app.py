@@ -25,6 +25,7 @@ from tools.strategy_signal import EvaluateStrategyMomentum
 from tools.risk import PreTradeRiskCheck
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
+from tools.performance import compute_performance
 from agents.workflows import ExecutionLedgerWorkflow
 
 # Initialize FastMCP
@@ -179,6 +180,16 @@ async def sign_and_send_tx(
     result: Dict[str, str] = await handle.result()
     logger.info("Tx workflow %s completed", workflow_id)
     return result
+
+
+@app.tool(annotations={"title": "Get Historical Performance", "readOnlyHint": True})
+async def get_historical_performance(symbol: str, days: int = 7) -> Dict[str, float]:
+    """Compute recent performance metrics for ``symbol`` based on recorded ticks."""
+    cutoff = int(datetime.utcnow().timestamp()) - days * 86400
+    events = signal_log.get("market_tick", [])
+    ticks = [e for e in events if e.get("symbol") == symbol and e.get("ts", 0) >= cutoff]
+    logger.info("Computing performance for %s from %d ticks", symbol, len(ticks))
+    return compute_performance(ticks)
 
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})

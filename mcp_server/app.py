@@ -199,9 +199,8 @@ async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dic
     wf_id = f"feature-{symbol.replace('/', '-')}"
     handle = client.get_workflow_handle(wf_id)
     try:
-        all_ticks: List[Dict[str, float]] = await handle.query(
-            "historical_ticks", cutoff
-        )
+        result = await handle.query("historical_ticks", cutoff)
+        all_ticks: List[Dict[str, float]] = list(result)
     except RPCError as err:
         if err.status == RPCStatusCode.NOT_FOUND:
             logger.info("Feature workflow %s not found", wf_id)

@@ -115,6 +115,15 @@ class ComputeFeatureVector:
         self._ticks.append(data)
         self._event.set()
 
+    @workflow.query
+    def recent_ticks(self, since_ts: int) -> List[dict]:
+        """Return ticks newer than ``since_ts`` (seconds)."""
+        return [
+            t
+            for t in self._ticks
+            if (t.get("timestamp", 0) / 1000) >= since_ts
+        ]
+
     @workflow.run
     async def run(
         self,

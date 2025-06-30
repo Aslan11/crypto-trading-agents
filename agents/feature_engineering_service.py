@@ -206,12 +206,12 @@ async def _signal_tick(client: Client, symbol: str, tick: dict) -> None:
     from tools.feature_engineering import ComputeFeatureVector
 
     wf_id = f"feature-{symbol.replace('/', '-') }"
-    await client.start_workflow(
+    await client.signal_with_start_workflow(
         ComputeFeatureVector.run,
         id=wf_id,
         task_queue=TASK_QUEUE,
-        start_signal="market_tick",
-        start_signal_args=[tick],
+        signal="market_tick",
+        signal_args=[tick],
         args=[symbol, FEATURE_WINDOW_SEC, VECTOR_CONTINUE_EVERY, VECTOR_HISTORY_LIMIT],
     )
 

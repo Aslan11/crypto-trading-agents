@@ -88,8 +88,8 @@ class BrailleChart:
 
     def draw(self, win: "curses._CursesWindow", data: Deque[Tuple[int, float]]) -> None:
         h, w = win.getmaxyx()
-        label_w = 10
-        chart_w = max(1, w - label_w)
+        label_w = min(10, max(0, w - 2))
+        chart_w = max(1, w - label_w - 1)
         chart_h = h
         px_w = chart_w * 2
         px_h = chart_h * 4

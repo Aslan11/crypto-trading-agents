@@ -102,6 +102,8 @@ class ComputeFeatureVector:
         self.symbol = ""
         self.window_sec = VECTOR_WINDOW_SEC
         self._ticks: List[dict] = []
+        # Store the full tick history for queries
+        self._history: List[dict] = []
         # Use an asyncio.Event for signalling between the signal handler and
         # the main workflow loop. Temporal workflows should avoid waiting on
         # events directly, so we will wait via ``workflow.wait_condition``.
@@ -119,7 +121,7 @@ class ComputeFeatureVector:
         """
 
         ticks: list[dict] = []
-        for t in self._ticks:
+        for t in self._history:
             ts_ms = t.get("timestamp")
             if ts_ms is None:
                 continue
@@ -141,6 +143,7 @@ class ComputeFeatureVector:
             return
         data = tick.get("data", {})
         self._ticks.append(data)
+        self._history.append(data)
         self._event.set()
 
     @workflow.run

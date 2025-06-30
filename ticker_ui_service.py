@@ -11,7 +11,6 @@ import queue
 import signal
 import threading
 import time
-from datetime import datetime
 from collections import deque
 from typing import Deque, Dict, List
 
@@ -170,13 +169,12 @@ class BrailleChart:
 
         # x axis labels every 5 minutes using the system timezone
         if ts_vals:
-            tz = datetime.now().astimezone().tzinfo
             next_mark = ((ts_vals[0] // 300) + 1) * 300
             for i, ts in enumerate(ts_vals):
                 while ts >= next_mark:
                     pos = i // 2
                     if pos < chart_w:
-                        label = datetime.fromtimestamp(next_mark, tz).strftime("%H:%M")
+                        label = time.strftime("%H:%M", time.localtime(next_mark))
                         lx = inner_x + LABEL_WIDTH + LABEL_PAD + pos - len(label) // 2
                         if lx >= inner_x + LABEL_WIDTH + LABEL_PAD and lx + len(label) < inner_x + LABEL_WIDTH + LABEL_PAD + chart_w:
                             win.addstr(inner_y + chart_h, lx, label)

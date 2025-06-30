@@ -31,8 +31,8 @@ fi
 # │ Pane 5        │ Pane 4                 │
 # │ broker_agent_client.py │ momentum_service.py      │
 # ├───────────────┼────────────────────────┤
-# │ Pane 6                                │
-# │ ensemble_agent_client.py              │
+# │ Pane 6        │ Pane 7                 │
+# │ ensemble_agent_client.py │ ticker_ui_service.py    │
 # └────────────────────────────────────────┘
 ###############################################################################
 
@@ -72,6 +72,11 @@ tmux send-keys    -t $BROKER_PANE 'sleep 2 && source .venv/bin/activate && PYTHO
 tmux select-pane  -t $BROKER_PANE
 ENS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
 tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble_agent_client.py' C-m
+
+# 8. Pane 7 – ticker UI (split Pane 6 horizontally →)
+tmux select-pane  -t $ENS_PANE
+UI_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+tmux send-keys    -t $UI_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python ticker_ui_service.py' C-m
 
 # 10. Arrange all panes into a tiled layout for equal sizing
 tmux select-layout -t $SESSION:0 tiled

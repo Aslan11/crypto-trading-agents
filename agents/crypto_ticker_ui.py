@@ -57,7 +57,7 @@ class TickerApp(App):
     async def on_mount(self) -> None:
         self.tabbed = self.query_one(TabbedContent)
         await self.tabbed.add_pane(
-            TabPane("Waiting", Static("Waiting for pairs…"), id="__wait")
+            TabPane("Waiting", Static("Waiting for pairs…", expand=True), id="__wait")
         )
         self.tabbed.active = "__wait"
         logger.info("Ticker UI mounted, awaiting data from %s:%s", MCP_HOST, MCP_PORT)
@@ -141,7 +141,7 @@ class TickerApp(App):
                 await self.tabbed.remove_pane("__wait")
 
             await self.tabbed.add_pane(
-                TabPane(sym, Static("Waiting for data…"), id=pane_id)
+                TabPane(sym, Static("Waiting for data…", expand=True), id=pane_id)
             )
 
             if self.tabbed.active in (None, "__wait"):
@@ -189,20 +189,30 @@ class TickerApp(App):
             hi += 1
 
         fig = plotille.Figure()
+        fig.register_label_formatter(
+            float,
+            lambda v, chars, delta, left=False: (
+                f"{v:.2f}".ljust(chars) if left else f"{v:.2f}".rjust(chars)
+            ),
+        )
         fig.width = width
         fig.height = height
+        fig.origin = False
         fig.set_x_limits(min_=0, max_=len(data) - 1)
         fig.set_y_limits(min_=lo, max_=hi)
 
         y_delta = (hi - lo) / height
 
-        def _y_tick(val: float, nxt: float) -> float | str:
+        def _fmt(v: float) -> str:
+            return f"{v:.2f}"
+
+        def _y_tick(val: float, nxt: float) -> str:
             if abs(val - lo) <= y_delta / 2:
-                return lo
+                return _fmt(lo)
             if val <= mean < nxt:
-                return mean
+                return _fmt(mean)
             if val >= hi - y_delta / 2:
-                return hi
+                return _fmt(hi)
             return ""
 
         fig.y_ticks_fkt = _y_tick

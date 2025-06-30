@@ -11,6 +11,8 @@ import queue
 import signal
 import threading
 import time
+from zoneinfo import ZoneInfo
+import datetime
 from collections import deque
 from typing import Deque, Dict, List
 
@@ -70,8 +72,8 @@ class TabBar:
 
 
 class BrailleChart:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, tz: datetime.tzinfo) -> None:
+        self.tz = tz
 
     @staticmethod
     def _set_pixel(bits, colors, x: int, y: int, color: int) -> None:
@@ -174,7 +176,8 @@ class BrailleChart:
                 while ts >= next_mark:
                     pos = i // 2
                     if pos < chart_w:
-                        label = time.strftime("%H:%M", time.localtime(next_mark))
+                        dt = datetime.datetime.fromtimestamp(next_mark, tz=datetime.timezone.utc).astimezone(self.tz)
+                        label = dt.strftime("%H:%M")
                         lx = inner_x + LABEL_WIDTH + LABEL_PAD + pos - len(label) // 2
                         if lx >= inner_x + LABEL_WIDTH + LABEL_PAD and lx + len(label) < inner_x + LABEL_WIDTH + LABEL_PAD + chart_w:
                             win.addstr(inner_y + chart_h, lx, label)
@@ -221,7 +224,12 @@ def _demo_source(q: "queue.Queue[dict]", stop: threading.Event) -> None:
         time.sleep(1)
 
 
-def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: threading.Event) -> None:
+def run_curses(
+    stdscr: "curses._CursesWindow",
+    q: "queue.Queue[dict]",
+    stop: threading.Event,
+    tz: datetime.tzinfo,
+) -> None:
     curses.curs_set(0)
     curses.start_color()
     curses.use_default_colors()
@@ -241,7 +249,7 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
 
     tabbar = TabBar()
     data: Dict[str, Deque[tuple[int, float]]] = {}
-    chart = BrailleChart()
+    chart = BrailleChart(tz)
     last_draw = 0.0
 
     while not stop.is_set():
@@ -310,7 +318,16 @@ def main() -> None:
         default="http://localhost:8080/signal/market_tick",
         help="SSE stream URL",
     )
+    parser.add_argument(
+        "--tz",
+        help="IANA timezone name for x-axis labels (defaults to local timezone)",
+    )
     args = parser.parse_args()
+
+    if args.tz:
+        tz = ZoneInfo(args.tz)
+    else:
+        tz = datetime.datetime.now().astimezone().tzinfo
 
     q: queue.Queue[dict] = queue.Queue()
     stop = threading.Event()
@@ -324,7 +341,7 @@ def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
 
-    curses.wrapper(run_curses, q, stop)
+    curses.wrapper(run_curses, q, stop, tz)
     stop.set()
     t.join()
 

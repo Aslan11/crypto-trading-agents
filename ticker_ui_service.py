@@ -23,6 +23,13 @@ BRAILLE_DOTS = [
     [0x40, 0x80],  # row 3: dots 7 and 8
 ]
 
+# layout constants
+BORDER = 1
+PADDING = 3
+LABEL_WIDTH = 10
+LABEL_PAD = 10
+X_AXIS_HEIGHT = 1
+
 
 class TabBar:
     def __init__(self) -> None:
@@ -42,17 +49,20 @@ class TabBar:
             self.selected = (self.selected + 1) % len(self.tabs)
 
     def draw(self, win: "curses._CursesWindow") -> None:
-        win.move(0, 0)
-        win.clrtoeol()
-        x = 0
+        h, w = win.getmaxyx()
+        win.erase()
+        win.box()
+        y = BORDER + PADDING
+        x = BORDER + PADDING
         for idx, name in enumerate(self.tabs):
+            if x + len(name) + 2 >= w - BORDER - PADDING:
+                break
             if idx == self.selected:
                 win.attron(curses.A_REVERSE)
-            win.addstr(0, x, f" {name} ")
+            win.addstr(y, x, f" {name} ")
             if idx == self.selected:
                 win.attroff(curses.A_REVERSE)
-            x += len(name) + 2
-        win.clrtoeol()
+            x += len(name) + 3
 
 
 class BrailleChart:
@@ -88,21 +98,30 @@ class BrailleChart:
 
     def draw(self, win: "curses._CursesWindow", data: Deque[Tuple[int, float]]) -> None:
         h, w = win.getmaxyx()
-        label_w = min(10, max(0, w - 2))
-        chart_w = max(1, w - label_w - 1)
-        chart_h = h
+        win.erase()
+        win.box()
+
+        inner_x = BORDER + PADDING
+        inner_y = BORDER + PADDING
+        inner_w = max(1, w - 2 * (BORDER + PADDING))
+        inner_h = max(1, h - 2 * (BORDER + PADDING))
+
+        chart_w = max(1, inner_w - LABEL_WIDTH - LABEL_PAD)
+        chart_h = max(1, inner_h - X_AXIS_HEIGHT)
+
         px_w = chart_w * 2
         px_h = chart_h * 4
         bits = [[0 for _ in range(chart_w)] for _ in range(chart_h)]
         colors = [[1 for _ in range(chart_w)] for _ in range(chart_h)]
 
         prices = [p for _, p in data]
+        times = [ts for ts, _ in data]
         if not prices:
-            for y in range(h):
-                win.addstr(y, 0, " " * w)
+            win.refresh()
             return
 
         vals = prices[-px_w:]
+        ts_vals = times[-px_w:]
         min_p = min(vals)
         max_p = max(vals)
         if min_p == max_p:
@@ -113,7 +132,6 @@ class BrailleChart:
         def y_for(val: float) -> int:
             return int(round((max_p - val) * scale_y))
 
-        xs = list(range(len(vals)))
         prev_x = 0
         prev_y = y_for(vals[0])
         for i in range(1, len(vals)):
@@ -130,17 +148,32 @@ class BrailleChart:
 
         mid_p = (max_p + min_p) / 2
         for cy in range(chart_h):
-            label = " " * label_w
+            label = " " * LABEL_WIDTH
             if cy == 0:
-                label = f"{max_p:.2f}".rjust(label_w)
+                label = f"{max_p:.2f}".rjust(LABEL_WIDTH)
             elif cy == chart_h // 2:
-                label = f"{mid_p:.2f}".rjust(label_w)
+                label = f"{mid_p:.2f}".rjust(LABEL_WIDTH)
             elif cy == chart_h - 1:
-                label = f"{min_p:.2f}".rjust(label_w)
-            win.addstr(cy, 0, label)
+                label = f"{min_p:.2f}".rjust(LABEL_WIDTH)
+            win.addstr(inner_y + cy, inner_x, label)
             for cx in range(chart_w):
                 ch = chr(0x2800 + bits[cy][cx])
-                win.addstr(cy, label_w + cx, ch, curses.color_pair(colors[cy][cx]))
+                win.addstr(inner_y + cy, inner_x + LABEL_WIDTH + LABEL_PAD + cx, ch, curses.color_pair(colors[cy][cx]))
+
+        # x axis labels every 5 minutes
+        if ts_vals:
+            next_mark = ((ts_vals[0] // 300) + 1) * 300
+            for i, ts in enumerate(ts_vals):
+                while ts >= next_mark:
+                    pos = i // 2
+                    if pos < chart_w:
+                        label = time.strftime("%H:%M", time.localtime(next_mark))
+                        lx = inner_x + LABEL_WIDTH + LABEL_PAD + pos - len(label) // 2
+                        if lx >= inner_x + LABEL_WIDTH + LABEL_PAD and lx + len(label) < inner_x + LABEL_WIDTH + LABEL_PAD + chart_w:
+                            win.addstr(inner_y + chart_h, lx, label)
+                    next_mark += 300
+
+        win.refresh()
 
 
 def _sse_listener(url: str, q: "queue.Queue[dict]", stop: threading.Event) -> None:
@@ -237,15 +270,18 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
         now = time.time()
         if now - last_draw >= 1:
             stdscr.erase()
-            tabbar.draw(stdscr)
+            total_h, total_w = stdscr.getmaxyx()
+            tab_h = 1 + 2 * PADDING + 2 * BORDER
+            tab_win = stdscr.derwin(tab_h, total_w, 0, 0)
+            tabbar.draw(tab_win)
             if not tabbar.tabs:
                 msg = "Waiting for tickers..."
-                h, w = stdscr.getmaxyx()
-                stdscr.addstr(h // 2, max(0, (w - len(msg)) // 2), msg)
+                stdscr.addstr(total_h // 2, max(0, (total_w - len(msg)) // 2), msg)
                 stdscr.refresh()
             else:
                 symbol = tabbar.tabs[tabbar.selected]
-                chart_win = stdscr.derwin(stdscr.getmaxyx()[0] - 1, stdscr.getmaxyx()[1], 1, 0)
+                chart_h = total_h - tab_h
+                chart_win = stdscr.derwin(chart_h, total_w, tab_h, 0)
                 chart.draw(chart_win, data.get(symbol, deque()))
                 stdscr.refresh()
             last_draw = now

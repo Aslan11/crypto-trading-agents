@@ -183,21 +183,35 @@ async def sign_and_send_tx(
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
 async def get_historical_ticks(symbol: str, days: int = 7) -> List[Dict[str, float]]:
-    """Return recent ticks for ``symbol`` via the feature workflow."""
+    """Return recent ticks for ``symbol`` via the feature workflow.
+
+    Parameters
+    ----------
+    symbol:
+        Asset pair in ``BASE/QUOTE`` format.
+    days:
+        Number of days of history requested. This function returns up to the
+        last five ticks recorded by the ``feature-<symbol>`` workflow within
+        this period.
+    """
 
     cutoff = int(datetime.utcnow().timestamp()) - days * 86400
     client = await get_temporal_client()
     wf_id = f"feature-{symbol.replace('/', '-') }"
     handle = client.get_workflow_handle(wf_id)
     try:
-        ticks = list(await handle.query("historical_ticks", cutoff))
+        all_ticks: List[Dict[str, float]] = list(
+            await handle.query("historical_ticks", cutoff)
+        )
     except RPCError as err:
         if err.status == RPCStatusCode.NOT_FOUND:
             logger.info("Feature workflow %s not found", wf_id)
             return []
         raise
-    logger.info("Returning %d ticks for %s", len(ticks or []), symbol)
-    return ticks or []
+
+    ticks = all_ticks[-5:]
+    logger.info("Returning %d ticks for %s", len(ticks), symbol)
+    return ticks
 
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})

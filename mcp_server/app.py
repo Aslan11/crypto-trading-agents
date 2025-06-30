@@ -183,23 +183,21 @@ async def sign_and_send_tx(
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
 async def get_historical_ticks(symbol: str, days: int = 7) -> List[Dict[str, float]]:
-    """Return recent ticks for ``symbol`` so the agent can analyze them."""
+    """Return recent ticks for ``symbol`` via the feature workflow."""
+
     cutoff = int(datetime.utcnow().timestamp()) - days * 86400
-    events = signal_log.get("market_tick", [])
-    ticks: List[Dict[str, float]] = []
-    for e in events:
-        if e.get("symbol") != symbol or e.get("ts", 0) < cutoff:
-            continue
-        data = e.get("data", {})
-        if "last" in data:
-            price = float(data["last"])
-        elif {"bid", "ask"}.issubset(data):
-            price = (float(data["bid"]) + float(data["ask"])) / 2
-        else:
-            continue
-        ticks.append({"ts": e.get("ts"), "price": price})
-    logger.info("Returning %d ticks for %s", len(ticks), symbol)
-    return ticks
+    client = await get_temporal_client()
+    wf_id = f"feature-{symbol.replace('/', '-') }"
+    handle = client.get_workflow_handle(wf_id)
+    try:
+        ticks = await handle.query("historical_ticks", cutoff)
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            logger.info("Feature workflow %s not found", wf_id)
+            return []
+        raise
+    logger.info("Returning %d ticks for %s", len(ticks or []), symbol)
+    return ticks or []
 
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})

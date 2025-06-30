@@ -107,6 +107,34 @@ class ComputeFeatureVector:
         # events directly, so we will wait via ``workflow.wait_condition``.
         self._event = asyncio.Event()
 
+    @workflow.query
+    def historical_ticks(self, since_ts: int = 0) -> list[dict]:
+        """Return stored ticks newer than ``since_ts``.
+
+        Parameters
+        ----------
+        since_ts:
+            Unix timestamp in seconds. Only ticks at or after this time are
+            returned.
+        """
+
+        ticks: list[dict] = []
+        for t in self._ticks:
+            ts_ms = t.get("timestamp")
+            if ts_ms is None:
+                continue
+            ts = int(ts_ms / 1000)
+            if ts < since_ts:
+                continue
+            if "last" in t:
+                price = float(t["last"])
+            elif {"bid", "ask"}.issubset(t):
+                price = (float(t["bid"]) + float(t["ask"])) / 2
+            else:
+                continue
+            ticks.append({"ts": ts, "price": price})
+        return ticks
+
     @workflow.signal
     def market_tick(self, tick: dict) -> None:
         if tick.get("symbol") != self.symbol:

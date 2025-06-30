@@ -15,10 +15,6 @@ from temporalio.client import Client, RPCError, RPCStatusCode, WorkflowExecution
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.requests import Request
 
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
-
 # Import workflow classes
 from tools.market_data import SubscribeCEXStream
 from tools.strategy_signal import EvaluateStrategyMomentum
@@ -26,6 +22,10 @@ from tools.risk import PreTradeRiskCheck
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
 from agents.workflows import ExecutionLedgerWorkflow
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 # Initialize FastMCP
 app = FastMCP("crypto-trading-server")
@@ -182,20 +182,19 @@ async def sign_and_send_tx(
 
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
-async def get_historical_ticks(symbol: str, days: int = 7) -> List[Dict[str, float]]:
-    """Return recent ticks for ``symbol`` via the feature workflow.
+async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dict[str, float]]:
+    """Return historical ticks for ``symbol`` via the feature workflow.
 
     Parameters
     ----------
     symbol:
         Asset pair in ``BASE/QUOTE`` format.
     days:
-        Number of days of history requested. This function returns up to the
-        last five ticks recorded by the ``feature-<symbol>`` workflow within
-        this period.
+        Number of days of history requested. ``None`` (default) returns **all**
+        stored ticks from the ``feature-<symbol>`` workflow.
     """
 
-    cutoff = int(datetime.utcnow().timestamp()) - days * 86400
+    cutoff = 0 if days is None else int(datetime.utcnow().timestamp()) - days * 86400
     client = await get_temporal_client()
     wf_id = f"feature-{symbol.replace('/', '-') }"
     handle = client.get_workflow_handle(wf_id)
@@ -209,9 +208,8 @@ async def get_historical_ticks(symbol: str, days: int = 7) -> List[Dict[str, flo
             return []
         raise
 
-    ticks = all_ticks[-5:]
-    logger.info("Returning %d ticks for %s", len(ticks), symbol)
-    return ticks
+    logger.info("Returning %d ticks for %s", len(all_ticks), symbol)
+    return all_ticks
 
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})

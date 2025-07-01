@@ -71,8 +71,6 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 f"[BrokerAgent] Connected to MCP server with tools: {[t.name for t in tools]}"
             )
 
-            print(f"[BrokerAgent] Welcome to {EXCHANGE}!")
-
             if _openai_client is not None:
                 try:
                     response = _openai_client.chat.completions.create(
@@ -88,9 +86,6 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     logger.error("LLM request failed: %s", exc)
             else:
                 print("[BrokerAgent] Please specify trading pairs like BTC/USD")
-
-
-            print("[BrokerAgent] Enter trading instructions (e.g. 'buy 1 BTC/USD').")
 
             while True:
                 user_request = await get_next_broker_command()

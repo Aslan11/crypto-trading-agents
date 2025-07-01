@@ -8,12 +8,15 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult, TextContent
 import time
+import logging
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
 RESET = "\033[0m"
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are a strategy ensemble agent. You take note of the current status of the portfolio, "
@@ -44,12 +47,15 @@ def _tool_result_data(result: Any) -> Any:
                     except Exception:
                         parsed.append(item.text)
                 else:
-                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
+                    parsed.append(
+                        item.model_dump() if hasattr(item, "model_dump") else item
+                    )
             return parsed if len(parsed) > 1 else parsed[0]
         return []
     if hasattr(result, "model_dump"):
         return result.model_dump()
     return result
+
 
 async def _latest_price(
     session: aiohttp.ClientSession, base_url: str, symbol: str
@@ -87,6 +93,24 @@ async def _latest_price(
 
     return last_price
 
+
+async def _record_trade(
+    session: aiohttp.ClientSession, base_url: str, fill: dict
+) -> None:
+    """Send executed trade info to the MCP server."""
+    url = base_url.rstrip("/") + "/signal/trade_signal"
+    payload = {
+        "symbol": fill.get("symbol"),
+        "side": fill.get("side"),
+        "price": fill.get("fill_price", fill.get("price")),
+        "ts": fill.get("ts", int(time.time())),
+    }
+    try:
+        await session.post(url, json=payload)
+    except Exception as exc:  # pragma: no cover - network errors
+        logger.error("Failed to record trade: %s", exc)
+
+
 async def _stream_strategy_signals(
     session: aiohttp.ClientSession, base_url: str
 ) -> AsyncIterator[dict]:
@@ -97,7 +121,9 @@ async def _stream_strategy_signals(
 
     while True:
         try:
-            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+            async with session.get(
+                url, params={"after": cursor}, headers=headers
+            ) as resp:
                 if resp.status != 200:
                     await asyncio.sleep(1)
                     continue
@@ -119,6 +145,7 @@ async def _stream_strategy_signals(
                     yield evt
         except Exception:
             await asyncio.sleep(1)
+
 
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and react to strategy signals."""
@@ -152,11 +179,15 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         "qty": 1.0,
                         "ts": incoming_signal.get("ts"),
                     }
-                    price = await _latest_price(http_session, base_url, intent["symbol"])
+                    price = await _latest_price(
+                        http_session, base_url, intent["symbol"]
+                    )
                     intent["price"] = price
                     status_result = await session.call_tool("get_portfolio_status", {})
                     status = _tool_result_data(status_result)
-                    positions = status.get("positions", {}) if isinstance(status, dict) else {}
+                    positions = (
+                        status.get("positions", {}) if isinstance(status, dict) else {}
+                    )
                     cash = status.get("cash", 0.0) if isinstance(status, dict) else 0.0
                     if (
                         intent["side"] == "SELL"
@@ -202,7 +233,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 {
                                     "role": msg.role,
                                     "content": msg.content,
-                                    "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+                                    "tool_calls": [
+                                        tc.model_dump() for tc in msg.tool_calls
+                                    ],
                                 }
                             )
                             for tool_call in msg.tool_calls:
@@ -210,15 +243,27 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 func_args = json.loads(
                                     tool_call.function.arguments or "{}"
                                 )
-                                if func_name == "pre_trade_risk_check" and "intents" not in func_args:
+                                if (
+                                    func_name == "pre_trade_risk_check"
+                                    and "intents" not in func_args
+                                ):
                                     func_args.setdefault("intent_id", intent_id)
                                     func_args["intents"] = [intent]
-                                if func_name == "place_mock_order" and "intent" not in func_args:
+                                if (
+                                    func_name == "place_mock_order"
+                                    and "intent" not in func_args
+                                ):
                                     func_args["intent"] = intent
                                 print(
                                     f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                                 )
                                 result = await session.call_tool(func_name, func_args)
+                                if func_name == "place_mock_order":
+                                    await _record_trade(
+                                        http_session,
+                                        base_url,
+                                        _tool_result_data(result),
+                                    )
                                 conversation.append(
                                     {
                                         "role": "tool",
@@ -239,15 +284,25 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             )
                             func_name = msg.function_call.name
                             func_args = json.loads(msg.function_call.arguments or "{}")
-                            if func_name == "pre_trade_risk_check" and "intents" not in func_args:
+                            if (
+                                func_name == "pre_trade_risk_check"
+                                and "intents" not in func_args
+                            ):
                                 func_args.setdefault("intent_id", intent_id)
                                 func_args["intents"] = [intent]
-                            if func_name == "place_mock_order" and "intent" not in func_args:
+                            if (
+                                func_name == "place_mock_order"
+                                and "intent" not in func_args
+                            ):
                                 func_args["intent"] = intent
                             print(
                                 f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                             )
                             result = await session.call_tool(func_name, func_args)
+                            if func_name == "place_mock_order":
+                                await _record_trade(
+                                    http_session, base_url, _tool_result_data(result)
+                                )
                             conversation.append(
                                 {
                                     "role": "function",
@@ -261,11 +316,14 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         conversation.append(
                             {"role": "assistant", "content": assistant_reply}
                         )
-                        print(f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}")
-                        conversation = [
-                            {"role": "system", "content": SYSTEM_PROMPT}
-                        ]
+                        print(
+                            f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}"
+                        )
+                        conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                         break
 
+
 if __name__ == "__main__":
-    asyncio.run(run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))
+    asyncio.run(
+        run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080"))
+    )

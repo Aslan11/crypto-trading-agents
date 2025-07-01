@@ -135,7 +135,9 @@ class ComputeFeatureVector:
             else:
                 continue
             ticks.append({"ts": ts, "price": price})
-        return sorted(ticks, key=lambda x: x["ts"])
+        ticks = sorted(ticks, key=lambda x: x["ts"])
+        logger.info("historical_ticks returning %d items for %s", len(ticks), self.symbol)
+        return ticks
 
     @workflow.signal
     def market_tick(self, tick: dict) -> None:
@@ -144,6 +146,7 @@ class ComputeFeatureVector:
         data = tick.get("data", {})
         self._ticks.append(data)
         self._history.append(data)
+        logger.debug("Received tick for %s: %s", self.symbol, data)
         self._event.set()
 
     @workflow.run
@@ -173,6 +176,9 @@ class ComputeFeatureVector:
 
         self.symbol = symbol
         self.window_sec = window_sec
+        logger.info(
+            "ComputeFeatureVector starting for %s window=%s", symbol, window_sec
+        )
         if history is not None:
             self._history = list(history)
         cycles = 0

@@ -183,12 +183,7 @@ async def sign_and_send_tx(
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
 async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dict[str, float]]:
-    """Return historical ticks for ``symbol``.
-
-    This function queries the ``feature-<symbol>`` workflow for stored ticks.
-    If the workflow does not exist or has not yet recorded any data, the
-    fallback is to use ticks from the server's in-memory ``signal_log`` so the
-    tool still returns useful information.
+    """Return historical ticks for ``symbol`` fetched from its feature workflow.
 
     Parameters
     ----------
@@ -202,37 +197,22 @@ async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dic
     cutoff = 0 if days is None else int(datetime.utcnow().timestamp()) - days * 86400
     client = await get_temporal_client()
     wf_id = f"feature-{symbol.replace('/', '-')}"
+    logger.info("Querying workflow %s for ticks >= %d", wf_id, cutoff)
     handle = client.get_workflow_handle(wf_id)
-    ticks: dict[int, float] = {}
     try:
         result = await handle.query("historical_ticks", cutoff)
-        for t in result:
-            ticks[int(t["ts"])] = float(t["price"])
-        logger.info("Fetched %d ticks for %s from workflow", len(ticks), symbol)
     except RPCError as err:
         if err.status == RPCStatusCode.NOT_FOUND:
-            logger.info("Feature workflow %s not found; using signal log", wf_id)
-        else:
-            raise
+            logger.warning("Feature workflow %s not found", wf_id)
+            return []
+        raise
 
-    if not ticks:
-        events = signal_log.get("market_tick", [])
-        for e in events:
-            if e.get("symbol") != symbol or e.get("ts", 0) < cutoff:
-                continue
-            data = e.get("data", {})
-            if "last" in data:
-                price = float(data["last"])
-            elif {"bid", "ask"}.issubset(data):
-                price = (float(data["bid"]) + float(data["ask"])) / 2
-            else:
-                continue
-            ticks[int(e["ts"])] = price
-        logger.info("Fetched %d ticks for %s from signal log", len(ticks), symbol)
-
-    all_ticks = [{"ts": ts, "price": price} for ts, price in sorted(ticks.items())]
-    logger.info("Returning %d ticks for %s", len(all_ticks), symbol)
-    return all_ticks
+    ticks = [
+        {"ts": int(t["ts"]), "price": float(t["price"])}
+        for t in result
+    ]
+    logger.info("Retrieved %d ticks for %s", len(ticks), symbol)
+    return ticks
 
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})

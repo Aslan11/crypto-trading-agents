@@ -348,7 +348,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--signals-url",
-        default=None,
+        default="http://localhost:8080/signal/trade_signal",
         help="SSE stream URL for trade signals",
     )
     args = parser.parse_args()

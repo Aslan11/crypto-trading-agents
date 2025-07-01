@@ -5,11 +5,16 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 from typing import Dict
+import os
 
+import aiohttp
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 
 logger = logging.getLogger(__name__)
+
+MCP_HOST = os.environ.get("MCP_HOST", "localhost")
+MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
 @activity.defn
 async def mock_fill(intent: Dict) -> Dict:
@@ -35,4 +40,16 @@ class PlaceMockOrder:
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
         return result
+
+
+@activity.defn
+async def record_fill_event(fill: Dict) -> None:
+    """Send executed fill to the MCP signal log."""
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/trade_signal"
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            await session.post(url, json=fill)
+        except Exception as exc:
+            logger.error("Failed to record fill: %s", exc)
 

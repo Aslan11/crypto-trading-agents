@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from collections import deque
 from decimal import Decimal
+import asyncio
+from datetime import timedelta
 from typing import Dict, List, Tuple
+
+from temporalio.common import RetryPolicy
+from tools.execution import record_fill_event
 
 from temporalio import workflow
 
@@ -136,6 +141,8 @@ class ExecutionLedgerWorkflow:
         self.last_price: Dict[str, Decimal] = {}
         self.entry_price: Dict[str, Decimal] = {}
         self.fill_count = 0
+        self._pending: list[Dict] = []
+        self._event = asyncio.Event()
 
     @workflow.signal
     def record_fill(self, fill: Dict) -> None:
@@ -164,6 +171,8 @@ class ExecutionLedgerWorkflow:
             else:
                 self.positions[symbol] = new_qty
         self.fill_count += 1
+        self._pending.append(fill)
+        self._event.set()
 
     @workflow.query
     def get_pnl(self) -> float:
@@ -190,4 +199,16 @@ class ExecutionLedgerWorkflow:
 
     @workflow.run
     async def run(self) -> None:
-        await workflow.wait_condition(lambda: False)
+        while True:
+            await workflow.wait_condition(lambda: self._event.is_set())
+            self._event.clear()
+            fills = list(self._pending)
+            self._pending.clear()
+            for fill in fills:
+                await workflow.execute_activity(
+                    record_fill_event,
+                    fill,
+                    schedule_to_close_timeout=timedelta(seconds=5),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+            await workflow.sleep(0)

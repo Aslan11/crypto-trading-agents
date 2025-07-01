@@ -102,10 +102,42 @@ class ComputeFeatureVector:
         self.symbol = ""
         self.window_sec = VECTOR_WINDOW_SEC
         self._ticks: List[dict] = []
+        # Store the full tick history for queries
+        self._history: List[dict] = []
         # Use an asyncio.Event for signalling between the signal handler and
         # the main workflow loop. Temporal workflows should avoid waiting on
         # events directly, so we will wait via ``workflow.wait_condition``.
         self._event = asyncio.Event()
+
+    @workflow.query
+    def historical_ticks(self, since_ts: int = 0) -> list[dict]:
+        """Return stored ticks newer than ``since_ts`` sorted oldest to newest.
+
+        Parameters
+        ----------
+        since_ts:
+            Unix timestamp in seconds. Only ticks at or after this time are
+            returned.
+        """
+
+        ticks: list[dict] = []
+        for t in self._history:
+            ts_ms = t.get("timestamp")
+            if ts_ms is None:
+                continue
+            ts = int(ts_ms / 1000)
+            if ts < since_ts:
+                continue
+            if "last" in t:
+                price = float(t["last"])
+            elif {"bid", "ask"}.issubset(t):
+                price = (float(t["bid"]) + float(t["ask"])) / 2
+            else:
+                continue
+            ticks.append({"ts": ts, "price": price})
+        ticks = sorted(ticks, key=lambda x: x["ts"])
+        logger.info("historical_ticks returning %d items for %s", len(ticks), self.symbol)
+        return ticks
 
     @workflow.signal
     def market_tick(self, tick: dict) -> None:
@@ -113,6 +145,8 @@ class ComputeFeatureVector:
             return
         data = tick.get("data", {})
         self._ticks.append(data)
+        self._history.append(data)
+        logger.debug("Received tick for %s: %s", self.symbol, data)
         self._event.set()
 
     @workflow.run
@@ -122,9 +156,31 @@ class ComputeFeatureVector:
         window_sec: int = VECTOR_WINDOW_SEC,
         continue_every: int = VECTOR_CONTINUE_EVERY,
         history_limit: int = VECTOR_HISTORY_LIMIT,
+        history: list[dict] | None = None,
     ) -> None:
+        """Process ticks and emit feature vectors indefinitely.
+
+        Parameters
+        ----------
+        symbol:
+            Trading pair in ``BASE/QUOTE`` format.
+        window_sec:
+            Sliding window size for feature calculation.
+        continue_every:
+            Number of cycles before continuing as new.
+        history_limit:
+            Maximum workflow history events before continuing as new.
+        history:
+            Previously stored ticks carried over from a prior run.
+        """
+
         self.symbol = symbol
         self.window_sec = window_sec
+        logger.info(
+            "ComputeFeatureVector starting for %s window=%s", symbol, window_sec
+        )
+        if history is not None:
+            self._history = list(history)
         cycles = 0
         while True:
             # Wait for a new tick to be signalled via the event. We use
@@ -163,13 +219,17 @@ class ComputeFeatureVector:
             )
             cycles += 1
             hist_len = workflow.info().get_current_history_length()
-            if hist_len >= history_limit or workflow.info().is_continue_as_new_suggested():
+            if (
+                hist_len >= history_limit
+                or workflow.info().is_continue_as_new_suggested()
+            ):
                 await workflow.continue_as_new(
                     args=[
                         symbol,
                         window_sec,
                         continue_every,
                         history_limit,
+                        self._history,
                     ]
                 )
             if cycles >= continue_every:
@@ -179,5 +239,6 @@ class ComputeFeatureVector:
                         window_sec,
                         continue_every,
                         history_limit,
+                        self._history,
                     ]
                 )

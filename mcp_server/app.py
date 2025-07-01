@@ -15,10 +15,6 @@ from temporalio.client import Client, RPCError, RPCStatusCode, WorkflowExecution
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.requests import Request
 
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
-
 # Import workflow classes
 from tools.market_data import SubscribeCEXStream
 from tools.strategy_signal import EvaluateStrategyMomentum
@@ -26,6 +22,10 @@ from tools.risk import PreTradeRiskCheck
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
 from agents.workflows import ExecutionLedgerWorkflow
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 # Initialize FastMCP
 app = FastMCP("crypto-trading-server")
@@ -182,23 +182,36 @@ async def sign_and_send_tx(
 
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
-async def get_historical_ticks(symbol: str, days: int = 7) -> List[Dict[str, float]]:
-    """Return recent ticks for ``symbol`` so the agent can analyze them."""
-    cutoff = int(datetime.utcnow().timestamp()) - days * 86400
-    events = signal_log.get("market_tick", [])
-    ticks: List[Dict[str, float]] = []
-    for e in events:
-        if e.get("symbol") != symbol or e.get("ts", 0) < cutoff:
-            continue
-        data = e.get("data", {})
-        if "last" in data:
-            price = float(data["last"])
-        elif {"bid", "ask"}.issubset(data):
-            price = (float(data["bid"]) + float(data["ask"])) / 2
-        else:
-            continue
-        ticks.append({"ts": e.get("ts"), "price": price})
-    logger.info("Returning %d ticks for %s", len(ticks), symbol)
+async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dict[str, float]]:
+    """Return historical ticks for ``symbol`` fetched from its feature workflow.
+
+    Parameters
+    ----------
+    symbol:
+        Asset pair in ``BASE/QUOTE`` format.
+    days:
+        Number of days of history requested. ``None`` (default) returns **all**
+        stored ticks.
+    """
+
+    cutoff = 0 if days is None else int(datetime.utcnow().timestamp()) - days * 86400
+    client = await get_temporal_client()
+    wf_id = f"feature-{symbol.replace('/', '-')}"
+    logger.info("Querying workflow %s for ticks >= %d", wf_id, cutoff)
+    handle = client.get_workflow_handle(wf_id)
+    try:
+        result = await handle.query("historical_ticks", cutoff)
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            logger.warning("Feature workflow %s not found", wf_id)
+            return []
+        raise
+
+    ticks = [
+        {"ts": int(t["ts"]), "price": float(t["price"])}
+        for t in result
+    ]
+    logger.info("Retrieved %d ticks for %s", len(ticks), symbol)
     return ticks
 
 

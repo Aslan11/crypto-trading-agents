@@ -4,14 +4,14 @@ import asyncio
 from typing import Any, AsyncIterator
 import aiohttp
 import openai
-
-ORANGE = "\033[33m"
-PINK = "\033[95m"
-RESET = "\033[0m"
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult, TextContent
 import time
+
+ORANGE = "\033[33m"
+PINK = "\033[95m"
+RESET = "\033[0m"
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -36,16 +36,17 @@ def _tool_result_data(result: Any) -> Any:
     """Return JSON-friendly data from a tool call result."""
     if isinstance(result, CallToolResult):
         if result.content:
-            first = result.content[0]
-            if isinstance(first, TextContent):
-                try:
-                    return json.loads(first.text)
-                except Exception:
-                    return first.text
-        return [
-            c.model_dump() if hasattr(c, "model_dump") else c
-            for c in result.content
-        ]
+            parsed: list[Any] = []
+            for item in result.content:
+                if isinstance(item, TextContent):
+                    try:
+                        parsed.append(json.loads(item.text))
+                    except Exception:
+                        parsed.append(item.text)
+                else:
+                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
+            return parsed if len(parsed) > 1 else parsed[0]
+        return []
     if hasattr(result, "model_dump"):
         return result.model_dump()
     return result

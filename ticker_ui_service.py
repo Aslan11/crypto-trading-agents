@@ -100,7 +100,12 @@ class BrailleChart:
                 err += dx
                 y0 += sy
 
-    def draw(self, win: "curses._CursesWindow", data: Deque[Tuple[int, float]]) -> None:
+    def draw(
+        self,
+        win: "curses._CursesWindow",
+        data: Deque[Tuple[int, float]],
+        events: Deque[Tuple[int, float, str]] | None = None,
+    ) -> None:
         h, w = win.getmaxyx()
         win.erase()
         win.attron(curses.color_pair(BORDER_COLOR))
@@ -151,6 +156,16 @@ class BrailleChart:
                 color = 1
             self._plot_line(bits, colors, prev_x, prev_y, x, y, color)
             prev_x, prev_y = x, y
+
+        if events:
+            start_ts = ts_vals[0]
+            for ts_evt, price_evt, side in list(events):
+                idx = ts_evt - start_ts
+                if 0 <= idx < len(vals):
+                    x = idx
+                    y = y_for(price_evt)
+                    color = 5 if side.upper() == "BUY" else 6
+                    self._set_pixel(bits, colors, x, y, color)
 
         mid_p = (max_p + min_p) / 2
         for cy in range(chart_h):
@@ -217,6 +232,10 @@ def _demo_source(q: "queue.Queue[dict]", stop: threading.Event) -> None:
             base = 30000 if sym == "BTC-USD" else 2000
             price = base + math.sin(t / 10) * (base * 0.02)
             q.put({"type": "tick", "symbol": sym, "ts": int(time.time()), "price": price})
+            if t % 40 == 5:
+                q.put({"symbol": sym, "side": "BUY", "ts": int(time.time()), "price": price})
+            if t % 40 == 25:
+                q.put({"symbol": sym, "side": "SELL", "ts": int(time.time()), "price": price})
         t += 1
         time.sleep(1)
 
@@ -236,11 +255,14 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
     except Exception:
         pass
     curses.init_pair(4, orange, -1)
+    curses.init_pair(5, curses.COLOR_BLUE, -1)
+    curses.init_pair(6, curses.COLOR_YELLOW, -1)
     stdscr.nodelay(True)
     stdscr.timeout(100)
 
     tabbar = TabBar()
     data: Dict[str, Deque[tuple[int, float]]] = {}
+    signals: Dict[str, Deque[tuple[int, float, str]]] = {}
     chart = BrailleChart()
     last_draw = 0.0
 
@@ -260,19 +282,29 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
                         continue
                     if sym not in tabbar.tabs:
                         tabbar.tabs.append(sym)
-                    price = evt.get("price")
-                    if price is None:
-                        d = evt.get("data", {})
-                        if "last" in d:
-                            price = d["last"]
-                        elif {"bid", "ask"}.issubset(d):
-                            price = (d["bid"] + d["ask"]) / 2
-                    ts = evt.get("ts")
-                    if ts is None:
-                        ts_ms = evt.get("data", {}).get("timestamp")
-                        ts = int(ts_ms / 1000) if ts_ms is not None else int(time.time())
-                    if price is not None:
-                        data.setdefault(sym, deque(maxlen=360)).append((ts, float(price)))
+                    if "side" in evt:
+                        ts = evt.get("ts", int(time.time()))
+                        price = evt.get("price")
+                        if price is None and data.get(sym):
+                            price = data[sym][-1][1]
+                        if price is not None:
+                            signals.setdefault(sym, deque(maxlen=100)).append(
+                                (ts, float(price), evt.get("side", ""))
+                            )
+                    else:
+                        price = evt.get("price")
+                        if price is None:
+                            d = evt.get("data", {})
+                            if "last" in d:
+                                price = d["last"]
+                            elif {"bid", "ask"}.issubset(d):
+                                price = (d["bid"] + d["ask"]) / 2
+                        ts = evt.get("ts")
+                        if ts is None:
+                            ts_ms = evt.get("data", {}).get("timestamp")
+                            ts = int(ts_ms / 1000) if ts_ms is not None else int(time.time())
+                        if price is not None:
+                            data.setdefault(sym, deque(maxlen=360)).append((ts, float(price)))
         except queue.Empty:
             pass
 
@@ -297,7 +329,11 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
                 symbol = tabbar.tabs[tabbar.selected]
                 chart_h = total_h - tab_h
                 chart_win = stdscr.derwin(chart_h, total_w, tab_h, 0)
-                chart.draw(chart_win, data.get(symbol, deque()))
+                chart.draw(
+                    chart_win,
+                    data.get(symbol, deque()),
+                    signals.get(symbol, deque()),
+                )
                 stdscr.refresh()
             last_draw = now
 
@@ -310,23 +346,39 @@ def main() -> None:
         default="http://localhost:8080/signal/market_tick",
         help="SSE stream URL",
     )
+    parser.add_argument(
+        "--signals-url",
+        default=None,
+        help="SSE stream URL for trade signals",
+    )
     args = parser.parse_args()
 
     q: queue.Queue[dict] = queue.Queue()
     stop = threading.Event()
 
+    threads: list[threading.Thread] = []
     if args.demo:
-        t = threading.Thread(target=_demo_source, args=(q, stop), daemon=True)
+        threads.append(threading.Thread(target=_demo_source, args=(q, stop), daemon=True))
     else:
-        t = threading.Thread(target=_sse_listener, args=(args.url, q, stop), daemon=True)
-    t.start()
+        threads.append(threading.Thread(target=_sse_listener, args=(args.url, q, stop), daemon=True))
+        if args.signals_url:
+            threads.append(
+                threading.Thread(
+                    target=_sse_listener,
+                    args=(args.signals_url, q, stop),
+                    daemon=True,
+                )
+            )
+    for t in threads:
+        t.start()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
 
     curses.wrapper(run_curses, q, stop)
     stop.set()
-    t.join()
+    for t in threads:
+        t.join()
 
 
 if __name__ == "__main__":

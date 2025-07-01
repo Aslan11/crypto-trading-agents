@@ -147,12 +147,21 @@ async def place_mock_order(intent: Dict[str, Any]) -> Dict[str, Any]:
     fill = await handle.result()
     logger.info("Order workflow %s completed", workflow_id)
     try:
-        ledger = client.get_workflow_handle(
-            os.environ.get("LEDGER_WF_ID", "mock-ledger")
-        )
+        ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+        ledger = client.get_workflow_handle(ledger_wf_id)
         await ledger.signal("record_fill", fill)
-    except Exception:
-        pass
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            ledger = await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=ledger_wf_id,
+                task_queue="mcp-tools",
+            )
+            await ledger.signal("record_fill", fill)
+        else:
+            logger.error("Failed to signal ledger: %s", err)
+    except Exception as exc:
+        logger.error("Failed to signal ledger: %s", exc)
     return fill
 
 

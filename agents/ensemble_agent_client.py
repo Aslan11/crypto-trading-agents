@@ -20,6 +20,13 @@ from temporalio.service import RPCError, RPCStatusCode
 from tools.ensemble_nudge import EnsembleNudgeWorkflow
 import time
 
+ALLOWED_TOOLS = {
+    "place_mock_order",
+    "sign_and_send_tx",
+    "get_historical_ticks",
+    "get_portfolio_status",
+}
+
 ORANGE = "\033[33m"
 PINK = "\033[95m"
 RESET = "\033[0m"
@@ -47,12 +54,15 @@ def _tool_result_data(result: Any) -> Any:
                     except Exception:
                         parsed.append(item.text)
                 else:
-                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
+                    parsed.append(
+                        item.model_dump() if hasattr(item, "model_dump") else item
+                    )
             return parsed if len(parsed) > 1 else parsed[0]
         return []
     if hasattr(result, "model_dump"):
         return result.model_dump()
     return result
+
 
 async def _latest_price(
     session: aiohttp.ClientSession, base_url: str, symbol: str
@@ -90,6 +100,7 @@ async def _latest_price(
 
     return last_price
 
+
 async def _stream_nudges(
     session: aiohttp.ClientSession, base_url: str
 ) -> AsyncIterator[dict]:
@@ -100,7 +111,9 @@ async def _stream_nudges(
 
     while True:
         try:
-            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+            async with session.get(
+                url, params={"after": cursor}, headers=headers
+            ) as resp:
                 if resp.status != 200:
                     await asyncio.sleep(1)
                     continue
@@ -147,6 +160,7 @@ async def _ensure_schedule(client: Client) -> None:
     )
     await client.create_schedule(sched_id, schedule)
 
+
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and react to strategy signals."""
     base_url = server_url.rstrip("/")
@@ -169,7 +183,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 tools_resp = await session.list_tools()
-                tools = tools_resp.tools
+                tools = [t for t in tools_resp.tools if t.name in ALLOWED_TOOLS]
                 conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                 print(
                     "[EnsembleAgent] Connected to MCP server with tools:",
@@ -212,7 +226,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 {
                                     "role": msg.role,
                                     "content": msg.content,
-                                    "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+                                    "tool_calls": [
+                                        tc.model_dump() for tc in msg.tool_calls
+                                    ],
                                 }
                             )
                             for tool_call in msg.tool_calls:
@@ -261,11 +277,14 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         conversation.append(
                             {"role": "assistant", "content": assistant_reply}
                         )
-                        print(f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}")
-                        conversation = [
-                            {"role": "system", "content": SYSTEM_PROMPT}
-                        ]
+                        print(
+                            f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}"
+                        )
+                        conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                         break
 
+
 if __name__ == "__main__":
-    asyncio.run(run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))
+    asyncio.run(
+        run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080"))
+    )

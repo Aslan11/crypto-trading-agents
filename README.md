@@ -56,8 +56,6 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
-| `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
-| `evaluate_strategy_momentum` | Log momentum signals (optional cooldown)     | Feature vector        |
 | `pre_trade_risk_check`      | Validate intents against simple VaR limits     | Order intents         |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
@@ -123,8 +121,6 @@ history growth. The default interval is one hour (3600 cycles) and can be
 changed by setting the `STREAM_CONTINUE_EVERY` environment variable. The workflow
 also checks its current history length and continues early when it exceeds
 `STREAM_HISTORY_LIMIT` (defaults to 9000 events).
-`ComputeFeatureVector` behaves the same way using the `VECTOR_CONTINUE_EVERY`
-and `VECTOR_HISTORY_LIMIT` environment variables.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.

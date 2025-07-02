@@ -176,6 +176,45 @@ async def _stream_selected_pairs(
             await asyncio.sleep(1)
 
 
+async def _stream_agent_prompts(
+    session: aiohttp.ClientSession, base_url: str
+) -> AsyncIterator[str]:
+    """Yield prompt messages targeted at the ensemble agent."""
+    cursor = 0
+    url = base_url.rstrip("/") + "/signal/agent_prompt"
+    headers = {"Accept": "text/event-stream"}
+
+    while True:
+        try:
+            async with session.get(
+                url, params={"after": cursor}, headers=headers
+            ) as resp:
+                if resp.status != 200:
+                    await asyncio.sleep(1)
+                    continue
+
+                while True:
+                    line = await resp.content.readline()
+                    if not line:
+                        break
+                    text = line.decode().strip()
+                    if not text or not text.startswith("data:"):
+                        continue
+                    try:
+                        evt = json.loads(text[5:].strip())
+                    except Exception:
+                        continue
+                    ts = evt.get("ts")
+                    if ts is not None:
+                        cursor = max(cursor, ts)
+                    if evt.get("target") == "ensemble":
+                        msg = evt.get("message")
+                        if isinstance(msg, str):
+                            yield msg
+        except Exception:
+            await asyncio.sleep(1)
+
+
 async def _ensure_schedule(client: Client) -> None:
     """Create the ensemble nudge schedule if it doesn't exist."""
     sched_id = "ensemble-nudge-schedule"
@@ -205,11 +244,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp"
 
-    # Ensure the periodic nudge schedule exists
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
     client = await Client.connect(address, namespace=namespace)
-    await _ensure_schedule(client)
+    schedule_started = False
 
     # Streaming strategy signals requires an indefinite timeout
     timeout = aiohttp.ClientTimeout(total=None)
@@ -232,10 +270,19 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                 pairs_ref = {"pairs": []}
 
                 async def consume_pairs() -> None:
+                    nonlocal schedule_started
                     async for symbols in _stream_selected_pairs(http_session, base_url):
                         pairs_ref["pairs"] = symbols
+                        if not schedule_started:
+                            await _ensure_schedule(client)
+                            schedule_started = True
+
+                async def consume_prompts() -> None:
+                    async for msg in _stream_agent_prompts(http_session, base_url):
+                        conversation.append({"role": "user", "content": msg})
 
                 pairs_task = asyncio.create_task(consume_pairs())
+                prompt_task = asyncio.create_task(consume_prompts())
                 try:
 
                     async for _ in _stream_nudges(http_session, base_url):
@@ -339,8 +386,11 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         break
                 finally:
                     pairs_task.cancel()
+                    prompt_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await pairs_task
+                    with suppress(asyncio.CancelledError):
+                        await prompt_task
 
 
 if __name__ == "__main__":

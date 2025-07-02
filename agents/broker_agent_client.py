@@ -165,6 +165,16 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                             symbols = func_args.get("symbols", [])
                             if isinstance(symbols, list):
                                 await _record_selected_pairs(base_url, symbols)
+                                try:
+                                    await session.call_tool(
+                                        "prompt_agent",
+                                        {
+                                            "target": "ensemble",
+                                            "message": f"selected pairs: {', '.join(symbols)}",
+                                        },
+                                    )
+                                except Exception as exc:
+                                    logger.error("Failed to prompt ensemble: %s", exc)
                         conversation.append(
                             {
                                 "role": "tool",
@@ -210,6 +220,16 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         symbols = func_args.get("symbols", [])
                         if isinstance(symbols, list):
                             await _record_selected_pairs(base_url, symbols)
+                            try:
+                                await session.call_tool(
+                                    "prompt_agent",
+                                    {
+                                        "target": "ensemble",
+                                        "message": f"selected pairs: {', '.join(symbols)}",
+                                    },
+                                )
+                            except Exception as exc:
+                                logger.error("Failed to prompt ensemble: %s", exc)
                     conversation.append(
                         {
                             "role": "function",

@@ -61,6 +61,7 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
 | `SignAndSendTx`          | Sign and broadcast an EVM transaction          | Execution             |
 | `ExecutionLedgerWorkflow`| Track fills and positions in memory            | Fill events           |
+| `prompt_agent`           | Send a prompt message to another agent        | Agent coordination    |
 
 
 ## Getting Started
@@ -110,9 +111,11 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    The `broker_agent_client` does this automatically once you select trading pairs.
 3. `start_market_stream` records ticks to the `market_tick` signal and the
    broker posts your selected pairs to the `selected_pairs` signal so the
-   ensemble agent knows which markets to watch.
+   ensemble agent knows which markets to watch. The broker also calls
+   `prompt_agent` to deliver a brief message with the chosen pairs.
 4. A Temporal schedule triggers `EnsembleNudgeWorkflow` every 30 seconds.
-   The ensemble agent automatically ensures this schedule exists when it starts.
+   The ensemble agent creates this schedule as soon as the broker selects
+   the first trading pairs.
 5. The ensemble agent reviews portfolio state and market data for the selected
    pairs to decide whether to trade using `pre_trade_risk_check` and
    `place_mock_order`.

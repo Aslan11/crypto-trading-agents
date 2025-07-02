@@ -18,6 +18,7 @@ from starlette.requests import Request
 # Import workflow classes
 from tools.market_data import SubscribeCEXStream
 from tools.strategy_signal import EvaluateStrategyMomentum
+from tools.agent_prompt import AgentPromptWorkflow
 from tools.risk import PreTradeRiskCheck
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
@@ -244,6 +245,23 @@ async def get_portfolio_status() -> Dict[str, Any]:
         "entry_prices": entry_prices,
         "pnl": pnl,
     }
+
+
+@app.tool(annotations={"title": "Prompt Agent", "readOnlyHint": False})
+async def prompt_agent(target: str, message: str) -> Dict[str, Any]:
+    """Send a prompt message to another agent via workflow."""
+    client = await get_temporal_client()
+    wf_id = f"prompt-{secrets.token_hex(4)}"
+    logger.info("Prompting %s via workflow %s", target, wf_id)
+    handle = await client.start_workflow(
+        AgentPromptWorkflow.run,
+        args=[target, message],
+        id=wf_id,
+        task_queue="mcp-tools",
+    )
+    result = await handle.result()
+    logger.info("Prompt workflow %s completed", wf_id)
+    return result
 
 
 @app.custom_route("/workflow/{workflow_id}/{run_id}", methods=["GET"])

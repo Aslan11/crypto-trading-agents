@@ -292,6 +292,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         ]
                         while True:
                             try:
+                                last_user_msg = conversation[-1]
+                                print(
+                                    f"[EnsembleAgent] Sending to LLM: {json.dumps(last_user_msg)}"
+                                )
                                 print("[EnsembleAgent] Calling LLM...")
                                 response = await openai_client.chat.completions.create(
                                     model=os.environ.get("OPENAI_MODEL", "o4-mini"),
@@ -304,9 +308,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 await asyncio.sleep(5)
                                 continue
                             msg = response.choices[0].message
-                        print(
-                            f"[EnsembleAgent] LLM raw response: {msg.model_dump() if hasattr(msg, 'model_dump') else msg}"
-                        )
+                            print(
+                                f"[EnsembleAgent] LLM raw response: {msg.model_dump() if hasattr(msg, 'model_dump') else msg}"
+                            )
 
                         # Newer versions of the OpenAI SDK return a ChatCompletionMessage
                         # object. Inspect its attributes instead of treating it like a

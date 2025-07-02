@@ -277,7 +277,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             "Use your tools to review the portfolio and market "
                             "before deciding whether to trade."
                         )
-                        print(f"[EnsembleAgent] Prompting LLM: {signal_str}")
+                        print(
+                            f"[EnsembleAgent] Prompting LLM: {signal_str}",
+                            flush=True,
+                        )
                         conversation.append({"role": "user", "content": signal_str})
                         openai_tools = [
                             {
@@ -294,9 +297,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             try:
                                 last_user_msg = conversation[-1]
                                 print(
-                                    f"[EnsembleAgent] Sending to LLM: {json.dumps(last_user_msg)}"
+                                    f"[EnsembleAgent] Sending to LLM: {json.dumps(last_user_msg)}",
+                                    flush=True,
                                 )
-                                print("[EnsembleAgent] Calling LLM...")
+                                print("[EnsembleAgent] Calling LLM...", flush=True)
                                 response = await openai_client.chat.completions.create(
                                     model=os.environ.get("OPENAI_MODEL", "o4-mini"),
                                     messages=conversation,
@@ -304,12 +308,16 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                     tool_choice="auto",
                                 )
                             except Exception as exc:
-                                print(f"[EnsembleAgent] LLM request failed: {exc}")
+                                print(
+                                    f"[EnsembleAgent] LLM request failed: {exc}",
+                                    flush=True,
+                                )
                                 await asyncio.sleep(5)
                                 continue
                             msg = response.choices[0].message
                             print(
-                                f"[EnsembleAgent] LLM raw response: {msg.model_dump() if hasattr(msg, 'model_dump') else msg}"
+                                f"[EnsembleAgent] LLM raw response: {msg.model_dump() if hasattr(msg, 'model_dump') else msg}",
+                                flush=True,
                             )
 
                         # Newer versions of the OpenAI SDK return a ChatCompletionMessage
@@ -331,11 +339,13 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                     tool_call.function.arguments or "{}"
                                 )
                                 print(
-                                    f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
+                                    f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}",
+                                    flush=True,
                                 )
                                 result = await session.call_tool(func_name, func_args)
                                 print(
-                                    f"{ORANGE}[EnsembleAgent] Tool result from {func_name}: {_tool_result_data(result)}{RESET}"
+                                    f"{ORANGE}[EnsembleAgent] Tool result from {func_name}: {_tool_result_data(result)}{RESET}",
+                                    flush=True,
                                 )
                                 conversation.append(
                                     {
@@ -360,11 +370,13 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             func_name = msg.function_call.name
                             func_args = json.loads(msg.function_call.arguments or "{}")
                             print(
-                                f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
+                                f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}",
+                                flush=True,
                             )
                             result = await session.call_tool(func_name, func_args)
                             print(
-                                f"{ORANGE}[EnsembleAgent] Tool result from {func_name}: {_tool_result_data(result)}{RESET}"
+                                f"{ORANGE}[EnsembleAgent] Tool result from {func_name}: {_tool_result_data(result)}{RESET}",
+                                flush=True,
                             )
                             conversation.append(
                                 {
@@ -382,7 +394,8 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             {"role": "assistant", "content": assistant_reply}
                         )
                         print(
-                            f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}"
+                            f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}",
+                            flush=True,
                         )
                         # keep the conversation going across nudges so the
                         # assistant maintains context of past trades and

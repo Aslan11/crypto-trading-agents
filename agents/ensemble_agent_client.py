@@ -45,12 +45,15 @@ def _tool_result_data(result: Any) -> Any:
                     except Exception:
                         parsed.append(item.text)
                 else:
-                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
+                    parsed.append(
+                        item.model_dump() if hasattr(item, "model_dump") else item
+                    )
             return parsed if len(parsed) > 1 else parsed[0]
         return []
     if hasattr(result, "model_dump"):
         return result.model_dump()
     return result
+
 
 async def _latest_price(
     session: aiohttp.ClientSession, base_url: str, symbol: str
@@ -88,6 +91,7 @@ async def _latest_price(
 
     return last_price
 
+
 async def _stream_strategy_signals(
     session: aiohttp.ClientSession, base_url: str
 ) -> AsyncIterator[dict]:
@@ -98,7 +102,9 @@ async def _stream_strategy_signals(
 
     while True:
         try:
-            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+            async with session.get(
+                url, params={"after": cursor}, headers=headers
+            ) as resp:
                 if resp.status != 200:
                     await asyncio.sleep(1)
                     continue
@@ -120,6 +126,7 @@ async def _stream_strategy_signals(
                     yield evt
         except Exception:
             await asyncio.sleep(1)
+
 
 async def _stream_ensemble_triggers(
     session: aiohttp.ClientSession, base_url: str
@@ -131,7 +138,9 @@ async def _stream_ensemble_triggers(
 
     while True:
         try:
-            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+            async with session.get(
+                url, params={"after": cursor}, headers=headers
+            ) as resp:
                 if resp.status != 200:
                     await asyncio.sleep(1)
                     continue
@@ -153,6 +162,7 @@ async def _stream_ensemble_triggers(
                     yield evt
         except Exception:
             await asyncio.sleep(1)
+
 
 async def _evaluate_market(
     session: ClientSession,
@@ -240,6 +250,7 @@ async def _evaluate_market(
         print(f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}")
         break
 
+
 async def _schedule_loop(
     http_session: aiohttp.ClientSession,
     base_url: str,
@@ -251,6 +262,7 @@ async def _schedule_loop(
     async for evt in _stream_ensemble_triggers(http_session, base_url):
         symbol = evt.get("symbol", os.environ.get("TRADE_SYMBOL", "BTC/USD"))
         await _evaluate_market(session, tools, symbol)
+
 
 async def _strategy_loop(
     http_session: aiohttp.ClientSession,
@@ -318,7 +330,10 @@ async def _strategy_loop(
                 for tool_call in msg.tool_calls:
                     func_name = tool_call.function.name
                     func_args = json.loads(tool_call.function.arguments or "{}")
-                    if func_name == "pre_trade_risk_check" and "intents" not in func_args:
+                    if (
+                        func_name == "pre_trade_risk_check"
+                        and "intents" not in func_args
+                    ):
                         func_args.setdefault("intent_id", intent_id)
                         func_args["intents"] = [intent]
                     if func_name == "place_mock_order" and "intent" not in func_args:
@@ -371,6 +386,7 @@ async def _strategy_loop(
             conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
             break
 
+
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and react to strategy and schedule signals."""
     base_url = server_url.rstrip("/")
@@ -402,5 +418,8 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     trigger_task.cancel()
                     await asyncio.gather(trigger_task, return_exceptions=True)
 
+
 if __name__ == "__main__":
-    asyncio.run(run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))
+    asyncio.run(
+        run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080"))
+    )

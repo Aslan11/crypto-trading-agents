@@ -27,6 +27,7 @@ SERVER_URL = os.environ.get("MCP_SERVER", "http://localhost:8080")
 _client: Client | None = None
 _client_lock = asyncio.Lock()
 
+
 async def _get_client() -> Client:
     global _client
     if _client is None:
@@ -36,6 +37,7 @@ async def _get_client() -> Client:
                     TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE
                 )
     return _client
+
 
 @activity.defn
 async def prompt_ensemble_agent(symbol: str) -> None:
@@ -50,6 +52,7 @@ async def prompt_ensemble_agent(symbol: str) -> None:
         except Exception:
             # Network errors are non-fatal for this best-effort signal
             pass
+
 
 @workflow.defn
 class EnsembleDecisionWorkflow:
@@ -74,16 +77,21 @@ async def ensure_schedule() -> None:
             raise
     schedule = Schedule(
         action=ScheduleActionStartWorkflow(
+            id="ensemble-prompt-workflow",
             workflow="agents.ensemble_schedule.EnsembleDecisionWorkflow.run",
             args=[os.environ.get("TRADE_SYMBOL", "BTC/USD")],
             task_queue=TASK_QUEUE,
         ),
-        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]),
+        spec=ScheduleSpec(
+            intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]
+        ),
     )
     await client.create_schedule(schedule_id, schedule, trigger_immediately=True)
 
+
 async def main() -> None:
     await ensure_schedule()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

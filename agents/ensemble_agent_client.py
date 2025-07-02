@@ -4,9 +4,19 @@ import asyncio
 from typing import Any, AsyncIterator
 import aiohttp
 import openai
+import secrets
+from datetime import timedelta
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult, TextContent
+from temporalio.client import (
+    Client,
+    ScheduleActionStartWorkflow,
+    ScheduleIntervalSpec,
+    ScheduleSpec,
+)
+from temporalio.service import RPCError, RPCStatusCode
+from tools.ensemble_nudge import EnsembleNudgeWorkflow
 import time
 
 ORANGE = "\033[33m"
@@ -112,10 +122,40 @@ async def _stream_nudges(
         except Exception:
             await asyncio.sleep(1)
 
+
+async def _ensure_schedule(client: Client) -> None:
+    """Create the ensemble nudge schedule if it doesn't exist."""
+    sched_id = "ensemble-nudge-schedule"
+    handle = client.get_schedule_handle(sched_id)
+    try:
+        await handle.describe()
+        return
+    except RPCError as err:
+        if err.status != RPCStatusCode.NOT_FOUND:
+            raise
+
+    await client.create_schedule(
+        id=sched_id,
+        spec=ScheduleSpec(
+            intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]
+        ),
+        action=ScheduleActionStartWorkflow(
+            EnsembleNudgeWorkflow.run,
+            id=f"nudge-{secrets.token_hex(4)}",
+            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+        ),
+    )
+
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and react to strategy signals."""
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp"
+
+    # Ensure the periodic nudge schedule exists
+    address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+    namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+    client = await Client.connect(address, namespace=namespace)
+    await _ensure_schedule(client)
 
     # Streaming strategy signals requires an indefinite timeout
     timeout = aiohttp.ClientTimeout(total=None)

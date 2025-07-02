@@ -112,6 +112,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    The `broker_agent_client` does this automatically once you select trading pairs.
 3. `start_market_stream` records ticks to the `market_tick` signal.
 4. A Temporal schedule triggers `EnsembleNudgeWorkflow` every 30 seconds.
+   The ensemble agent automatically ensures this schedule exists when it starts.
 5. The ensemble agent reviews portfolio state and market data to decide whether
    to trade using `pre_trade_risk_check` and `place_mock_order`.
 

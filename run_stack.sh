@@ -61,10 +61,6 @@ tmux select-pane  -t $ENS_PANE
 UI_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $UI_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python ticker_ui_service.py' C-m
 
-# 7. Pane 6 – create ensemble schedule (split Pane 5 vertically ↓)
-tmux select-pane -t $UI_PANE
-SCHED_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys -t $SCHED_PANE 'sleep 5 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble_schedule.py' C-m
 
 # Arrange all panes into a tiled layout
 tmux select-layout -t $SESSION:0 tiled

@@ -4,7 +4,7 @@ import asyncio
 from typing import Any, AsyncIterator
 from contextlib import suppress
 import aiohttp
-import openai
+from openai import AsyncOpenAI
 import secrets
 from datetime import timedelta
 from mcp import ClientSession
@@ -31,7 +31,11 @@ ORANGE = "\033[33m"
 PINK = "\033[95m"
 RESET = "\033[0m"
 
-openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Use the async OpenAI client with a modest request timeout so the
+# agent doesn't hang indefinitely if the API is unreachable.
+openai_client = AsyncOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"), timeout=15, max_retries=2
+)
 
 
 def _tool_result_data(result: Any) -> Any:
@@ -288,7 +292,8 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         ]
                         while True:
                             try:
-                                response = openai_client.chat.completions.create(
+                                print("[EnsembleAgent] Calling LLM...")
+                                response = await openai_client.chat.completions.create(
                                     model=os.environ.get("OPENAI_MODEL", "o4-mini"),
                                     messages=conversation,
                                     tools=openai_tools,

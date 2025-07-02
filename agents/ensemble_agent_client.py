@@ -270,6 +270,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         )
                         status_result = await session.call_tool("get_portfolio_status", {})
                         status = _tool_result_data(status_result)
+                        print(f"[EnsembleAgent] Portfolio status: {json.dumps(status)}")
                         prices: dict[str, float] = {}
                         for sym in pairs_ref["pairs"]:
                             try:
@@ -279,7 +280,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 )
                                 tick_data = _tool_result_data(ticks)
                                 if tick_data:
-                                    prices[sym] = float(tick_data[-1]["price"])
+                                    price = float(tick_data[-1]["price"])
+                                    prices[sym] = price
+                                    print(f"[EnsembleAgent] Latest {sym} price: {price}")
                             except Exception as exc:
                                 print(f"[EnsembleAgent] Price fetch failed for {sym}: {exc}")
                         price_str = ", ".join(f"{s}: {p}" for s, p in prices.items()) or "none"
@@ -290,6 +293,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             "Use available tools to inspect the portfolio and market "
                             "and decide whether to trade."
                         )
+                        print(f"[EnsembleAgent] Prompting LLM: {signal_str}")
                         conversation.append({"role": "user", "content": signal_str})
                         openai_tools = [
                             {
@@ -338,6 +342,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                     f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                                 )
                                 result = await session.call_tool(func_name, func_args)
+                                print(
+                                    f"{ORANGE}[EnsembleAgent] Tool result from {func_name}: {_tool_result_data(result)}{RESET}"
+                                )
                                 conversation.append(
                                     {
                                         "role": "tool",
@@ -362,6 +369,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                             )
                             result = await session.call_tool(func_name, func_args)
+                            print(
+                                f"{ORANGE}[EnsembleAgent] Tool result from {func_name}: {_tool_result_data(result)}{RESET}"
+                            )
                             conversation.append(
                                 {
                                     "role": "function",

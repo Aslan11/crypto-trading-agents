@@ -78,7 +78,7 @@ async def ensure_schedule() -> None:
     schedule = Schedule(
         action=ScheduleActionStartWorkflow(
             id="ensemble-prompt-workflow",
-            workflow="agents.ensemble_schedule.EnsembleDecisionWorkflow.run",
+            workflow=EnsembleDecisionWorkflow.run,
             args=[os.environ.get("TRADE_SYMBOL", "BTC/USD")],
             task_queue=TASK_QUEUE,
         ),

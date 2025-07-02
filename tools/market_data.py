@@ -38,15 +38,20 @@ COINBASE_ID = "coinbaseexchange"
 
 @activity.defn
 async def fetch_ticker(symbol: str) -> dict[str, Any]:
-    """Return the latest ticker for ``symbol`` from Coinbase."""
+    """Return the latest ticker for ``symbol`` from Coinbase.
+
+    Any failures are logged and an empty payload is returned so the calling
+    workflow can continue processing other symbols without raising.
+    """
     import ccxt.async_support as ccxt
+
     client = ccxt.coinbaseexchange()
     try:
         data = await client.fetch_ticker(symbol)
         return MarketTick(exchange=COINBASE_ID, symbol=symbol, data=data).model_dump()
-    except Exception as exc:
+    except Exception as exc:  # pragma: no cover - network failures
         logger.error("Failed to fetch ticker %s:%s - %s", COINBASE_ID, symbol, exc)
-        raise
+        return MarketTick(exchange=COINBASE_ID, symbol=symbol, data={}).model_dump()
     finally:
         await client.close()
 
@@ -79,7 +84,7 @@ class SubscribeCEXStream:
         """Stream tickers indefinitely, continuing as new periodically."""
         cycles = 0
         while True:
-            tickers = await asyncio.gather(
+            results = await asyncio.gather(
                 *[
                     workflow.execute_activity(
                         fetch_ticker,
@@ -87,16 +92,20 @@ class SubscribeCEXStream:
                         schedule_to_close_timeout=timedelta(seconds=10),
                     )
                     for symbol in symbols
-                ]
+                ],
+                return_exceptions=True,
             )
-            for ticker in tickers:
+            for result in results:
+                if isinstance(result, Exception):  # pragma: no cover - network errors
+                    logger.error("Ticker fetch failed: %s", result)
+                    continue
                 await workflow.execute_activity(
                     record_tick,
-                    ticker,
+                    result,
                     schedule_to_close_timeout=timedelta(seconds=5),
                 )
                 if hasattr(workflow, "signal_child_workflows"):
-                    await workflow.signal_child_workflows("market_tick", ticker)
+                    await workflow.signal_child_workflows("market_tick", result)
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 return

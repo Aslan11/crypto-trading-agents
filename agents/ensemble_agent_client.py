@@ -268,30 +268,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             if pairs_ref["pairs"]
                             else "none"
                         )
-                        status_result = await session.call_tool("get_portfolio_status", {})
-                        status = _tool_result_data(status_result)
-                        print(f"[EnsembleAgent] Portfolio status: {json.dumps(status)}")
-                        prices: dict[str, float] = {}
-                        for sym in pairs_ref["pairs"]:
-                            try:
-                                ticks = await session.call_tool(
-                                    "get_historical_ticks",
-                                    {"symbol": sym, "days": 1},
-                                )
-                                tick_data = _tool_result_data(ticks)
-                                if tick_data:
-                                    price = float(tick_data[-1]["price"])
-                                    prices[sym] = price
-                                    print(f"[EnsembleAgent] Latest {sym} price: {price}")
-                            except Exception as exc:
-                                print(f"[EnsembleAgent] Price fetch failed for {sym}: {exc}")
-                        price_str = ", ".join(f"{s}: {p}" for s, p in prices.items()) or "none"
                         signal_str = (
                             f"Nudge received. Pairs in focus: {pair_str}. "
-                            f"Portfolio: {json.dumps(status)}. "
-                            f"Latest prices: {price_str}. "
-                            "Use available tools to inspect the portfolio and market "
-                            "and decide whether to trade."
+                            "Use your tools to review the portfolio and market "
+                            "before deciding whether to trade."
                         )
                         print(f"[EnsembleAgent] Prompting LLM: {signal_str}")
                         conversation.append({"role": "user", "content": signal_str})

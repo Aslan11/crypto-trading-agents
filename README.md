@@ -116,9 +116,10 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 4. A Temporal schedule triggers `EnsembleNudgeWorkflow` every 30 seconds.
    The ensemble agent creates this schedule as soon as the broker selects
    the first trading pairs.
-5. The ensemble agent reviews portfolio state and market data for the selected
-   pairs to decide whether to trade using `pre_trade_risk_check` and
-   `place_mock_order`.
+5. The ensemble agent checks portfolio status and recent prices for the selected
+   pairs on every nudge. It can call `get_portfolio_status`, `get_historical_ticks`,
+   `sign_and_send_tx` and place orders with `place_mock_order` if conditions look
+   favorable.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*

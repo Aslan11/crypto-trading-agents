@@ -299,18 +299,39 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                 try:
 
                     async for _ in _stream_nudges(http_session, base_url):
+                        print("[EnsembleAgent] Checking portfolio status")
                         status_result = await session.call_tool(
                             "get_portfolio_status", {}
                         )
                         status = _tool_result_data(status_result)
+                        print(f"[EnsembleAgent] Portfolio status: {status}")
+
+                        markets: dict[str, float] = {}
+                        for symbol in pairs_ref["pairs"]:
+                            print(f"[EnsembleAgent] Fetching market data for {symbol}")
+                            ticks_result = await session.call_tool(
+                                "get_historical_ticks",
+                                {"symbol": symbol, "days": 1},
+                            )
+                            ticks = _tool_result_data(ticks_result)
+                            last_price = 0.0
+                            if isinstance(ticks, list) and ticks:
+                                last_price = float(ticks[-1].get("price", 0))
+                            else:
+                                last_price = await _latest_price(http_session, base_url, symbol)
+                            markets[symbol] = last_price
+                        if markets:
+                            print(f"[EnsembleAgent] Market snapshot: {markets}")
+
                         pair_str = (
                             ", ".join(pairs_ref["pairs"])
                             if pairs_ref["pairs"]
                             else "none"
                         )
                         signal_str = (
-                            f"Nudge received. Current portfolio: {json.dumps(status)}. "
-                            f"Watching pairs: {pair_str}. Review market data and decide whether to trade."
+                            f"Nudge received. Portfolio: {json.dumps(status)}. "
+                            f"Watching pairs: {pair_str}. Prices: {json.dumps(markets)}. "
+                            "Review market data and decide whether to trade."
                         )
                         conversation.append({"role": "user", "content": signal_str})
                         openai_tools = [

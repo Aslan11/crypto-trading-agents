@@ -74,6 +74,10 @@ async def main() -> None:
 
     print(f"Loaded {len(workflows)} workflows and {len(activities)} activities")
 
+    if os.environ.get("DISABLE_TEMPORAL"):
+        await asyncio.sleep(0.1)
+        return
+
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
     client = await Client.connect(address, namespace=namespace)

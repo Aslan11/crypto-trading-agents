@@ -28,9 +28,9 @@ logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(mess
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP
-server = FastMCP("crypto-trading-server")
-app = server
-server.settings.streamable_http_path = ""
+app = FastMCP("crypto-trading-server")
+app.settings.streamable_http_path = ""
+app.settings.json_response = True
 
 # Shared Temporal client
 _temporal_client: Client | None = None
@@ -38,9 +38,6 @@ _client_lock = asyncio.Lock()
 
 # Simple in-memory signal log for backward compatibility
 signal_log: dict[str, list[dict]] = {}
-
-# Placeholder for ASGI app, created after routes are registered
-_asgi_app = None
 
 
 async def get_temporal_client() -> Client:
@@ -314,14 +311,9 @@ async def fetch_signals(request: Request) -> Response:
     logger.debug("Starting signal stream for %s after %s", name, after)
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-# Finalize ASGI app for tests
-app = server.streamable_http_app()
-
 
 if __name__ == "__main__":
-    server.settings.host = "0.0.0.0"
-    server.settings.port = int(os.environ.get("MCP_PORT", "8080"))
-    logger.info(
-        "Starting MCP server on %s:%s", server.settings.host, server.settings.port
-    )
-    server.run(transport="streamable-http")
+    app.settings.host = "0.0.0.0"
+    app.settings.port = int(os.environ.get("MCP_PORT", "8080"))
+    logger.info("Starting MCP server on %s:%s", app.settings.host, app.settings.port)
+    app.run(transport="streamable-http")

@@ -6,7 +6,26 @@ from collections import deque
 from decimal import Decimal
 from typing import Dict, List, Tuple
 
+import asyncio
+import json
+import os
+
+import aiohttp
+import openai
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
 from temporalio import workflow
+
+ORANGE = "\033[33m"
+PINK = "\033[95m"
+RESET = "\033[0m"
+
+SYSTEM_PROMPT = (
+    "You are a trading ensemble agent. Use the available tools to fetch data, "
+    "check risk and place orders as needed. Decide whether to BUY, SELL or HOLD "
+    "each symbol when prompted."
+)
 
 
 @workflow.defn
@@ -48,31 +67,153 @@ class FeatureStoreWorkflow:
 
 @workflow.defn
 class EnsembleWorkflow:
-    """Store latest prices and approved intents."""
+    """LLM-driven trading agent awakened on a schedule."""
 
     def __init__(self) -> None:
-        self.latest_price: Dict[str, float] = {}
-        self.intents: List[Dict] = []
+        self.active_symbols: Dict[str, int] = {}
+        self.last_price: Dict[str, float] = {}
+        self._nudge = asyncio.Event()
+        self.conversation: List[Dict] = [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ]
 
     @workflow.signal
-    def update_price(self, symbol: str, price: float) -> None:
-        self.latest_price[symbol] = price
+    def update_price(self, symbol: str, price: float, ts: int) -> None:
+        self.active_symbols[symbol] = ts
+        self.last_price[symbol] = price
 
     @workflow.signal
-    def record_intent(self, intent: Dict) -> None:
-        self.intents.append(intent)
-
-    @workflow.query
-    def get_price(self, symbol: str) -> float | None:
-        return self.latest_price.get(symbol)
-
-    @workflow.query
-    def get_intents(self) -> List[Dict]:
-        return list(self.intents)
+    def nudge(self) -> None:
+        self._nudge.set()
 
     @workflow.run
     async def run(self) -> None:
-        await workflow.wait_condition(lambda: False)
+        base_url = os.environ.get("MCP_SERVER", "http://localhost:8080").rstrip("/")
+        mcp_url = base_url + "/mcp"
+        openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        timeout = aiohttp.ClientTimeout(total=None)
+        async with aiohttp.ClientSession(timeout=timeout) as http_session:
+            async with streamablehttp_client(mcp_url) as (read_stream, write_stream, _):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    tools = (await session.list_tools()).tools
+                    print(
+                        "[EnsembleAgent] Connected to MCP server with tools:",
+                        [t.name for t in tools],
+                    )
+                    while True:
+                        await workflow.wait_condition(lambda: self._nudge.is_set())
+                        self._nudge.clear()
+                        now = int(workflow.now().timestamp())
+                        for sym, ts in list(self.active_symbols.items()):
+                            if now - ts > 60:
+                                self.active_symbols.pop(sym, None)
+                                self.last_price.pop(sym, None)
+                        for symbol in list(self.active_symbols):
+                            user_msg = f"Time to evaluate {symbol}. Decide BUY, SELL or HOLD using tools."
+                            self.conversation.append({"role": "user", "content": user_msg})
+                            openai_tools = [
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": t.name,
+                                        "description": t.description,
+                                        "parameters": t.inputSchema,
+                                    },
+                                }
+                                for t in tools
+                            ]
+                            while True:
+                                response = openai_client.chat.completions.create(
+                                    model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+                                    messages=self.conversation,
+                                    tools=openai_tools,
+                                    tool_choice="auto",
+                                )
+                                msg = response.choices[0].message
+                                if getattr(msg, "tool_calls", None):
+                                    self.conversation.append(
+                                        {
+                                            "role": msg.role,
+                                            "content": msg.content,
+                                            "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+                                        }
+                                    )
+                                    for call in msg.tool_calls:
+                                        func_name = call.function.name
+                                        func_args = json.loads(call.function.arguments or "{}")
+                                        if func_name in {"pre_trade_risk_check", "place_mock_order"}:
+                                            intent = func_args.get("intent", {})
+                                            intent.setdefault("symbol", symbol)
+                                            intent.setdefault("qty", 1)
+                                            intent.setdefault("price", self.last_price.get(symbol, 0.0))
+                                            intent_side = intent.get("side") or func_args.get("side")
+                                            if intent_side:
+                                                intent["side"] = intent_side
+                                            func_args["intent"] = intent
+                                            if func_name == "pre_trade_risk_check":
+                                                func_args.setdefault(
+                                                    "intent_id",
+                                                    f"{intent.get('side','BUY')}-{symbol}-{now}",
+                                                )
+                                                func_args.setdefault("intents", [intent])
+                                        print(
+                                            f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
+                                        )
+                                        result = await session.call_tool(func_name, func_args)
+                                        self.conversation.append(
+                                            {
+                                                "role": "tool",
+                                                "tool_call_id": call.id,
+                                                "name": func_name,
+                                                "content": json.dumps(result.model_dump()),
+                                            }
+                                        )
+                                    continue
+                                if getattr(msg, "function_call", None):
+                                    self.conversation.append(
+                                        {
+                                            "role": msg.role,
+                                            "content": msg.content,
+                                            "function_call": msg.function_call.model_dump(),
+                                        }
+                                    )
+                                    func_name = msg.function_call.name
+                                    func_args = json.loads(msg.function_call.arguments or "{}")
+                                    if func_name in {"pre_trade_risk_check", "place_mock_order"}:
+                                        intent = func_args.get("intent", {})
+                                        intent.setdefault("symbol", symbol)
+                                        intent.setdefault("qty", 1)
+                                        intent.setdefault("price", self.last_price.get(symbol, 0.0))
+                                        side = intent.get("side") or func_args.get("side")
+                                        if side:
+                                            intent["side"] = side
+                                        func_args["intent"] = intent
+                                        if func_name == "pre_trade_risk_check":
+                                            func_args.setdefault(
+                                                "intent_id",
+                                                f"{intent.get('side','BUY')}-{symbol}-{now}",
+                                            )
+                                            func_args.setdefault("intents", [intent])
+                                    print(
+                                        f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
+                                    )
+                                    result = await session.call_tool(func_name, func_args)
+                                    self.conversation.append(
+                                        {
+                                            "role": "function",
+                                            "name": func_name,
+                                            "content": json.dumps(result.model_dump()),
+                                        }
+                                    )
+                                    continue
+                                assistant_reply = msg.content or ""
+                                self.conversation.append({"role": "assistant", "content": assistant_reply})
+                                print(f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}")
+                                self.conversation = [
+                                    {"role": "system", "content": SYSTEM_PROMPT}
+                                ]
+                                break
 
 
 @workflow.defn

@@ -11,6 +11,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult, TextContent
 from temporalio.client import (
     Client,
+    Schedule,
     ScheduleActionStartWorkflow,
     ScheduleIntervalSpec,
     ScheduleSpec,
@@ -134,17 +135,17 @@ async def _ensure_schedule(client: Client) -> None:
         if err.status != RPCStatusCode.NOT_FOUND:
             raise
 
-    await client.create_schedule(
-        id=sched_id,
-        spec=ScheduleSpec(
-            intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]
-        ),
+    schedule = Schedule(
         action=ScheduleActionStartWorkflow(
             EnsembleNudgeWorkflow.run,
             id=f"nudge-{secrets.token_hex(4)}",
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         ),
+        spec=ScheduleSpec(
+            intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]
+        ),
     )
+    await client.create_schedule(sched_id, schedule)
 
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and react to strategy signals."""

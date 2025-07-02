@@ -378,7 +378,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         print(
                             f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}"
                         )
-                        conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+                        # keep the conversation going across nudges so the
+                        # assistant maintains context of past trades and
+                        # observations
                         break
                 finally:
                     pairs_task.cancel()

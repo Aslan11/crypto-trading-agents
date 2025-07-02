@@ -120,6 +120,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    the portfolio and current prices. Using the tools `get_portfolio_status`,
    `get_historical_ticks`, `sign_and_send_tx` and `place_mock_order`, it gathers
    the data it needs and decides whether to trade.
+6. The ensemble agent keeps a single long‑running chat history with the LLM, so
+   each nudge adds to the same conversation instead of starting over.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*

@@ -333,7 +333,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                         "role": "tool",
                                         "tool_call_id": tool_call.id,
                                         "name": func_name,
-                                        "content": json.dumps(result.model_dump()),
+                                        "content": json.dumps(
+                                            _tool_result_data(result)
+                                        ),
                                     }
                                 )
                             continue
@@ -359,7 +361,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 {
                                     "role": "function",
                                     "name": func_name,
-                                    "content": json.dumps(result.model_dump()),
+                                    "content": json.dumps(
+                                        _tool_result_data(result)
+                                    ),
                                 }
                             )
                             continue

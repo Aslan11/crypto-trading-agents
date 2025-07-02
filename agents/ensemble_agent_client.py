@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 from typing import Any, AsyncIterator
+from contextlib import suppress
 import aiohttp
 import openai
 import secrets
@@ -137,6 +138,44 @@ async def _stream_nudges(
             await asyncio.sleep(1)
 
 
+async def _stream_selected_pairs(
+    session: aiohttp.ClientSession, base_url: str
+) -> AsyncIterator[list[str]]:
+    """Yield lists of user-selected trading pairs."""
+    cursor = 0
+    url = base_url.rstrip("/") + "/signal/selected_pairs"
+    headers = {"Accept": "text/event-stream"}
+
+    while True:
+        try:
+            async with session.get(
+                url, params={"after": cursor}, headers=headers
+            ) as resp:
+                if resp.status != 200:
+                    await asyncio.sleep(1)
+                    continue
+
+                while True:
+                    line = await resp.content.readline()
+                    if not line:
+                        break
+                    text = line.decode().strip()
+                    if not text or not text.startswith("data:"):
+                        continue
+                    try:
+                        evt = json.loads(text[5:].strip())
+                    except Exception:
+                        continue
+                    ts = evt.get("ts")
+                    if ts is not None:
+                        cursor = max(cursor, ts)
+                    symbols = evt.get("symbols")
+                    if isinstance(symbols, list):
+                        yield symbols
+        except Exception:
+            await asyncio.sleep(1)
+
+
 async def _ensure_schedule(client: Client) -> None:
     """Create the ensemble nudge schedule if it doesn't exist."""
     sched_id = "ensemble-nudge-schedule"
@@ -190,25 +229,41 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     [t.name for t in tools],
                 )
 
-                async for _ in _stream_nudges(http_session, base_url):
-                    status_result = await session.call_tool("get_portfolio_status", {})
-                    status = _tool_result_data(status_result)
-                    signal_str = (
-                        f"Nudge received. Current portfolio: {json.dumps(status)}. "
-                        "Review market data and decide whether to trade."
-                    )
-                    conversation.append({"role": "user", "content": signal_str})
-                    openai_tools = [
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": tool.name,
-                                "description": tool.description,
-                                "parameters": tool.inputSchema,
-                            },
-                        }
-                        for tool in tools
-                    ]
+                pairs_ref = {"pairs": []}
+
+                async def consume_pairs() -> None:
+                    async for symbols in _stream_selected_pairs(http_session, base_url):
+                        pairs_ref["pairs"] = symbols
+
+                pairs_task = asyncio.create_task(consume_pairs())
+                try:
+
+                    async for _ in _stream_nudges(http_session, base_url):
+                        status_result = await session.call_tool(
+                            "get_portfolio_status", {}
+                        )
+                        status = _tool_result_data(status_result)
+                        pair_str = (
+                            ", ".join(pairs_ref["pairs"])
+                            if pairs_ref["pairs"]
+                            else "none"
+                        )
+                        signal_str = (
+                            f"Nudge received. Current portfolio: {json.dumps(status)}. "
+                            f"Watching pairs: {pair_str}. Review market data and decide whether to trade."
+                        )
+                        conversation.append({"role": "user", "content": signal_str})
+                        openai_tools = [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": tool.name,
+                                    "description": tool.description,
+                                    "parameters": tool.inputSchema,
+                                },
+                            }
+                            for tool in tools
+                        ]
                     while True:
                         response = openai_client.chat.completions.create(
                             model=os.environ.get("OPENAI_MODEL", "o4-mini"),
@@ -282,6 +337,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         )
                         conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                         break
+                finally:
+                    pairs_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await pairs_task
 
 
 if __name__ == "__main__":

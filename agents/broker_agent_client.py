@@ -3,10 +3,14 @@ import json
 import asyncio
 import logging
 from typing import Any
+import aiohttp
+import time
 
 from mcp.types import CallToolResult, TextContent
+
 try:
     import openai
+
     _openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 except Exception:  # pragma: no cover - optional dependency
     openai = None
@@ -25,7 +29,6 @@ logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(mess
 logger = logging.getLogger(__name__)
 
 
-
 def _tool_result_data(result: Any) -> Any:
     """Return JSON-friendly data from a tool call result."""
     if isinstance(result, CallToolResult):
@@ -38,12 +41,26 @@ def _tool_result_data(result: Any) -> Any:
                     except Exception:
                         parsed.append(item.text)
                 else:
-                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
+                    parsed.append(
+                        item.model_dump() if hasattr(item, "model_dump") else item
+                    )
             return parsed if len(parsed) > 1 else parsed[0]
         return []
     if hasattr(result, "model_dump"):
         return result.model_dump()
     return result
+
+
+async def _record_selected_pairs(base_url: str, symbols: list[str]) -> None:
+    """Record the user's selected trading pairs to the MCP signal log."""
+    url = base_url.rstrip("/") + "/signal/selected_pairs"
+    payload = {"ts": int(time.time()), "symbols": symbols}
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            await session.post(url, json=payload)
+        except Exception as exc:  # pragma: no cover - network errors
+            logger.error("Failed to record selected pairs: %s", exc)
 
 
 SYSTEM_PROMPT = (
@@ -56,11 +73,14 @@ SYSTEM_PROMPT = (
     "As soon as the user confirms their desired pairs, automatically begin streaming market data for them via the `start_market_stream` tool."
 )
 
+
 async def get_next_broker_command() -> str | None:
     return await asyncio.to_thread(input, "> ")
 
+
 async def run_broker_agent(server_url: str = "http://localhost:8080"):
     url = server_url.rstrip("/") + "/mcp/"
+    base_url = server_url.rstrip("/")
     logger.info("Connecting to MCP server at %s", url)
     async with streamablehttp_client(url) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
@@ -129,14 +149,22 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     conversation.append(msg_dict)
                     for call in msg_dict.get("tool_calls", []):
                         func_name = call["function"]["name"]
-                        func_args = json.loads(call["function"].get("arguments") or "{}")
-                        print(f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}")
+                        func_args = json.loads(
+                            call["function"].get("arguments") or "{}"
+                        )
+                        print(
+                            f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}"
+                        )
                         try:
                             result = await session.call_tool(func_name, func_args)
                             result_data = _tool_result_data(result)
                         except Exception as exc:
                             logger.error("Tool call failed: %s", exc)
                             continue
+                        if func_name == "start_market_stream":
+                            symbols = func_args.get("symbols", [])
+                            if isinstance(symbols, list):
+                                await _record_selected_pairs(base_url, symbols)
                         conversation.append(
                             {
                                 "role": "tool",
@@ -152,7 +180,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                             tools=tools_payload,
                         )
                         assistant_msg = followup.choices[0].message.content or ""
-                        conversation.append({"role": "assistant", "content": assistant_msg})
+                        conversation.append(
+                            {"role": "assistant", "content": assistant_msg}
+                        )
                         print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                     except Exception as exc:
                         logger.error("LLM request failed: %s", exc)
@@ -162,17 +192,31 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     function_call = msg_dict["function_call"]
                     func_name = function_call.get("name")
                     if not func_name:
-                        logger.error("Received function_call without name: %s", msg_dict)
+                        logger.error(
+                            "Received function_call without name: %s", msg_dict
+                        )
                         continue
                     func_args = json.loads(function_call.get("arguments") or "{}")
-                    print(f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}")
+                    print(
+                        f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}"
+                    )
                     try:
                         result = await session.call_tool(func_name, func_args)
                         result_data = _tool_result_data(result)
                     except Exception as exc:
                         logger.error("Tool call failed: %s", exc)
                         continue
-                    conversation.append({"role": "function", "name": func_name, "content": json.dumps(result_data)})
+                    if func_name == "start_market_stream":
+                        symbols = func_args.get("symbols", [])
+                        if isinstance(symbols, list):
+                            await _record_selected_pairs(base_url, symbols)
+                    conversation.append(
+                        {
+                            "role": "function",
+                            "name": func_name,
+                            "content": json.dumps(result_data),
+                        }
+                    )
                     try:
                         followup = _openai_client.chat.completions.create(
                             model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
@@ -180,7 +224,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                             tools=tools_payload,
                         )
                         assistant_msg = followup.choices[0].message.content or ""
-                        conversation.append({"role": "assistant", "content": assistant_msg})
+                        conversation.append(
+                            {"role": "assistant", "content": assistant_msg}
+                        )
                         print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                     except Exception as exc:
                         logger.error("LLM request failed: %s", exc)
@@ -192,6 +238,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
 
                 if len(conversation) > 20:
                     conversation = [conversation[0]] + conversation[-19:]
+
 
 if __name__ == "__main__":
     asyncio.run(run_broker_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))

@@ -108,11 +108,14 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
      -d '{"symbols": ["BTC/USD"], "interval_sec": 1}'
    ```
    The `broker_agent_client` does this automatically once you select trading pairs.
-3. `start_market_stream` records ticks to the `market_tick` signal.
+3. `start_market_stream` records ticks to the `market_tick` signal and the
+   broker posts your selected pairs to the `selected_pairs` signal so the
+   ensemble agent knows which markets to watch.
 4. A Temporal schedule triggers `EnsembleNudgeWorkflow` every 30 seconds.
    The ensemble agent automatically ensures this schedule exists when it starts.
-5. The ensemble agent reviews portfolio state and market data to decide whether
-   to trade using `pre_trade_risk_check` and `place_mock_order`.
+5. The ensemble agent reviews portfolio state and market data for the selected
+   pairs to decide whether to trade using `pre_trade_risk_check` and
+   `place_mock_order`.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*

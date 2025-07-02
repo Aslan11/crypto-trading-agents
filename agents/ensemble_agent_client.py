@@ -187,7 +187,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     ]
                     while True:
                         response = openai_client.chat.completions.create(
-                            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                            model=os.environ.get("OPENAI_MODEL", "o4-mini"),
                             messages=conversation,
                             tools=openai_tools,
                             tool_choice="auto",

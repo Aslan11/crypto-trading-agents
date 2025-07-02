@@ -37,7 +37,6 @@ async def _ensure_schedule(client: Client) -> None:
                 EnsembleWorkflow.run,
                 id=ENSEMBLE_WF_ID,
                 task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
-                start_signal="nudge",
             ),
             spec=ScheduleSpec(
                 intervals=[ScheduleIntervalSpec(every=30)]

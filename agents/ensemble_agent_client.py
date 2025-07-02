@@ -133,6 +133,7 @@ async def _stream_nudges(
                     ts = evt.get("ts")
                     if ts is not None:
                         cursor = max(cursor, ts)
+                    print(f"[EnsembleAgent] Nudge event: {evt}")
                     yield evt
         except Exception:
             await asyncio.sleep(1)
@@ -171,6 +172,7 @@ async def _stream_selected_pairs(
                         cursor = max(cursor, ts)
                     symbols = evt.get("symbols")
                     if isinstance(symbols, list):
+                        print(f"[EnsembleAgent] Selected pairs updated: {symbols}")
                         yield symbols
         except Exception:
             await asyncio.sleep(1)
@@ -210,6 +212,7 @@ async def _stream_agent_prompts(
                     if evt.get("target") == "ensemble":
                         msg = evt.get("message")
                         if isinstance(msg, str):
+                            print(f"[EnsembleAgent] Prompt received: {msg}")
                             yield msg
         except Exception:
             await asyncio.sleep(1)
@@ -221,6 +224,7 @@ async def _ensure_schedule(client: Client) -> None:
     handle = client.get_schedule_handle(sched_id)
     try:
         await handle.describe()
+        print("[EnsembleAgent] Nudge schedule already exists")
         return
     except RPCError as err:
         if err.status != RPCStatusCode.NOT_FOUND:
@@ -237,6 +241,7 @@ async def _ensure_schedule(client: Client) -> None:
         ),
     )
     await client.create_schedule(sched_id, schedule)
+    print("[EnsembleAgent] Nudge schedule created")
 
 
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
@@ -248,6 +253,13 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
     client = await Client.connect(address, namespace=namespace)
     schedule_started = False
+    try:
+        await client.get_schedule_handle("ensemble-nudge-schedule").describe()
+        schedule_started = True
+        print("[EnsembleAgent] Found existing nudge schedule")
+    except RPCError as err:
+        if err.status != RPCStatusCode.NOT_FOUND:
+            raise
 
     # Streaming strategy signals requires an indefinite timeout
     timeout = aiohttp.ClientTimeout(total=None)
@@ -273,6 +285,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     nonlocal schedule_started
                     async for symbols in _stream_selected_pairs(http_session, base_url):
                         pairs_ref["pairs"] = symbols
+                        print(f"[EnsembleAgent] New trading pairs: {symbols}")
                         if not schedule_started:
                             await _ensure_schedule(client)
                             schedule_started = True
@@ -312,12 +325,17 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             for tool in tools
                         ]
                     while True:
-                        response = openai_client.chat.completions.create(
-                            model=os.environ.get("OPENAI_MODEL", "o4-mini"),
-                            messages=conversation,
-                            tools=openai_tools,
-                            tool_choice="auto",
-                        )
+                        try:
+                            response = openai_client.chat.completions.create(
+                                model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+                                messages=conversation,
+                                tools=openai_tools,
+                                tool_choice="auto",
+                            )
+                        except Exception as exc:
+                            print(f"[EnsembleAgent] LLM request failed: {exc}")
+                            await asyncio.sleep(5)
+                            continue
                         msg = response.choices[0].message
 
                         # Newer versions of the OpenAI SDK return a ChatCompletionMessage

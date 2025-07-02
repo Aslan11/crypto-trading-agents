@@ -1,12 +1,7 @@
+__all__ = ["Service", "docker_service"]
+
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-try:
-    from importlib import import_module
-    _orig = import_module('temporalio.testing')
-    for attr in dir(_orig):
-        globals()[attr] = getattr(_orig, attr)
-except Exception:
-    _orig = None
 
 @dataclass
 class Service:

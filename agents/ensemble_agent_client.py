@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 from contextlib import suppress
 import aiohttp
 import openai
@@ -9,7 +9,6 @@ import secrets
 from datetime import timedelta
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.types import CallToolResult, TextContent
 from temporalio.client import (
     Client,
     Schedule,
@@ -19,7 +18,6 @@ from temporalio.client import (
 )
 from temporalio.service import RPCError, RPCStatusCode
 from tools.ensemble_nudge import EnsembleNudgeWorkflow
-import time
 
 ALLOWED_TOOLS = {
     "place_mock_order",
@@ -43,63 +41,6 @@ SYSTEM_PROMPT = (
 )
 
 
-def _tool_result_data(result: Any) -> Any:
-    """Return JSON-friendly data from a tool call result."""
-    if isinstance(result, CallToolResult):
-        if result.content:
-            parsed: list[Any] = []
-            for item in result.content:
-                if isinstance(item, TextContent):
-                    try:
-                        parsed.append(json.loads(item.text))
-                    except Exception:
-                        parsed.append(item.text)
-                else:
-                    parsed.append(
-                        item.model_dump() if hasattr(item, "model_dump") else item
-                    )
-            return parsed if len(parsed) > 1 else parsed[0]
-        return []
-    if hasattr(result, "model_dump"):
-        return result.model_dump()
-    return result
-
-
-async def _latest_price(
-    session: aiohttp.ClientSession, base_url: str, symbol: str
-) -> float:
-    """Return the most recent market price for ``symbol``."""
-    url = base_url.rstrip("/") + "/signal/market_tick"
-    params = {"after": int(time.time()) - 60}
-    headers = {"Accept": "text/event-stream"}
-    last_price = 0.0
-    end_time = asyncio.get_event_loop().time() + 2
-    try:
-        async with session.get(url, params=params, headers=headers) as resp:
-            if resp.status != 200:
-                return 0.0
-            while asyncio.get_event_loop().time() < end_time:
-                line = await resp.content.readline()
-                if not line:
-                    break
-                text = line.decode().strip()
-                if not text or not text.startswith("data:"):
-                    continue
-                try:
-                    evt = json.loads(text[5:].strip())
-                except Exception:
-                    continue
-                if evt.get("symbol") != symbol:
-                    continue
-                data = evt.get("data", {})
-                if "last" in data:
-                    last_price = float(data["last"])
-                elif {"bid", "ask"}.issubset(data):
-                    last_price = (float(data["bid"]) + float(data["ask"])) / 2
-    except Exception:
-        return 0.0
-
-    return last_price
 
 
 async def _stream_nudges(
@@ -299,39 +240,15 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                 try:
 
                     async for _ in _stream_nudges(http_session, base_url):
-                        print("[EnsembleAgent] Checking portfolio status")
-                        status_result = await session.call_tool(
-                            "get_portfolio_status", {}
-                        )
-                        status = _tool_result_data(status_result)
-                        print(f"[EnsembleAgent] Portfolio status: {status}")
-
-                        markets: dict[str, float] = {}
-                        for symbol in pairs_ref["pairs"]:
-                            print(f"[EnsembleAgent] Fetching market data for {symbol}")
-                            ticks_result = await session.call_tool(
-                                "get_historical_ticks",
-                                {"symbol": symbol, "days": 1},
-                            )
-                            ticks = _tool_result_data(ticks_result)
-                            last_price = 0.0
-                            if isinstance(ticks, list) and ticks:
-                                last_price = float(ticks[-1].get("price", 0))
-                            else:
-                                last_price = await _latest_price(http_session, base_url, symbol)
-                            markets[symbol] = last_price
-                        if markets:
-                            print(f"[EnsembleAgent] Market snapshot: {markets}")
-
                         pair_str = (
                             ", ".join(pairs_ref["pairs"])
                             if pairs_ref["pairs"]
                             else "none"
                         )
                         signal_str = (
-                            f"Nudge received. Portfolio: {json.dumps(status)}. "
-                            f"Watching pairs: {pair_str}. Prices: {json.dumps(markets)}. "
-                            "Review market data and decide whether to trade."
+                            f"Nudge received. Pairs in focus: {pair_str}. "
+                            "Use available tools to inspect the portfolio and market "
+                            "and decide whether to trade."
                         )
                         conversation.append({"role": "user", "content": signal_str})
                         openai_tools = [

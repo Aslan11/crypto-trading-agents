@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 from contextlib import suppress
 import aiohttp
 import openai
@@ -17,6 +17,7 @@ from temporalio.client import (
     ScheduleSpec,
 )
 from temporalio.service import RPCError, RPCStatusCode
+from mcp.types import CallToolResult, TextContent
 from tools.ensemble_nudge import EnsembleNudgeWorkflow
 
 ALLOWED_TOOLS = {
@@ -31,6 +32,28 @@ PINK = "\033[95m"
 RESET = "\033[0m"
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+def _tool_result_data(result: Any) -> Any:
+    """Return JSON-friendly data from a tool call result."""
+    if isinstance(result, CallToolResult):
+        if result.content:
+            parsed: list[Any] = []
+            for item in result.content:
+                if isinstance(item, TextContent):
+                    try:
+                        parsed.append(json.loads(item.text))
+                    except Exception:
+                        parsed.append(item.text)
+                else:
+                    parsed.append(
+                        item.model_dump() if hasattr(item, "model_dump") else item
+                    )
+            return parsed if len(parsed) > 1 else parsed[0]
+        return []
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    return result
 
 SYSTEM_PROMPT = (
     "You are a strategy ensemble agent. Every 30 seconds you are nudged to review "
@@ -245,8 +268,25 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             if pairs_ref["pairs"]
                             else "none"
                         )
+                        status_result = await session.call_tool("get_portfolio_status", {})
+                        status = _tool_result_data(status_result)
+                        prices: dict[str, float] = {}
+                        for sym in pairs_ref["pairs"]:
+                            try:
+                                ticks = await session.call_tool(
+                                    "get_historical_ticks",
+                                    {"symbol": sym, "days": 1},
+                                )
+                                tick_data = _tool_result_data(ticks)
+                                if tick_data:
+                                    prices[sym] = float(tick_data[-1]["price"])
+                            except Exception as exc:
+                                print(f"[EnsembleAgent] Price fetch failed for {sym}: {exc}")
+                        price_str = ", ".join(f"{s}: {p}" for s, p in prices.items()) or "none"
                         signal_str = (
                             f"Nudge received. Pairs in focus: {pair_str}. "
+                            f"Portfolio: {json.dumps(status)}. "
+                            f"Latest prices: {price_str}. "
                             "Use available tools to inspect the portfolio and market "
                             "and decide whether to trade."
                         )
@@ -262,19 +302,19 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             }
                             for tool in tools
                         ]
-                    while True:
-                        try:
-                            response = openai_client.chat.completions.create(
-                                model=os.environ.get("OPENAI_MODEL", "o4-mini"),
-                                messages=conversation,
-                                tools=openai_tools,
-                                tool_choice="auto",
-                            )
-                        except Exception as exc:
-                            print(f"[EnsembleAgent] LLM request failed: {exc}")
-                            await asyncio.sleep(5)
-                            continue
-                        msg = response.choices[0].message
+                        while True:
+                            try:
+                                response = openai_client.chat.completions.create(
+                                    model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+                                    messages=conversation,
+                                    tools=openai_tools,
+                                    tool_choice="auto",
+                                )
+                            except Exception as exc:
+                                print(f"[EnsembleAgent] LLM request failed: {exc}")
+                                await asyncio.sleep(5)
+                                continue
+                            msg = response.choices[0].message
 
                         # Newer versions of the OpenAI SDK return a ChatCompletionMessage
                         # object. Inspect its attributes instead of treating it like a

@@ -186,12 +186,21 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         for tool in tools
                     ]
                     while True:
-                        response = openai_client.chat.completions.create(
-                            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
-                            messages=conversation,
-                            tools=openai_tools,
-                            tool_choice="auto",
-                        )
+                        try:
+                            response = openai_client.chat.completions.create(
+                                model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                                messages=conversation,
+                                tools=openai_tools,
+                                tool_choice="auto",
+                            )
+                        except openai.RateLimitError as exc:
+                            retry = getattr(exc, "retry_after", 1.0)
+                            try:
+                                retry_delay = float(retry)
+                            except Exception:
+                                retry_delay = 1.0
+                            await asyncio.sleep(retry_delay)
+                            continue
                         msg = response.choices[0].message
 
                         # Newer versions of the OpenAI SDK return a ChatCompletionMessage

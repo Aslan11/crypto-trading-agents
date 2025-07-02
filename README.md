@@ -111,11 +111,9 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    ```
    The `broker_agent_client` does this automatically once you select trading pairs.
 3. `start_market_stream` records ticks to the `market_tick` signal.
-4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
-5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
-6. The ensemble agent approves intents with `pre_trade_risk_check`, then
-   immediately calls `place_mock_order` to record a fill in the
-   `ExecutionLedgerWorkflow`.
+4. A Temporal schedule triggers `EnsembleNudgeWorkflow` every 30 seconds.
+5. The ensemble agent reviews portfolio state and market data to decide whether
+   to trade using `pre_trade_risk_check` and `place_mock_order`.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*
@@ -129,7 +127,7 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.
-- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK. Use `subscribe_vectors(symbol)` from `agents.feature_engineering_service` to stream processed feature rows into your strategy logic.
+- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK.
 - Unit-test determinism with `make replay` to replay recent workflows.
 - Hot-reload – both MCP server and Python workers use `--watch` for instant feedback.
 - Deploy – push to `main`; CI builds a Docker image and promotes to your Temporal namespace.

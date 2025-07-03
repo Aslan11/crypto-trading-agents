@@ -38,6 +38,18 @@ class App:
     def streamable_http_app(self):
         return self
 
+    def run(self, transport: str = "streamable-http") -> None:
+        """Start a stub server that simply blocks forever."""
+        print(
+            f"Starting stub MCP server on {self.settings.host}:{self.settings.port} ({transport})"
+        )
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
+
 app = App("crypto-trading-server")
 
 # Import workflow classes

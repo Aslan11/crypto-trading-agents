@@ -26,12 +26,9 @@ fi
 # │ temporal dev  │ mcp_server/app.py      │
 # ├───────────────┼────────────────────────┤
 # │ Pane 1        │ Pane 3                 │
-# │ worker/main.py│ feature_engineering_service.py │
+# │ worker/main.py│ broker_agent_client.py │
 # ├───────────────┼────────────────────────┤
-# │ Pane 5        │ Pane 4                 │
-# │ broker_agent_client.py │ momentum_service.py      │
-# ├───────────────┼────────────────────────┤
-# │ Pane 6        │ Pane 7                 │
+# │ Pane 4        │ Pane 5                 │
 # │ ensemble_agent_client.py │ ticker_ui_service.py    │
 # └────────────────────────────────────────┘
 ###############################################################################

@@ -44,12 +44,15 @@ def _tool_result_data(result: Any) -> Any:
                     except Exception:
                         parsed.append(item.text)
                 else:
-                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
+                    parsed.append(
+                        item.model_dump() if hasattr(item, "model_dump") else item
+                    )
             return parsed if len(parsed) > 1 else parsed[0]
         return []
     if hasattr(result, "model_dump"):
         return result.model_dump()
     return result
+
 
 async def _latest_price(
     session: aiohttp.ClientSession, base_url: str, symbol: str
@@ -86,6 +89,86 @@ async def _latest_price(
         return 0.0
 
     return last_price
+
+
+async def _evaluate_symbol(
+    symbol: str,
+    session: ClientSession,
+    openai_tools: list[dict[str, Any]],
+    http_session: aiohttp.ClientSession,
+    base_url: str,
+) -> None:
+    """Evaluate one trading pair using the ensemble agent LLM."""
+    conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+    wake_ts = int(time.time())
+    price = await _latest_price(http_session, base_url, symbol)
+    prompt = (
+        f"Periodic check for {symbol} @ {wake_ts}. Latest price: {price}. "
+        "Decide whether to BUY, SELL, or hold one unit using the available tools."
+    )
+    conversation.append({"role": "user", "content": prompt})
+
+    while True:
+        response = openai_client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+            messages=conversation,
+            tools=openai_tools,
+            tool_choice="auto",
+        )
+        msg = response.choices[0].message
+
+        if getattr(msg, "tool_calls", None):
+            conversation.append(
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+                }
+            )
+            for tool_call in msg.tool_calls:
+                func_name = tool_call.function.name
+                func_args = json.loads(tool_call.function.arguments or "{}")
+                print(
+                    f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
+                )
+                result = await session.call_tool(func_name, func_args)
+                conversation.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": func_name,
+                        "content": json.dumps(result.model_dump()),
+                    }
+                )
+            continue
+
+        if getattr(msg, "function_call", None):
+            conversation.append(
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "function_call": msg.function_call.model_dump(),
+                }
+            )
+            func_name = msg.function_call.name
+            func_args = json.loads(msg.function_call.arguments or "{}")
+            print(
+                f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
+            )
+            result = await session.call_tool(func_name, func_args)
+            conversation.append(
+                {
+                    "role": "function",
+                    "name": func_name,
+                    "content": json.dumps(result.model_dump()),
+                }
+            )
+            continue
+
+        assistant_reply = msg.content or ""
+        conversation.append({"role": "assistant", "content": assistant_reply})
+        print(f"{PINK}[EnsembleAgent] Decision for {symbol}: {assistant_reply}{RESET}")
+        break
 
 
 async def run_ensemble_agent(
@@ -129,86 +212,21 @@ async def run_ensemble_agent(
                         print("[EnsembleAgent] Waiting for broker to select pairs")
                         await asyncio.sleep(interval_sec)
                         continue
-                    for symbol in symbols:
-                        conversation = [
-                            {"role": "system", "content": SYSTEM_PROMPT}
-                        ]
-                        wake_ts = int(time.time())
-                        price = await _latest_price(http_session, base_url, symbol)
-                        prompt = (
-                            f"Periodic check for {symbol} @ {wake_ts}. Latest price: {price}. "
-                            "Decide whether to BUY, SELL, or hold one unit using the available tools."
+
+                    tasks = [
+                        asyncio.create_task(
+                            _evaluate_symbol(
+                                symbol, session, openai_tools, http_session, base_url
+                            )
                         )
-                        conversation.append({"role": "user", "content": prompt})
-                        while True:
-                            response = openai_client.chat.completions.create(
-                                model=os.environ.get("OPENAI_MODEL", "o4-mini"),
-                                messages=conversation,
-                                tools=openai_tools,
-                                tool_choice="auto",
-                            )
-                            msg = response.choices[0].message
-
-                            if getattr(msg, "tool_calls", None):
-                                conversation.append(
-                                    {
-                                        "role": msg.role,
-                                        "content": msg.content,
-                                        "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
-                                    }
-                                )
-                                for tool_call in msg.tool_calls:
-                                    func_name = tool_call.function.name
-                                    func_args = json.loads(
-                                        tool_call.function.arguments or "{}"
-                                    )
-                                    print(
-                                        f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
-                                    )
-                                    result = await session.call_tool(func_name, func_args)
-                                    conversation.append(
-                                        {
-                                            "role": "tool",
-                                            "tool_call_id": tool_call.id,
-                                            "name": func_name,
-                                            "content": json.dumps(result.model_dump()),
-                                        }
-                                    )
-                                continue
-
-                            if getattr(msg, "function_call", None):
-                                conversation.append(
-                                    {
-                                        "role": msg.role,
-                                        "content": msg.content,
-                                        "function_call": msg.function_call.model_dump(),
-                                    }
-                                )
-                                func_name = msg.function_call.name
-                                func_args = json.loads(msg.function_call.arguments or "{}")
-                                print(
-                                    f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
-                                )
-                                result = await session.call_tool(func_name, func_args)
-                                conversation.append(
-                                    {
-                                        "role": "function",
-                                        "name": func_name,
-                                        "content": json.dumps(result.model_dump()),
-                                    }
-                                )
-                                continue
-
-                            assistant_reply = msg.content or ""
-                            conversation.append(
-                                {"role": "assistant", "content": assistant_reply}
-                            )
-                            print(
-                                f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}"
-                            )
-                            break
+                        for symbol in symbols
+                    ]
+                    await asyncio.gather(*tasks)
 
                     await asyncio.sleep(interval_sec)
 
+
 if __name__ == "__main__":
-    asyncio.run(run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))
+    asyncio.run(
+        run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080"))
+    )

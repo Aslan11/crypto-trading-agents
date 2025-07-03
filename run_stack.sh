@@ -28,11 +28,11 @@ fi
 # │ Pane 1        │ Pane 3                 │
 # │ worker/main.py│ feature_engineering_service.py │
 # ├───────────────┼────────────────────────┤
-# │ Pane 5        │ Pane 4                 │
-# │ broker_agent_client.py │ momentum_service.py      │
+# │ Pane 4        │ Pane 5                 │
+# │ broker_agent_client.py │ ensemble_agent_client.py │
 # ├───────────────┼────────────────────────┤
-# │ Pane 6        │ Pane 7                 │
-# │ ensemble_agent_client.py │ ticker_ui_service.py    │
+# │ Pane 6        │                        │
+# │ ticker_ui_service.py                   │
 # └────────────────────────────────────────┘
 ###############################################################################
 
@@ -56,31 +56,24 @@ tmux select-pane  -t $WORKER_PANE
 FE_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $FE_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/feature_engineering_service.py' C-m
 
-# 5. Pane 4 – momentum strategy agent (split Pane 3 vertically ↓)
+# 5. Pane 4 – broker agent (split Pane 3 vertically ↓)
 tmux select-pane  -t $FE_PANE
-MOM_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $MOM_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/strategies/momentum_service.py' C-m
-
-tmux select-layout -t $SESSION:0 tiled
-
-# 6. Pane 5 – broker agent (split Pane 4 horizontally ←)
-tmux select-pane  -t $MOM_PANE
-BROKER_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+BROKER_PANE=$(tmux split-window -v -P -F "#{pane_id}")
 tmux send-keys    -t $BROKER_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/broker_agent_client.py' C-m
 
-# 7. Pane 6 – ensemble agent (split Pane 5 vertically ↓)
+# 6. Pane 5 – ensemble agent (split Pane 4 horizontally ←)
 tmux select-pane  -t $BROKER_PANE
-ENS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
+ENS_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble_agent_client.py' C-m
 
-# 8. Pane 7 – ticker UI (split Pane 6 horizontally →)
+# 7. Pane 6 – ticker UI (split Pane 5 vertically ↓)
 tmux select-pane  -t $ENS_PANE
-UI_PANE=$(tmux split-window -h -P -F "#{pane_id}")
+UI_PANE=$(tmux split-window -v -P -F "#{pane_id}")
 tmux send-keys    -t $UI_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python ticker_ui_service.py' C-m
 
-# 10. Arrange all panes into a tiled layout for equal sizing
+# 8. Arrange all panes into a tiled layout for equal sizing
 tmux select-layout -t $SESSION:0 tiled
 
-# 11. Attach user to session
+# 9. Attach user to session
 tmux select-pane -t $SESSION:0.0    # focus top-left pane
 exec tmux attach -t $SESSION

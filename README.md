@@ -57,7 +57,6 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
 | `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
-| `evaluate_strategy_momentum` | Log momentum signals (optional cooldown)     | Feature vector        |
 | `pre_trade_risk_check`      | Validate intents against simple VaR limits     | Order intents         |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
@@ -112,10 +111,10 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    The `broker_agent_client` does this automatically once you select trading pairs.
 3. `start_market_stream` records ticks to the `market_tick` signal.
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
-5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
-6. The ensemble agent approves intents with `pre_trade_risk_check`, then
-   immediately calls `place_mock_order` to record a fill in the
-   `ExecutionLedgerWorkflow`.
+5. The ensemble agent periodically reviews recent ticks using `get_historical_ticks`
+   and portfolio status via `get_portfolio_status`. It then decides whether to
+   trade, running `pre_trade_risk_check` and optionally `place_mock_order` to
+   record a mock fill in the `ExecutionLedgerWorkflow`.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*

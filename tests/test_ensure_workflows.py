@@ -8,10 +8,6 @@ from agents.feature_engineering_service import (
     _ensure_workflow as ensure_feature,
     FEATURE_WF_ID,
 )
-from agents.strategies.momentum_service import (
-    _ensure_workflow as ensure_momentum,
-    MOMENTUM_WF_ID,
-)
 
 
 @pytest.mark.asyncio
@@ -23,11 +19,7 @@ async def test_agents_auto_start_workflows():
             os.environ["TEMPORAL_ADDRESS"], namespace=os.environ["TEMPORAL_NAMESPACE"]
         )
 
-        for ensure, wf_id in [
-            (ensure_feature, FEATURE_WF_ID),
-            (ensure_momentum, MOMENTUM_WF_ID),
-        ]:
-            await ensure(client)
-            handle = client.get_workflow_handle(wf_id)
-            desc = await handle.describe()
-            assert desc.workflow_id == wf_id
+        await ensure_feature(client)
+        handle = client.get_workflow_handle(FEATURE_WF_ID)
+        desc = await handle.describe()
+        assert desc.workflow_id == FEATURE_WF_ID

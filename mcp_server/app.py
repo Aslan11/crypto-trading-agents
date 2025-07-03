@@ -37,6 +37,9 @@ _client_lock = asyncio.Lock()
 # Simple in-memory signal log for backward compatibility
 signal_log: dict[str, list[dict]] = {}
 
+# Latest trading pairs selected by the broker agent
+selected_symbols: list[str] = []
+
 
 async def get_temporal_client() -> Client:
     """Connect to Temporal server (lazy singleton)."""
@@ -85,7 +88,15 @@ async def start_market_stream(
     symbols: List[str], interval_sec: int = 1
 ) -> Dict[str, str]:
     """Convenience wrapper around ``subscribe_cex_stream``."""
+    global selected_symbols
+    selected_symbols = list(symbols)
     return await subscribe_cex_stream(symbols, interval_sec)
+
+
+@app.tool(annotations={"title": "Get Selected Symbols", "readOnlyHint": True})
+async def get_selected_symbols() -> List[str]:
+    """Return the latest trading pairs selected by the broker."""
+    return list(selected_symbols)
 
 
 @app.tool(annotations={"title": "Evaluate Momentum Strategy", "readOnlyHint": True})

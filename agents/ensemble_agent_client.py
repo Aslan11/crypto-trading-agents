@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from typing import Any, List
+from typing import Any
 import aiohttp
 import openai
 from mcp import ClientSession
@@ -26,7 +26,9 @@ SYSTEM_PROMPT = (
     "construct an intent with fields `symbol`, `side`, `qty`, `price` and `ts` "
     "and pass it to `pre_trade_risk_check`. If approved, decide whether to "
     "execute it via `place_mock_order` without waiting for human confirmation, "
-    "then briefly explain your decision and the outcome."
+    "then briefly explain your decision and the outcome. "
+    "Use `get_selected_symbols` to know which trading pairs the broker has "
+    "chosen before evaluating the market."
 )
 
 
@@ -88,14 +90,11 @@ async def _latest_price(
 
 async def run_ensemble_agent(
     server_url: str = "http://localhost:8080",
-    symbols: List[str] | None = None,
     interval_sec: int = 30,
 ) -> None:
     """Periodically evaluate market data and make trading decisions."""
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp"
-
-    symbols = symbols or ["BTC/USD"]
     timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
         async with streamablehttp_client(mcp_url) as (
@@ -124,6 +123,12 @@ async def run_ensemble_agent(
                 )
 
                 while True:
+                    result = await session.call_tool("get_selected_symbols", {})
+                    symbols = _tool_result_data(result) or []
+                    if not isinstance(symbols, list) or not symbols:
+                        print("[EnsembleAgent] Waiting for broker to select pairs")
+                        await asyncio.sleep(interval_sec)
+                        continue
                     for symbol in symbols:
                         conversation = [
                             {"role": "system", "content": SYSTEM_PROMPT}

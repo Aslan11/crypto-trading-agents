@@ -25,7 +25,7 @@ SYSTEM_PROMPT = (
     "review cash balances, open positions and entry prices. Use this information to "
     "validate whether a BUY or SELL makes sense. Do your best to avoid selling below "
     "the entry price whenever possible."
-    "Before deciding, also call `get_historical_ticks` to review recent price data and infer performance yourself. "
+    "Before deciding, also call `get_all_historical_ticks` to review recent price data and infer performance yourself. "
     "Once `pre_trade_risk_check` approves an intent, "
     "decide whether or not it makes sense to execute it via `place_mock_order` "
     "without waiting for human confirmation, then briefly explain your decision & the outcome."

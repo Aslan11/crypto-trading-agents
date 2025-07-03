@@ -135,32 +135,6 @@ async def place_mock_order(intent: Dict[str, Any]) -> Dict[str, Any]:
         pass
     return fill
 
-
-@app.tool(
-    annotations={
-        "title": "Sign and Send Transaction",
-        "readOnlyHint": False,
-        "openWorldHint": True,
-    }
-)
-async def sign_and_send_tx(
-    raw_tx: Dict[str, Any], wallet_label: str, rpc_url: str
-) -> Dict[str, str]:
-    """Sign an EVM transaction and broadcast it."""
-    client = await get_temporal_client()
-    workflow_id = f"tx-{secrets.token_hex(4)}"
-    logger.info("Signing and sending tx via workflow %s", workflow_id)
-    handle = await client.start_workflow(
-        SignAndSendTx.run,
-        args=[raw_tx, wallet_label, rpc_url],
-        id=workflow_id,
-        task_queue="mcp-tools",
-    )
-    result: Dict[str, str] = await handle.result()
-    logger.info("Tx workflow %s completed", workflow_id)
-    return result
-
-
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
 async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dict[str, float]]:
     """Return historical ticks for ``symbol`` fetched from its feature workflow.

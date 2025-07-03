@@ -17,17 +17,13 @@ openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 SYSTEM_PROMPT = (
     "You are a strategy ensemble agent. You periodically evaluate the portfolio "
     "and recent market data to decide whether to trade. You have tools for "
-    "fetching portfolio status, retrieving historical ticks, performing risk "
-    "checks and placing mock orders. Always call these tools yourself. "
-    "Before approving or rejecting any intent, call `get_portfolio_status` to "
-    "review cash balances, open positions and entry prices. Use "
-    "`get_historical_ticks` to inspect recent prices. When you want to trade, "
-    "construct an intent with fields `symbol`, `side`, `qty`, `price` and `ts` "
-    "and pass it to `pre_trade_risk_check`. If approved, decide whether to "
-    "execute it via `place_mock_order` without waiting for human confirmation, "
-    "then briefly explain your decision and the outcome. "
-    "Use `get_selected_symbols` to know which trading pairs the broker has "
-    "chosen before evaluating the market."
+    "fetching portfolio status, retrieving historical ticks, placing mock orders "
+    "and checking which pairs the broker has selected. Always call these tools "
+    "yourself. Before making a decision, use `get_portfolio_status` to review "
+    "cash balances and open positions and `get_historical_ticks` to inspect "
+    "recent prices. Construct an intent with fields `symbol`, `side`, `qty`, "
+    "`price` and `ts` and submit it to `place_mock_order` when you want to "
+    "trade. Use `get_selected_symbols` to know which pairs to evaluate."
 )
 
 
@@ -151,6 +147,12 @@ async def run_ensemble_agent(
             await session.initialize()
             tools_resp = await session.list_tools()
             tools = tools_resp.tools
+            allowed = {
+                "get_selected_symbols",
+                "place_mock_order",
+                "get_historical_ticks",
+                "get_portfolio_status",
+            }
             openai_tools = [
                 {
                     "type": "function",
@@ -161,8 +163,7 @@ async def run_ensemble_agent(
                     },
                 }
                 for tool in tools
-                if tool.name
-                not in {"get_selected_symbols", "get_portfolio_status", "get_historical_ticks"}
+                if tool.name in allowed
             ]
             print(
                 "[EnsembleAgent] Connected to MCP server with tools:",

@@ -114,9 +114,9 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. Every 30 seconds the ensemble agent checks the selected symbols and the
    current portfolio once, then fetches historical ticks for each pair in
-   parallel. It feeds that data to the LLM which may call
-   `pre_trade_risk_check` and optionally `place_mock_order` to record a mock
-   fill in the `ExecutionLedgerWorkflow`.
+   parallel. It feeds that data to the LLM which may review prices and
+   optionally call `place_mock_order` to record a mock fill in the
+   `ExecutionLedgerWorkflow`.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*

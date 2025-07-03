@@ -21,6 +21,7 @@ from tools.strategy_signal import EvaluateStrategyMomentum
 from tools.risk import PreTradeRiskCheck
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
+from tools.historical_data import FetchHistoricalTicks
 from agents.workflows import ExecutionLedgerWorkflow
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -182,7 +183,9 @@ async def sign_and_send_tx(
 
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
-async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dict[str, float]]:
+async def get_historical_ticks(
+    symbol: str, days: int | None = None
+) -> List[Dict[str, float]]:
     """Return historical ticks for ``symbol`` fetched from its feature workflow.
 
     Parameters
@@ -207,12 +210,29 @@ async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dic
             return []
         raise
 
-    ticks = [
-        {"ts": int(t["ts"]), "price": float(t["price"])}
-        for t in result
-    ]
+    ticks = [{"ts": int(t["ts"]), "price": float(t["price"])} for t in result]
     logger.info("Retrieved %d ticks for %s", len(ticks), symbol)
     return ticks
+
+
+@app.tool(annotations={"title": "Get All Historical Ticks", "readOnlyHint": True})
+async def get_all_historical_ticks(
+    symbols: List[str], days: int | None = None
+) -> Dict[str, List[Dict[str, float]]]:
+    """Return historical ticks for multiple symbols via a workflow."""
+
+    client = await get_temporal_client()
+    workflow_id = f"all-ticks-{secrets.token_hex(4)}"
+    logger.info("Starting FetchHistoricalTicks workflow %s", workflow_id)
+    handle = await client.start_workflow(
+        FetchHistoricalTicks.run,
+        args=[symbols, days],
+        id=workflow_id,
+        task_queue="mcp-tools",
+    )
+    result: Dict[str, List[Dict[str, float]]] = await handle.result()
+    logger.info("Historical tick workflow %s completed", workflow_id)
+    return result
 
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})

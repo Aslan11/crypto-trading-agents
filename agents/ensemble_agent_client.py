@@ -13,6 +13,13 @@ ORANGE = "\033[33m"
 PINK = "\033[95m"
 RESET = "\033[0m"
 
+# Tools this agent is allowed to call
+ALLOWED_TOOLS = {
+    "place_mock_order",
+    "get_historical_ticks",
+    "get_portfolio_status",
+}
+
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
@@ -134,7 +141,8 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 tools_resp = await session.list_tools()
-                tools = tools_resp.tools
+                all_tools = tools_resp.tools
+                tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
                 conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                 print(
                     "[EnsembleAgent] Connected to MCP server with tools:",
@@ -210,6 +218,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 )
                                 if func_name == "place_mock_order" and "intent" not in func_args:
                                     func_args["intent"] = intent
+                                if func_name not in ALLOWED_TOOLS:
+                                    print(f"[EnsembleAgent] Tool not allowed: {func_name}")
+                                    continue
                                 print(
                                     f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                                 )
@@ -236,6 +247,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             func_args = json.loads(msg.function_call.arguments or "{}")
                             if func_name == "place_mock_order" and "intent" not in func_args:
                                 func_args["intent"] = intent
+                            if func_name not in ALLOWED_TOOLS:
+                                print(f"[EnsembleAgent] Tool not allowed: {func_name}")
+                                continue
                             print(
                                 f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                             )

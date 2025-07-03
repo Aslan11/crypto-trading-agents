@@ -2,7 +2,6 @@ import os
 import json
 import asyncio
 from typing import Any
-import aiohttp
 import openai
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -54,56 +53,21 @@ def _tool_result_data(result: Any) -> Any:
     return result
 
 
-async def _latest_price(
-    session: aiohttp.ClientSession, base_url: str, symbol: str
-) -> float:
-    """Return the most recent market price for ``symbol``."""
-    url = base_url.rstrip("/") + "/signal/market_tick"
-    params = {"after": int(time.time()) - 60}
-    headers = {"Accept": "text/event-stream"}
-    last_price = 0.0
-    end_time = asyncio.get_event_loop().time() + 2
-    try:
-        async with session.get(url, params=params, headers=headers) as resp:
-            if resp.status != 200:
-                return 0.0
-            while asyncio.get_event_loop().time() < end_time:
-                line = await resp.content.readline()
-                if not line:
-                    break
-                text = line.decode().strip()
-                if not text or not text.startswith("data:"):
-                    continue
-                try:
-                    evt = json.loads(text[5:].strip())
-                except Exception:
-                    continue
-                if evt.get("symbol") != symbol:
-                    continue
-                data = evt.get("data", {})
-                if "last" in data:
-                    last_price = float(data["last"])
-                elif {"bid", "ask"}.issubset(data):
-                    last_price = (float(data["bid"]) + float(data["ask"])) / 2
-    except Exception:
-        return 0.0
-
-    return last_price
-
 
 async def _evaluate_symbol(
     symbol: str,
     session: ClientSession,
     openai_tools: list[dict[str, Any]],
-    http_session: aiohttp.ClientSession,
-    base_url: str,
+    portfolio: dict[str, Any],
+    ticks: list[dict[str, float]],
 ) -> None:
     """Evaluate one trading pair using the ensemble agent LLM."""
     conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
     wake_ts = int(time.time())
-    price = await _latest_price(http_session, base_url, symbol)
+    last_price = ticks[-1]["price"] if ticks else 0.0
     prompt = (
-        f"Periodic check for {symbol} @ {wake_ts}. Latest price: {price}. "
+        f"Periodic check for {symbol} @ {wake_ts}. Portfolio: {json.dumps(portfolio)}. "
+        f"Latest price: {last_price}. Recent ticks: {json.dumps(ticks[-10:])}. "
         "Decide whether to BUY, SELL, or hold one unit using the available tools."
     )
     conversation.append({"role": "user", "content": prompt})
@@ -178,52 +142,66 @@ async def run_ensemble_agent(
     """Periodically evaluate market data and make trading decisions."""
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp"
-    timeout = aiohttp.ClientTimeout(total=None)
-    async with aiohttp.ClientSession(timeout=timeout) as http_session:
-        async with streamablehttp_client(mcp_url) as (
-            read_stream,
-            write_stream,
-            _,
-        ):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                tools_resp = await session.list_tools()
-                tools = tools_resp.tools
-                openai_tools = [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.inputSchema,
-                        },
-                    }
-                    for tool in tools
-                ]
-                print(
-                    "[EnsembleAgent] Connected to MCP server with tools:",
-                    [t.name for t in tools],
-                )
+    async with streamablehttp_client(mcp_url) as (
+        read_stream,
+        write_stream,
+        _,
+    ):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            tools_resp = await session.list_tools()
+            tools = tools_resp.tools
+            openai_tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.inputSchema,
+                    },
+                }
+                for tool in tools
+                if tool.name
+                not in {"get_selected_symbols", "get_portfolio_status", "get_historical_ticks"}
+            ]
+            print(
+                "[EnsembleAgent] Connected to MCP server with tools:",
+                [t.name for t in tools],
+            )
 
-                while True:
-                    result = await session.call_tool("get_selected_symbols", {})
-                    symbols = _tool_result_data(result) or []
-                    if not isinstance(symbols, list) or not symbols:
-                        print("[EnsembleAgent] Waiting for broker to select pairs")
-                        await asyncio.sleep(interval_sec)
-                        continue
-
-                    tasks = [
-                        asyncio.create_task(
-                            _evaluate_symbol(
-                                symbol, session, openai_tools, http_session, base_url
-                            )
-                        )
-                        for symbol in symbols
-                    ]
-                    await asyncio.gather(*tasks)
-
+            while True:
+                sel_res = await session.call_tool("get_selected_symbols", {})
+                symbols = _tool_result_data(sel_res) or []
+                if not isinstance(symbols, list) or not symbols:
+                    print("[EnsembleAgent] Waiting for broker to select pairs")
                     await asyncio.sleep(interval_sec)
+                    continue
+
+                port_res = await session.call_tool("get_portfolio_status", {})
+                portfolio = _tool_result_data(port_res)
+
+                async def fetch_ticks(sym: str) -> tuple[str, list[dict[str, float]]]:
+                    res = await session.call_tool(
+                        "get_historical_ticks", {"symbol": sym, "days": 1}
+                    )
+                    return sym, _tool_result_data(res)
+
+                tick_map = {
+                    sym: ticks
+                    for sym, ticks in await asyncio.gather(
+                        *(fetch_ticks(sym) for sym in symbols)
+                    )
+                }
+
+                eval_tasks = [
+                    asyncio.create_task(
+                        _evaluate_symbol(sym, session, openai_tools, portfolio, tick_map.get(sym, []))
+                    )
+                    for sym in symbols
+                ]
+                await asyncio.gather(*eval_tasks)
+
+                await asyncio.sleep(interval_sec)
 
 
 if __name__ == "__main__":

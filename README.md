@@ -112,9 +112,9 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    The `broker_agent_client` does this automatically once you select trading pairs.
 3. `start_market_stream` records ticks to the `market_tick` signal.
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
-5. The ensemble agent looks up the chosen pairs via `get_selected_symbols`, then
-   reviews recent ticks using `get_historical_ticks` and portfolio status via
-   `get_portfolio_status`. It decides whether to trade, running
+5. Every 30 seconds the ensemble agent checks the selected symbols and the
+   current portfolio once, then fetches historical ticks for each pair in
+   parallel. It feeds that data to the LLM which may call
    `pre_trade_risk_check` and optionally `place_mock_order` to record a mock
    fill in the `ExecutionLedgerWorkflow`.
 

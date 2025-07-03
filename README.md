@@ -58,7 +58,6 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 | `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
 | `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
 | `evaluate_strategy_momentum` | Log momentum signals (optional cooldown)     | Feature vector        |
-| `pre_trade_risk_check`      | Validate intents against simple VaR limits     | Order intents         |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
 | `SignAndSendTx`          | Sign and broadcast an EVM transaction          | Execution             |
@@ -113,8 +112,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 3. `start_market_stream` records ticks to the `market_tick` signal.
 4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
 5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
-6. The ensemble agent approves intents with `pre_trade_risk_check`, then
-   immediately calls `place_mock_order` to record a fill in the
+6. The ensemble agent calls `place_mock_order` to record a fill in the
    `ExecutionLedgerWorkflow`.
 
 

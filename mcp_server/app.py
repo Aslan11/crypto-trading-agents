@@ -18,7 +18,6 @@ from starlette.requests import Request
 # Import workflow classes
 from tools.market_data import SubscribeCEXStream
 from tools.strategy_signal import EvaluateStrategyMomentum
-from tools.risk import PreTradeRiskCheck
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
 from agents.workflows import ExecutionLedgerWorkflow
@@ -104,25 +103,6 @@ async def evaluate_strategy_momentum(
     )
     result = await handle.result()
     logger.info("Momentum workflow %s completed", workflow_id)
-    return result
-
-
-@app.tool(annotations={"title": "Pre-Trade Risk Check", "readOnlyHint": True})
-async def pre_trade_risk_check(
-    intent_id: str, intents: List[Dict[str, Any]]
-) -> Dict[str, str]:
-    """Run a pre-trade risk check on proposed order intents."""
-    client = await get_temporal_client()
-    workflow_id = f"risk-{intent_id}"
-    logger.info("Starting PreTradeRiskCheck %s for %d intents", intent_id, len(intents))
-    handle = await client.start_workflow(
-        PreTradeRiskCheck.run,
-        args=[intent_id, intents],
-        id=workflow_id,
-        task_queue="mcp-tools",
-    )
-    result: Dict[str, str] = await handle.result()
-    logger.info("Risk check %s completed with %s", workflow_id, result.get("status"))
     return result
 
 

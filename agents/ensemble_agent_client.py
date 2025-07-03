@@ -17,17 +17,15 @@ openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
     "You are a strategy ensemble agent. You take note of the current status of the portfolio, "
-    "aggregate trading signals from multiple strategies, "
-    "perform risk checks, and autonomously execute trades that pass those checks. "
-    "You have tools for fetching the current status of the portfolio, risk assessment, "
-    "broadcasting intents, and placing mock orders. Always call these tools yourself."
+    "aggregate trading signals from multiple strategies, and autonomously execute trades. "
+    "You have tools for fetching the current status of the portfolio, broadcasting intents, "
+    "and placing mock orders. Always call these tools yourself."
     "Before approving or rejecting any intent, always call `get_portfolio_status` to "
     "review cash balances, open positions and entry prices. Use this information to "
     "validate whether a BUY or SELL makes sense. Do your best to avoid selling below "
     "the entry price whenever possible."
     "Before deciding, also call `get_historical_ticks` to review recent price data and infer performance yourself. "
-    "Once `pre_trade_risk_check` approves an intent, "
-    "decide whether or not it makes sense to execute it via `place_mock_order` "
+    "Decide whether or not it makes sense to execute the intent via `place_mock_order` "
     "without waiting for human confirmation, then briefly explain your decision & the outcome."
 )
 
@@ -210,9 +208,6 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 func_args = json.loads(
                                     tool_call.function.arguments or "{}"
                                 )
-                                if func_name == "pre_trade_risk_check" and "intents" not in func_args:
-                                    func_args.setdefault("intent_id", intent_id)
-                                    func_args["intents"] = [intent]
                                 if func_name == "place_mock_order" and "intent" not in func_args:
                                     func_args["intent"] = intent
                                 print(
@@ -239,9 +234,6 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             )
                             func_name = msg.function_call.name
                             func_args = json.loads(msg.function_call.arguments or "{}")
-                            if func_name == "pre_trade_risk_check" and "intents" not in func_args:
-                                func_args.setdefault("intent_id", intent_id)
-                                func_args["intents"] = [intent]
                             if func_name == "place_mock_order" and "intent" not in func_args:
                                 func_args["intent"] = intent
                             print(

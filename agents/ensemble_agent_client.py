@@ -57,7 +57,9 @@ def _tool_result_data(result: Any) -> Any:
                     except Exception:
                         parsed.append(item.text)
                 else:
-                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
+                    parsed.append(
+                        item.model_dump() if hasattr(item, "model_dump") else item
+                    )
             return parsed if len(parsed) > 1 else parsed[0]
         return []
     if hasattr(result, "model_dump"):
@@ -77,7 +79,9 @@ async def _watch_symbols(
     headers = {"Accept": "text/event-stream"}
     while True:
         try:
-            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+            async with session.get(
+                url, params={"after": cursor}, headers=headers
+            ) as resp:
                 if resp.status != 200:
                     await asyncio.sleep(1)
                     continue
@@ -99,9 +103,7 @@ async def _watch_symbols(
                     cursor = max(cursor, ts)
                     last_seen[sym] = ts
                     now = int(time.time())
-                    new_set = {
-                        s for s, t in last_seen.items() if now - t < 10
-                    }
+                    new_set = {s for s, t in last_seen.items() if now - t < 10}
                     if new_set != symbols:
                         symbols.clear()
                         symbols.update(new_set)
@@ -119,7 +121,9 @@ async def _stream_nudges(
     headers = {"Accept": "text/event-stream"}
     while True:
         try:
-            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+            async with session.get(
+                url, params={"after": cursor}, headers=headers
+            ) as resp:
                 if resp.status != 200:
                     await asyncio.sleep(1)
                     continue
@@ -156,9 +160,13 @@ async def _ensure_schedule(client: Client) -> None:
     schedule = Schedule(
         action=ScheduleActionStartWorkflow(
             workflow="tools.ensemble_nudge.EnsembleNudgeWorkflow.run",
+            args=[],
+            id="ensemble-nudge-wf",
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         ),
-        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]),
+        spec=ScheduleSpec(
+            intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]
+        ),
     )
     await client.create_schedule(NUDGE_SCHEDULE_ID, schedule)
 
@@ -175,7 +183,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
             namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
         )
         symbols: Set[str] = set()
-        symbol_task = asyncio.create_task(_watch_symbols(http_session, base_url, symbols))
+        symbol_task = asyncio.create_task(
+            _watch_symbols(http_session, base_url, symbols)
+        )
         await _ensure_schedule(temporal)
 
         async with streamablehttp_client(mcp_url) as (
@@ -200,7 +210,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     print(f"[EnsembleAgent] Nudge @ {ts} for {sorted(symbols)}")
                     history: dict[str, Any] = {}
                     for sym in sorted(symbols):
-                        res = await session.call_tool("get_historical_ticks", {"symbol": sym, "days": 1})
+                        res = await session.call_tool(
+                            "get_historical_ticks", {"symbol": sym, "days": 1}
+                        )
                         history[sym] = _tool_result_data(res)
                     status_res = await session.call_tool("get_portfolio_status", {})
                     status = _tool_result_data(status_res)
@@ -243,7 +255,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                     tool_call["function"].get("arguments") or "{}"
                                 )
                                 if func_name not in ALLOWED_TOOLS:
-                                    print(f"[EnsembleAgent] Tool not allowed: {func_name}")
+                                    print(
+                                        f"[EnsembleAgent] Tool not allowed: {func_name}"
+                                    )
                                     continue
                                 print(
                                     f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
@@ -268,7 +282,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 }
                             )
                             func_name = msg["function_call"].get("name")
-                            func_args = json.loads(msg["function_call"].get("arguments") or "{}")
+                            func_args = json.loads(
+                                msg["function_call"].get("arguments") or "{}"
+                            )
                             if func_name not in ALLOWED_TOOLS:
                                 print(f"[EnsembleAgent] Tool not allowed: {func_name}")
                                 continue
@@ -289,10 +305,11 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         conversation.append(
                             {"role": "assistant", "content": assistant_reply}
                         )
-                        conversation = [
-                            {"role": "system", "content": SYSTEM_PROMPT}
-                        ]
+                        conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                         break
 
+
 if __name__ == "__main__":
-    asyncio.run(run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))
+    asyncio.run(
+        run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080"))
+    )

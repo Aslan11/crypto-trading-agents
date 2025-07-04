@@ -208,15 +208,31 @@ def _sse_listener(url: str, q: "queue.Queue[dict]", stop: threading.Event) -> No
             time.sleep(1)
 
 
+def _portfolio_poller(url: str, q: "queue.Queue[dict]", stop: threading.Event) -> None:
+    """Periodically fetch portfolio status and push value events."""
+    while not stop.is_set():
+        try:
+            resp = requests.post(url, json={}, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                q.put({"type": "portfolio_status", "ts": int(time.time()), "data": data})
+        except Exception:
+            pass
+        time.sleep(5)
+
 def _demo_source(q: "queue.Queue[dict]", stop: threading.Event) -> None:
     symbols = ["BTC-USD", "ETH-USD"]
     q.put({"type": "pairs", "symbols": symbols})
     t = 0
+    portfolio = 250000.0
     while not stop.is_set():
         for sym in symbols:
             base = 30000 if sym == "BTC-USD" else 2000
             price = base + math.sin(t / 10) * (base * 0.02)
             q.put({"type": "tick", "symbol": sym, "ts": int(time.time()), "price": price})
+        # simple oscillating portfolio value for demo mode
+        portfolio = 250000 + math.sin(t / 5) * 5000
+        q.put({"type": "portfolio_value", "ts": int(time.time()), "value": portfolio})
         t += 1
         time.sleep(1)
 
@@ -241,6 +257,10 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
 
     tabbar = TabBar()
     data: Dict[str, Deque[tuple[int, float]]] = {}
+    latest_price: Dict[str, float] = {}
+    portfolio_history: Deque[tuple[int, float]] = deque(maxlen=360)
+    tabbar.update(["Portfolio"])
+    data["Portfolio"] = portfolio_history
     chart = BrailleChart()
     last_draw = 0.0
 
@@ -251,9 +271,16 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
                 evt = q.get_nowait()
                 if evt.get("type") == "pairs":
                     symbols = evt.get("symbols", [])
-                    tabbar.update(symbols)
+                    tabbar.update(["Portfolio"] + symbols)
                     for s in symbols:
                         data.setdefault(s, deque(maxlen=360))
+                    data.setdefault("Portfolio", portfolio_history)
+                elif evt.get("type") == "portfolio_status":
+                    cash = evt.get("data", {}).get("cash", 0.0)
+                    positions = evt.get("data", {}).get("positions", {})
+                    ts = evt.get("ts", int(time.time()))
+                    value = cash + sum(float(q) * latest_price.get(sym, 0.0) for sym, q in positions.items())
+                    portfolio_history.append((ts, float(value)))
                 else:
                     sym = evt.get("symbol")
                     if not sym:
@@ -272,6 +299,7 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
                         ts_ms = evt.get("data", {}).get("timestamp")
                         ts = int(ts_ms / 1000) if ts_ms is not None else int(time.time())
                     if price is not None:
+                        latest_price[sym] = float(price)
                         data.setdefault(sym, deque(maxlen=360)).append((ts, float(price)))
         except queue.Empty:
             pass
@@ -310,6 +338,11 @@ def main() -> None:
         default="http://localhost:8080/signal/market_tick",
         help="SSE stream URL",
     )
+    parser.add_argument(
+        "--status-url",
+        default="http://localhost:8080/tools/get_portfolio_status",
+        help="Portfolio status polling URL",
+    )
     args = parser.parse_args()
 
     q: queue.Queue[dict] = queue.Queue()
@@ -317,9 +350,13 @@ def main() -> None:
 
     if args.demo:
         t = threading.Thread(target=_demo_source, args=(q, stop), daemon=True)
+        p = None
     else:
         t = threading.Thread(target=_sse_listener, args=(args.url, q, stop), daemon=True)
+        p = threading.Thread(target=_portfolio_poller, args=(args.status_url, q, stop), daemon=True)
     t.start()
+    if p is not None:
+        p.start()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
@@ -327,6 +364,8 @@ def main() -> None:
     curses.wrapper(run_curses, q, stop)
     stop.set()
     t.join()
+    if p is not None:
+        p.join()
 
 
 if __name__ == "__main__":

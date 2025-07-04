@@ -298,6 +298,9 @@ def run_curses(
     portfolio_history: Deque[tuple[int, float]] = deque(maxlen=360)
     tabbar.update(["Portfolio"])
     data["Portfolio"] = portfolio_history
+    portfolio_cash = 0.0
+    portfolio_positions: Dict[str, float] = {}
+    portfolio_entries: Dict[str, float] = {}
     chart = BrailleChart()
     last_draw = 0.0
 
@@ -314,16 +317,18 @@ def run_curses(
                     data.setdefault("Portfolio", portfolio_history)
                 elif evt.get("type") == "portfolio_status":
                     data_dict = evt.get("data", {})
-                    cash = data_dict.get("cash", 0.0)
-                    positions = data_dict.get("positions", {})
-                    entry_prices = data_dict.get("entry_prices", {})
-                    pnl = data_dict.get("pnl", 0.0)
+                    portfolio_cash = float(data_dict.get("cash", 0.0))
+                    portfolio_positions = {
+                        sym: float(qty) for sym, qty in data_dict.get("positions", {}).items()
+                    }
+                    portfolio_entries = {
+                        sym: float(p) for sym, p in data_dict.get("entry_prices", {}).items()
+                    }
                     ts = evt.get("ts", int(time.time()))
-                    entry_value = sum(
-                        float(qty) * float(entry_prices.get(sym, 0.0))
-                        for sym, qty in positions.items()
+                    value = portfolio_cash + sum(
+                        qty * latest_price.get(sym, portfolio_entries.get(sym, 0.0))
+                        for sym, qty in portfolio_positions.items()
                     )
-                    value = cash + entry_value + float(pnl)
                     portfolio_history.append((ts, float(value)))
                 elif evt.get("type") == "portfolio_value":
                     ts = evt.get("ts", int(time.time()))
@@ -351,9 +356,14 @@ def run_curses(
                         )
                     if price is not None:
                         latest_price[sym] = float(price)
-                        data.setdefault(sym, deque(maxlen=360)).append(
-                            (ts, float(price))
+                        data.setdefault(sym, deque(maxlen=360)).append((ts, float(price)))
+                        # update portfolio value using latest prices
+                        value = portfolio_cash + sum(
+                            qty
+                            * latest_price.get(symb, portfolio_entries.get(symb, 0.0))
+                            for symb, qty in portfolio_positions.items()
                         )
+                        portfolio_history.append((ts, float(value)))
         except queue.Empty:
             pass
 

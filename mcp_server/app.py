@@ -17,7 +17,6 @@ from starlette.requests import Request
 
 # Import workflow classes
 from tools.market_data import SubscribeCEXStream
-from tools.strategy_signal import EvaluateStrategyMomentum
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
 from agents.workflows import ExecutionLedgerWorkflow
@@ -87,23 +86,6 @@ async def start_market_stream(
     return await subscribe_cex_stream(symbols, interval_sec)
 
 
-@app.tool(annotations={"title": "Evaluate Momentum Strategy", "readOnlyHint": True})
-async def evaluate_strategy_momentum(
-    signal: Dict[str, Any], cooldown_sec: int = 0
-) -> Dict[str, Any]:
-    """Invoke the momentum strategy evaluation workflow."""
-    client = await get_temporal_client()
-    workflow_id = f"momentum-{secrets.token_hex(4)}"
-    logger.info("Evaluating momentum strategy: cooldown=%s", cooldown_sec)
-    handle = await client.start_workflow(
-        EvaluateStrategyMomentum.run,
-        args=[signal, cooldown_sec or None],
-        id=workflow_id,
-        task_queue="mcp-tools",
-    )
-    result = await handle.result()
-    logger.info("Momentum workflow %s completed", workflow_id)
-    return result
 
 
 @app.tool(

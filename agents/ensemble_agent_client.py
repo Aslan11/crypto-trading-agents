@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+from datetime import timedelta
 from typing import Any, AsyncIterator, Dict
 import aiohttp
 import openai
@@ -88,7 +89,7 @@ async def _ensure_schedule(client: Client) -> None:
         await handle.describe()
     except RPCError as err:
         if err.status == RPCStatusCode.NOT_FOUND:
-            spec = ScheduleSpec(intervals=[ScheduleIntervalSpec(every=30)])
+            spec = ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))])
             action = ScheduleActionStartWorkflow(
                 SendEnsembleNudge.run,
                 id="nudge-ensemble",

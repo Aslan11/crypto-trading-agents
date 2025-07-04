@@ -6,6 +6,7 @@ import aiohttp
 import openai
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
 import time
 
@@ -192,29 +193,29 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         for tool in tools
                     ]
                     while True:
-                        response = openai_client.chat.completions.create(
+                        msg = stream_chat_completion(
+                            openai_client,
                             model=os.environ.get("OPENAI_MODEL", "o4-mini"),
                             messages=conversation,
                             tools=openai_tools,
                             tool_choice="auto",
+                            prefix="[EnsembleAgent] Decision: ",
+                            color=PINK,
+                            reset=RESET,
                         )
-                        msg = response.choices[0].message
 
-                        # Newer versions of the OpenAI SDK return a ChatCompletionMessage
-                        # object. Inspect its attributes instead of treating it like a
-                        # dictionary.
-                        if getattr(msg, "tool_calls", None):
+                        if msg.get("tool_calls"):
                             conversation.append(
                                 {
-                                    "role": msg.role,
-                                    "content": msg.content,
-                                    "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+                                    "role": msg.get("role", "assistant"),
+                                    "content": msg.get("content"),
+                                    "tool_calls": msg["tool_calls"],
                                 }
                             )
-                            for tool_call in msg.tool_calls:
-                                func_name = tool_call.function.name
+                            for tool_call in msg["tool_calls"]:
+                                func_name = tool_call["function"]["name"]
                                 func_args = json.loads(
-                                    tool_call.function.arguments or "{}"
+                                    tool_call["function"].get("arguments") or "{}"
                                 )
                                 if func_name == "place_mock_order" and "intent" not in func_args:
                                     func_args["intent"] = intent
@@ -228,23 +229,23 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 conversation.append(
                                     {
                                         "role": "tool",
-                                        "tool_call_id": tool_call.id,
+                                        "tool_call_id": tool_call["id"],
                                         "name": func_name,
                                         "content": json.dumps(result.model_dump()),
                                     }
                                 )
                             continue
 
-                        if getattr(msg, "function_call", None):
+                        if msg.get("function_call"):
                             conversation.append(
                                 {
-                                    "role": msg.role,
-                                    "content": msg.content,
-                                    "function_call": msg.function_call.model_dump(),
+                                    "role": msg.get("role", "assistant"),
+                                    "content": msg.get("content"),
+                                    "function_call": msg["function_call"],
                                 }
                             )
-                            func_name = msg.function_call.name
-                            func_args = json.loads(msg.function_call.arguments or "{}")
+                            func_name = msg["function_call"].get("name")
+                            func_args = json.loads(msg["function_call"].get("arguments") or "{}")
                             if func_name == "place_mock_order" and "intent" not in func_args:
                                 func_args["intent"] = intent
                             if func_name not in ALLOWED_TOOLS:
@@ -263,11 +264,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             )
                             continue
 
-                        assistant_reply = msg.content or ""
+                        assistant_reply = msg.get("content", "")
                         conversation.append(
                             {"role": "assistant", "content": assistant_reply}
                         )
-                        print(f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}")
                         conversation = [
                             {"role": "system", "content": SYSTEM_PROMPT}
                         ]

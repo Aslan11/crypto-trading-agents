@@ -199,6 +199,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             messages=conversation,
                             tools=openai_tools,
                             tool_choice="auto",
+                            prefix="[EnsembleAgent] Decision: ",
+                            color=PINK,
+                            reset=RESET,
                         )
 
                         if msg.get("tool_calls"):
@@ -265,7 +268,6 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         conversation.append(
                             {"role": "assistant", "content": assistant_reply}
                         )
-                        print(f"{PINK}[EnsembleAgent] Decision: {assistant_reply}{RESET}")
                         conversation = [
                             {"role": "system", "content": SYSTEM_PROMPT}
                         ]

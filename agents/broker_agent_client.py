@@ -86,10 +86,12 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         _openai_client,
                         model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                         messages=conversation,
+                        prefix="[BrokerAgent] ",
+                        color=PINK,
+                        reset=RESET,
                     )
                     assistant_msg = msg_dict.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
-                    print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                 except Exception as exc:
                     logger.error("LLM request failed: %s", exc)
             else:
@@ -127,6 +129,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         messages=conversation,
                         tools=tools_payload,
                         tool_choice="auto",
+                        prefix="[BrokerAgent] ",
+                        color=PINK,
+                        reset=RESET,
                     )
                 except Exception as exc:
                     logger.error("LLM request failed: %s", exc)
@@ -161,10 +166,12 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                             model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                             messages=conversation,
                             tools=tools_payload,
+                            prefix="[BrokerAgent] ",
+                            color=PINK,
+                            reset=RESET,
                         )
                         assistant_msg = followup.get("content", "")
                         conversation.append({"role": "assistant", "content": assistant_msg})
-                        print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                     except Exception as exc:
                         logger.error("LLM request failed: %s", exc)
                         continue
@@ -193,17 +200,18 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                             model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                             messages=conversation,
                             tools=tools_payload,
+                            prefix="[BrokerAgent] ",
+                            color=PINK,
+                            reset=RESET,
                         )
                         assistant_msg = followup.get("content", "")
                         conversation.append({"role": "assistant", "content": assistant_msg})
-                        print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                     except Exception as exc:
                         logger.error("LLM request failed: %s", exc)
                         continue
                 else:
                     assistant_msg = msg_dict.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
-                    print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
 
                 if len(conversation) > 20:
                     conversation = [conversation[0]] + conversation[-19:]

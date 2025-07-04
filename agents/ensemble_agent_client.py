@@ -135,6 +135,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             active_symbols.add(sym)
 
                 async def process_nudges() -> None:
+                    nonlocal conversation
                     url = base_url + "/signal/ensemble_nudge"
                     async for _ in _stream_events(http_session, url):
                         if not active_symbols:

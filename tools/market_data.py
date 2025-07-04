@@ -6,7 +6,7 @@ import asyncio
 from datetime import timedelta
 import logging
 import os
-from typing import Any, List
+from typing import Any, List, Dict
 
 import aiohttp
 from pydantic import BaseModel
@@ -67,6 +67,32 @@ async def record_tick(tick: dict) -> None:
 class SubscribeCEXStream:
     """Periodically fetch tickers and broadcast them to children."""
 
+    def __init__(self) -> None:
+        self.symbols: list[str] = []
+        self._history: Dict[str, list[dict]] = {}
+
+    @workflow.query
+    def historical_ticks(self, symbol: str, since_ts: int = 0) -> list[dict]:
+        """Return stored ticks for ``symbol`` newer than ``since_ts``."""
+        ticks: list[dict] = []
+        for t in self._history.get(symbol, []):
+            ts_ms = t.get("timestamp")
+            if ts_ms is None:
+                continue
+            ts = int(ts_ms / 1000)
+            if ts < since_ts:
+                continue
+            if "last" in t:
+                price = float(t["last"])
+            elif {"bid", "ask"}.issubset(t):
+                price = (float(t["bid"]) + float(t["ask"])) / 2
+            else:
+                continue
+            ticks.append({"ts": ts, "price": price})
+        ticks.sort(key=lambda x: x["ts"])
+        logger.info("historical_ticks returning %d items for %s", len(ticks), symbol)
+        return ticks
+
     @workflow.run
     async def run(
         self,
@@ -75,8 +101,14 @@ class SubscribeCEXStream:
         max_cycles: int | None = None,
         continue_every: int = STREAM_CONTINUE_EVERY,
         history_limit: int = STREAM_HISTORY_LIMIT,
+        history: Dict[str, list[dict]] | None = None,
     ) -> None:
         """Stream tickers indefinitely, continuing as new periodically."""
+        self.symbols = list(symbols)
+        if history is not None:
+            self._history = {s: list(history.get(s, [])) for s in symbols}
+        else:
+            self._history = {s: [] for s in symbols}
         cycles = 0
         while True:
             tickers = await asyncio.gather(
@@ -89,10 +121,18 @@ class SubscribeCEXStream:
                     for symbol in symbols
                 ]
             )
+            wf_id = workflow.info().workflow_id
             for ticker in tickers:
+                symbol = ticker.get("symbol")
+                data = ticker.get("data", {})
+                if symbol:
+                    hist = self._history.setdefault(symbol, [])
+                    hist.append(data)
+                    if len(hist) > 1000:
+                        self._history[symbol] = hist[-1000:]
                 await workflow.execute_activity(
                     record_tick,
-                    ticker,
+                    {"workflow_id": wf_id, **ticker},
                     schedule_to_close_timeout=timedelta(seconds=5),
                 )
                 if hasattr(workflow, "signal_child_workflows"):
@@ -109,6 +149,7 @@ class SubscribeCEXStream:
                         max_cycles,
                         continue_every,
                         history_limit,
+                        self._history,
                     ]
                 )
             if cycles >= continue_every:
@@ -119,6 +160,7 @@ class SubscribeCEXStream:
                         max_cycles,
                         continue_every,
                         history_limit,
+                        self._history,
                     ]
                 )
             await workflow.sleep(interval_sec)

@@ -1,20 +1,21 @@
 import os
 import json
 import asyncio
-from typing import Any, AsyncIterator
+from datetime import timedelta
+from typing import Any, AsyncIterator, Dict
 import aiohttp
 import openai
+from temporalio.client import Client, RPCError, RPCStatusCode, Schedule, ScheduleSpec, ScheduleIntervalSpec, ScheduleActionStartWorkflow
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
-import time
+from agents.utils import stream_chat_completion
+from tools.ensemble_nudge import SendEnsembleNudge
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
 RESET = "\033[0m"
 
-# Tools this agent is allowed to call
 ALLOWED_TOOLS = {
     "place_mock_order",
     "get_historical_ticks",
@@ -24,22 +25,16 @@ ALLOWED_TOOLS = {
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are a strategy ensemble agent. You take note of the current status of the portfolio, "
-    "aggregate trading signals from multiple strategies, and autonomously execute trades. "
-    "You have tools for fetching the current status of the portfolio, broadcasting intents, "
-    "and placing mock orders. Always call these tools yourself."
-    "Before approving or rejecting any intent, always call `get_portfolio_status` to "
-    "review cash balances, open positions and entry prices. Use this information to "
-    "validate whether a BUY or SELL makes sense. Do your best to avoid selling below "
-    "the entry price whenever possible."
-    "Before deciding, also call `get_historical_ticks` to review recent price data and infer performance yourself. "
-    "Decide whether or not it makes sense to execute the intent via `place_mock_order` "
-    "without waiting for human confirmation, then briefly explain your decision & the outcome."
+    "You are an autonomous trading agent awakened every 30 seconds by a scheduler. "
+    "Use your tools to fetch historical price data and the current portfolio status "
+    "for all active trading pairs. Analyze the information and decide whether to "
+    "place buy or sell orders via `place_mock_order`. Always check `get_portfolio_status` "
+    "before trading and avoid selling below the entry price when possible. Respond "
+    "with a brief explanation of each decision."
 )
 
 
 def _tool_result_data(result: Any) -> Any:
-    """Return JSON-friendly data from a tool call result."""
     if isinstance(result, CallToolResult):
         if result.content:
             parsed: list[Any] = []
@@ -57,57 +52,18 @@ def _tool_result_data(result: Any) -> Any:
         return result.model_dump()
     return result
 
-async def _latest_price(
-    session: aiohttp.ClientSession, base_url: str, symbol: str
-) -> float:
-    """Return the most recent market price for ``symbol``."""
-    url = base_url.rstrip("/") + "/signal/market_tick"
-    params = {"after": int(time.time()) - 60}
-    headers = {"Accept": "text/event-stream"}
-    last_price = 0.0
-    end_time = asyncio.get_event_loop().time() + 2
-    try:
-        async with session.get(url, params=params, headers=headers) as resp:
-            if resp.status != 200:
-                return 0.0
-            while asyncio.get_event_loop().time() < end_time:
-                line = await resp.content.readline()
-                if not line:
-                    break
-                text = line.decode().strip()
-                if not text or not text.startswith("data:"):
-                    continue
-                try:
-                    evt = json.loads(text[5:].strip())
-                except Exception:
-                    continue
-                if evt.get("symbol") != symbol:
-                    continue
-                data = evt.get("data", {})
-                if "last" in data:
-                    last_price = float(data["last"])
-                elif {"bid", "ask"}.issubset(data):
-                    last_price = (float(data["bid"]) + float(data["ask"])) / 2
-    except Exception:
-        return 0.0
 
-    return last_price
-
-async def _stream_strategy_signals(
-    session: aiohttp.ClientSession, base_url: str
+async def _stream_events(
+    session: aiohttp.ClientSession, url: str
 ) -> AsyncIterator[dict]:
-    """Yield strategy signals from the MCP server."""
     cursor = 0
-    url = base_url.rstrip("/") + "/signal/strategy_signal"
     headers = {"Accept": "text/event-stream"}
-
     while True:
         try:
             async with session.get(url, params={"after": cursor}, headers=headers) as resp:
                 if resp.status != 200:
                     await asyncio.sleep(1)
                     continue
-
                 while True:
                     line = await resp.content.readline()
                     if not line:
@@ -126,152 +82,152 @@ async def _stream_strategy_signals(
         except Exception:
             await asyncio.sleep(1)
 
+
+async def _ensure_schedule(client: Client) -> None:
+    handle = client.get_schedule_handle("ensemble-nudge")
+    try:
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            spec = ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))])
+            action = ScheduleActionStartWorkflow(
+                SendEnsembleNudge.run,
+                id="nudge-ensemble",
+                task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+            )
+            await client.create_schedule("ensemble-nudge", Schedule(spec=spec, action=action))
+            print("[EnsembleAgent] Created schedule ensemble-nudge")
+        else:
+            raise
+
+
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
-    """Run the ensemble agent and react to strategy signals."""
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp"
-
-    # Streaming strategy signals requires an indefinite timeout
     timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
-        async with streamablehttp_client(mcp_url) as (
-            read_stream,
-            write_stream,
-            _,
-        ):
+        async with streamablehttp_client(mcp_url) as (read_stream, write_stream, _):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 tools_resp = await session.list_tools()
-                all_tools = tools_resp.tools
-                tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
+                tools = [t for t in tools_resp.tools if t.name in ALLOWED_TOOLS]
                 conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                 print(
                     "[EnsembleAgent] Connected to MCP server with tools:",
                     [t.name for t in tools],
                 )
 
-                async for incoming_signal in _stream_strategy_signals(
-                    http_session, base_url
-                ):
-                    intent = {
-                        "symbol": incoming_signal.get("symbol"),
-                        "side": incoming_signal.get("side"),
-                        "qty": 1.0,
-                        "ts": incoming_signal.get("ts"),
-                    }
-                    price = await _latest_price(http_session, base_url, intent["symbol"])
-                    intent["price"] = price
-                    status_result = await session.call_tool("get_portfolio_status", {})
-                    status = _tool_result_data(status_result)
-                    positions = status.get("positions", {}) if isinstance(status, dict) else {}
-                    cash = status.get("cash", 0.0) if isinstance(status, dict) else 0.0
-                    if (
-                        intent["side"] == "SELL"
-                        and positions.get(intent["symbol"], 0.0) <= 0.0
-                    ):
-                        print("[EnsembleAgent] Skipping SELL - no position")
-                        continue
-                    if intent["side"] == "BUY" and cash < price * intent["qty"]:
-                        print("[EnsembleAgent] Skipping BUY - insufficient cash")
-                        continue
-                    intent_id = f"{intent['side']}-{intent['symbol']}-{intent['ts']}"
-                    signal_str = (
-                        f"Strategy signal received: {json.dumps(incoming_signal)}. "
-                        f"Current portfolio: {json.dumps(status)}. "
-                        f"Latest price: {price}. Decide whether to approve this trade intent."
-                    )
-                    conversation.append({"role": "user", "content": signal_str})
-                    openai_tools = [
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": tool.name,
-                                "description": tool.description,
-                                "parameters": tool.inputSchema,
-                            },
-                        }
-                        for tool in tools
-                    ]
-                    while True:
-                        msg = stream_chat_completion(
-                            openai_client,
-                            model=os.environ.get("OPENAI_MODEL", "o4-mini"),
-                            messages=conversation,
-                            tools=openai_tools,
-                            tool_choice="auto",
-                            prefix="[EnsembleAgent] Decision: ",
-                            color=PINK,
-                            reset=RESET,
-                        )
+                temporal = await Client.connect(
+                    os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
+                    namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
+                )
+                await _ensure_schedule(temporal)
 
-                        if msg.get("tool_calls"):
-                            conversation.append(
-                                {
-                                    "role": msg.get("role", "assistant"),
-                                    "content": msg.get("content"),
-                                    "tool_calls": msg["tool_calls"],
-                                }
+                active_symbols: set[str] = set()
+
+                async def watch_ticks() -> None:
+                    url = base_url + "/signal/market_tick"
+                    async for tick in _stream_events(http_session, url):
+                        sym = tick.get("symbol")
+                        if sym:
+                            if sym not in active_symbols:
+                                print(f"[EnsembleAgent] Tracking pair {sym}")
+                            active_symbols.add(sym)
+
+                async def process_nudges() -> None:
+                    nonlocal conversation
+                    url = base_url + "/signal/ensemble_nudge"
+                    async for _ in _stream_events(http_session, url):
+                        if not active_symbols:
+                            continue
+                        print("[EnsembleAgent] Nudge received")
+                        portfolio_res = await session.call_tool("get_portfolio_status", {})
+                        portfolio = _tool_result_data(portfolio_res)
+                        history: Dict[str, Any] = {}
+                        for sym in sorted(active_symbols):
+                            h = await session.call_tool("get_historical_ticks", {"symbol": sym})
+                            history[sym] = _tool_result_data(h)
+                        user_msg = json.dumps({"portfolio": portfolio, "history": history, "symbols": sorted(active_symbols)})
+                        conversation.append({"role": "user", "content": user_msg})
+                        openai_tools = [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": t.name,
+                                    "description": t.description,
+                                    "parameters": t.inputSchema,
+                                },
+                            }
+                            for t in tools
+                        ]
+                        while True:
+                            msg = stream_chat_completion(
+                                openai_client,
+                                model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+                                messages=conversation,
+                                tools=openai_tools,
+                                tool_choice="auto",
+                                prefix="[EnsembleAgent] Decision: ",
+                                color=PINK,
+                                reset=RESET,
                             )
-                            for tool_call in msg["tool_calls"]:
-                                func_name = tool_call["function"]["name"]
-                                func_args = json.loads(
-                                    tool_call["function"].get("arguments") or "{}"
+
+                            if msg.get("tool_calls"):
+                                conversation.append(
+                                    {
+                                        "role": msg.get("role", "assistant"),
+                                        "content": msg.get("content"),
+                                        "tool_calls": msg["tool_calls"],
+                                    }
                                 )
-                                if func_name == "place_mock_order" and "intent" not in func_args:
-                                    func_args["intent"] = intent
+                                for call in msg["tool_calls"]:
+                                    func_name = call["function"]["name"]
+                                    func_args = json.loads(call["function"].get("arguments") or "{}")
+                                    if func_name not in ALLOWED_TOOLS:
+                                        print(f"[EnsembleAgent] Tool not allowed: {func_name}")
+                                        continue
+                                    print(f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}")
+                                    result = await session.call_tool(func_name, func_args)
+                                    conversation.append(
+                                        {
+                                            "role": "tool",
+                                            "tool_call_id": call.get("id"),
+                                            "name": func_name,
+                                            "content": json.dumps(result.model_dump()),
+                                        }
+                                    )
+                                continue
+
+                            if msg.get("function_call"):
+                                conversation.append(
+                                    {
+                                        "role": msg.get("role", "assistant"),
+                                        "content": msg.get("content"),
+                                        "function_call": msg["function_call"],
+                                    }
+                                )
+                                func_name = msg["function_call"].get("name")
+                                func_args = json.loads(msg["function_call"].get("arguments") or "{}")
                                 if func_name not in ALLOWED_TOOLS:
                                     print(f"[EnsembleAgent] Tool not allowed: {func_name}")
                                     continue
-                                print(
-                                    f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
-                                )
+                                print(f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}")
                                 result = await session.call_tool(func_name, func_args)
                                 conversation.append(
                                     {
-                                        "role": "tool",
-                                        "tool_call_id": tool_call["id"],
+                                        "role": "function",
                                         "name": func_name,
                                         "content": json.dumps(result.model_dump()),
                                     }
                                 )
-                            continue
-
-                        if msg.get("function_call"):
-                            conversation.append(
-                                {
-                                    "role": msg.get("role", "assistant"),
-                                    "content": msg.get("content"),
-                                    "function_call": msg["function_call"],
-                                }
-                            )
-                            func_name = msg["function_call"].get("name")
-                            func_args = json.loads(msg["function_call"].get("arguments") or "{}")
-                            if func_name == "place_mock_order" and "intent" not in func_args:
-                                func_args["intent"] = intent
-                            if func_name not in ALLOWED_TOOLS:
-                                print(f"[EnsembleAgent] Tool not allowed: {func_name}")
                                 continue
-                            print(
-                                f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
-                            )
-                            result = await session.call_tool(func_name, func_args)
-                            conversation.append(
-                                {
-                                    "role": "function",
-                                    "name": func_name,
-                                    "content": json.dumps(result.model_dump()),
-                                }
-                            )
-                            continue
 
-                        assistant_reply = msg.get("content", "")
-                        conversation.append(
-                            {"role": "assistant", "content": assistant_reply}
-                        )
-                        conversation = [
-                            {"role": "system", "content": SYSTEM_PROMPT}
-                        ]
-                        break
+                            conversation.append({"role": "assistant", "content": msg.get("content", "")})
+                            conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+                            break
+
+                await asyncio.gather(watch_ticks(), process_nudges())
+
 
 if __name__ == "__main__":
     asyncio.run(run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))

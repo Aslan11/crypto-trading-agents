@@ -24,17 +24,18 @@ Temporal supplies resilient workflows while MCP gives agents a shared, tool-base
 
 ## Architecture
 ```
-┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│ Market Data │ ──▶│ Feature Vectors  │ ──▶│ Strategy Agents │
-│   Streams   │    │     Store        │    └───────┬─────────┘
-└─────────────┘    └──────────────────┘            │ signals
-                                                   ▼
-                                         ┌──────────────────┐
-                                         │ Ensemble & Risk  │
-                                         └────────┬─────────┘
+┌─────────────┐
+│ Market Data │
+│   Streams   │
+└──────┬──────┘
+       │ ticks
+       ▼
+                                ┌──────────────────┐
+                                │ Ensemble & Risk  │
+                                └────────┬─────────┘
                                                   │ intents
                                                   ▼
-                                         ┌──────────────────┐
+                                        ┌──────────────────┐
                                          │    Intent Bus    │
                                          └────────┬─────────┘
                                                   │ intents
@@ -56,8 +57,6 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
-| `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
-| `evaluate_strategy_momentum` | Log momentum signals (optional cooldown)     | Feature vector        |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
 | `SignAndSendTx`          | Sign and broadcast an EVM transaction          | Execution             |
@@ -109,11 +108,11 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
      -d '{"symbols": ["BTC/USD"], "interval_sec": 1}'
    ```
    The `broker_agent_client` does this automatically once you select trading pairs.
-3. `start_market_stream` records ticks to the `market_tick` signal.
-4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
-5. The momentum service emits buy/sell signals using `evaluate_strategy_momentum` and continues processing while the tool runs.
-6. The ensemble agent calls `place_mock_order` to record a fill in the
-   `ExecutionLedgerWorkflow`.
+3. `start_market_stream` records ticks to the `market_tick` signal and stores them
+   inside its Temporal workflow for later queries.
+4. Every 30 seconds the ensemble agent fetches recent ticks via `get_historical_ticks`
+   along with the current portfolio state, then decides whether to place trades via
+   `place_mock_order`.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*
@@ -122,12 +121,12 @@ history growth. The default interval is one hour (3600 cycles) and can be
 changed by setting the `STREAM_CONTINUE_EVERY` environment variable. The workflow
 also checks its current history length and continues early when it exceeds
 `STREAM_HISTORY_LIMIT` (defaults to 9000 events).
-`ComputeFeatureVector` behaves the same way using the `VECTOR_CONTINUE_EVERY`
-and `VECTOR_HISTORY_LIMIT` environment variables.
+`subscribe_cex_stream` behaves the same way using the `STREAM_CONTINUE_EVERY`
+and `STREAM_HISTORY_LIMIT` environment variables.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.
-- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK. Use `subscribe_vectors(symbol)` from `agents.feature_engineering_service` to stream processed feature rows into your strategy logic.
+- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK.
 - Unit-test determinism with `make replay` to replay recent workflows.
 - Hot-reload – both MCP server and Python workers use `--watch` for instant feedback.
 - Deploy – push to `main`; CI builds a Docker image and promotes to your Temporal namespace.

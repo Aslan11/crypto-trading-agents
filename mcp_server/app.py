@@ -17,7 +17,6 @@ from starlette.requests import Request
 
 # Import workflow classes
 from tools.market_data import SubscribeCEXStream
-from tools.strategy_signal import EvaluateStrategyMomentum
 from tools.execution import PlaceMockOrder
 from tools.wallet import SignAndSendTx
 from agents.workflows import ExecutionLedgerWorkflow
@@ -35,6 +34,8 @@ _client_lock = asyncio.Lock()
 
 # Simple in-memory signal log for backward compatibility
 signal_log: dict[str, list[dict]] = {}
+# Map trading pairs to their stream workflow IDs
+stream_workflows: dict[str, str] = {}
 
 
 async def get_temporal_client() -> Client:
@@ -76,6 +77,8 @@ async def subscribe_cex_stream(
         raise
     logger.debug("Workflow handle created: %s", handle)
     logger.info("Workflow %s started run %s", workflow_id, handle.run_id)
+    for sym in symbols:
+        stream_workflows[sym] = workflow_id
     return {"workflow_id": workflow_id, "run_id": handle.run_id}
 
 
@@ -87,23 +90,6 @@ async def start_market_stream(
     return await subscribe_cex_stream(symbols, interval_sec)
 
 
-@app.tool(annotations={"title": "Evaluate Momentum Strategy", "readOnlyHint": True})
-async def evaluate_strategy_momentum(
-    signal: Dict[str, Any], cooldown_sec: int = 0
-) -> Dict[str, Any]:
-    """Invoke the momentum strategy evaluation workflow."""
-    client = await get_temporal_client()
-    workflow_id = f"momentum-{secrets.token_hex(4)}"
-    logger.info("Evaluating momentum strategy: cooldown=%s", cooldown_sec)
-    handle = await client.start_workflow(
-        EvaluateStrategyMomentum.run,
-        args=[signal, cooldown_sec or None],
-        id=workflow_id,
-        task_queue="mcp-tools",
-    )
-    result = await handle.result()
-    logger.info("Momentum workflow %s completed", workflow_id)
-    return result
 
 
 @app.tool(
@@ -137,7 +123,7 @@ async def place_mock_order(intent: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
 async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dict[str, float]]:
-    """Return historical ticks for ``symbol`` fetched from its feature workflow.
+    """Return recent ticks for ``symbol`` from its stream workflow.
 
     Parameters
     ----------
@@ -149,22 +135,23 @@ async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dic
     """
 
     cutoff = 0 if days is None else int(datetime.utcnow().timestamp()) - days * 86400
+
+    wf_id = stream_workflows.get(symbol)
+    if not wf_id:
+        logger.info("No stream workflow found for %s", symbol)
+        return []
+
     client = await get_temporal_client()
-    wf_id = f"feature-{symbol.replace('/', '-')}"
-    logger.info("Querying workflow %s for ticks >= %d", wf_id, cutoff)
     handle = client.get_workflow_handle(wf_id)
     try:
-        result = await handle.query("historical_ticks", cutoff)
+        ticks = await handle.query("historical_ticks", symbol=symbol, since_ts=cutoff)
     except RPCError as err:
         if err.status == RPCStatusCode.NOT_FOUND:
-            logger.warning("Feature workflow %s not found", wf_id)
+            logger.warning("Stream workflow %s not found", wf_id)
+            stream_workflows.pop(symbol, None)
             return []
         raise
 
-    ticks = [
-        {"ts": int(t["ts"]), "price": float(t["price"])}
-        for t in result
-    ]
     logger.info("Retrieved %d ticks for %s", len(ticks), symbol)
     return ticks
 

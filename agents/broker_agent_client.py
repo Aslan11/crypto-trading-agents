@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover - optional dependency
     _openai_client = None
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from .utils import stream_chat_completion
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
@@ -81,12 +82,11 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
 
             if _openai_client is not None:
                 try:
-                    response = _openai_client.chat.completions.create(
+                    msg_dict = stream_chat_completion(
+                        _openai_client,
                         model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                         messages=conversation,
                     )
-                    msg = response.choices[0].message
-                    msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
                     assistant_msg = msg_dict.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
                     print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
@@ -121,14 +121,13 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 ]
 
                 try:
-                    response = _openai_client.chat.completions.create(
+                    msg_dict = stream_chat_completion(
+                        _openai_client,
                         model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                         messages=conversation,
                         tools=tools_payload,
                         tool_choice="auto",
                     )
-                    msg = response.choices[0].message
-                    msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
                 except Exception as exc:
                     logger.error("LLM request failed: %s", exc)
                     continue
@@ -157,12 +156,13 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         )
 
                     try:
-                        followup = _openai_client.chat.completions.create(
+                        followup = stream_chat_completion(
+                            _openai_client,
                             model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                             messages=conversation,
                             tools=tools_payload,
                         )
-                        assistant_msg = followup.choices[0].message.content or ""
+                        assistant_msg = followup.get("content", "")
                         conversation.append({"role": "assistant", "content": assistant_msg})
                         print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                     except Exception as exc:
@@ -188,12 +188,13 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         continue
                     conversation.append({"role": "function", "name": func_name, "content": json.dumps(result_data)})
                     try:
-                        followup = _openai_client.chat.completions.create(
+                        followup = stream_chat_completion(
+                            _openai_client,
                             model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
                             messages=conversation,
                             tools=tools_payload,
                         )
-                        assistant_msg = followup.choices[0].message.content or ""
+                        assistant_msg = followup.get("content", "")
                         conversation.append({"role": "assistant", "content": assistant_msg})
                         print(f"{PINK}[BrokerAgent] {assistant_msg}{RESET}")
                     except Exception as exc:

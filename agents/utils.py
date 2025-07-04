@@ -24,5 +24,43 @@ def format_log(data: Any) -> str:
     return pformat(data, width=60)
 
 
-__all__ = ["print_banner", "format_log"]
+from typing import Iterable
+
+
+def stream_chat_completion(client, **kwargs) -> dict:
+    """Stream chat completion tokens to stdout and return the final message."""
+
+    stream = client.chat.completions.create(stream=True, **kwargs)
+    content_parts: list[str] = []
+    tool_calls: dict[int, dict] = {}
+
+    for chunk in stream:
+        choice = chunk.choices[0]
+        delta = getattr(choice, "delta", None)
+        if not delta:
+            continue
+        token = getattr(delta, "content", None)
+        if token:
+            print(token, end="", flush=True)
+            content_parts.append(token)
+        for tc in getattr(delta, "tool_calls", []) or []:
+            entry = tool_calls.setdefault(
+                getattr(tc, "index", 0),
+                {"id": tc.id, "function": {"name": "", "arguments": ""}},
+            )
+            name = getattr(tc.function, "name", "")
+            if name:
+                entry["function"]["name"] += name
+            args = getattr(tc.function, "arguments", "")
+            if args:
+                entry["function"]["arguments"] += args
+
+    print()
+    message: dict = {"role": "assistant", "content": "".join(content_parts)}
+    if tool_calls:
+        message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+    return message
+
+
+__all__ = ["print_banner", "format_log", "stream_chat_completion"]
 

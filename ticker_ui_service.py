@@ -334,7 +334,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--status-url",
-        default="http://localhost:8080/tools/get_portfolio_status",
+        default="http://localhost:8080/mcp/tools/get_portfolio_status",
         help="Portfolio status polling URL",
     )
     args = parser.parse_args()

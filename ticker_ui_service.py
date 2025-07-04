@@ -11,10 +11,13 @@ import queue
 import signal
 import threading
 import time
+import asyncio
 from collections import deque
 from typing import Deque, Dict, List
 
 import requests
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
 logger = logging.getLogger(__name__)
 
@@ -213,20 +216,26 @@ def _sse_listener(url: str, q: "queue.Queue[dict]", stop: threading.Event) -> No
 
 def _portfolio_poller(url: str, q: "queue.Queue[dict]", stop: threading.Event) -> None:
     """Periodically fetch portfolio status and push value events."""
-    headers = {"Accept": "application/json, text/event-stream"}
-    while not stop.is_set():
-        try:
-            resp = requests.post(url, json={}, timeout=5, headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                q.put({"type": "portfolio_status", "ts": int(time.time()), "data": data})
-            else:
-                logger.warning(
-                    "Portfolio status poll failed with status %s", resp.status_code
-                )
-        except Exception as err:
-            logger.warning("Portfolio status poll error: %s", err)
-        time.sleep(1)
+
+    async def _run() -> None:
+        while not stop.is_set():
+            try:
+                async with streamablehttp_client(url) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        while not stop.is_set():
+                            try:
+                                result = await session.call_tool("get_portfolio_status", {})
+                                data = result.structuredContent if hasattr(result, "structuredContent") else result
+                                q.put({"type": "portfolio_status", "ts": int(time.time()), "data": data})
+                            except Exception as err:
+                                logger.warning("Portfolio status poll error: %s", err)
+                            await asyncio.sleep(1)
+            except Exception as err:
+                logger.warning("Portfolio poller connection error: %s", err)
+                await asyncio.sleep(1)
+
+    asyncio.run(_run())
 
 
 
@@ -337,8 +346,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--status-url",
-        default="http://localhost:8080/mcp/tools/get_portfolio_status",
-        help="Portfolio status polling URL",
+        default="http://localhost:8080/mcp/",
+        help="MCP base URL for portfolio status",
     )
     args = parser.parse_args()
 

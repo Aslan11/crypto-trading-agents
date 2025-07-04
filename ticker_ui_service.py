@@ -218,7 +218,7 @@ def _portfolio_poller(url: str, q: "queue.Queue[dict]", stop: threading.Event) -
                 q.put({"type": "portfolio_status", "ts": int(time.time()), "data": data})
         except Exception:
             pass
-        time.sleep(5)
+        time.sleep(1)
 
 def _demo_source(q: "queue.Queue[dict]", stop: threading.Event) -> None:
     symbols = ["BTC-USD", "ETH-USD"]
@@ -279,8 +279,13 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
                     cash = evt.get("data", {}).get("cash", 0.0)
                     positions = evt.get("data", {}).get("positions", {})
                     ts = evt.get("ts", int(time.time()))
-                    value = cash + sum(float(q) * latest_price.get(sym, 0.0) for sym, q in positions.items())
+                    value = cash + sum(float(qty) * latest_price.get(sym, 0.0) for sym, qty in positions.items())
                     portfolio_history.append((ts, float(value)))
+                elif evt.get("type") == "portfolio_value":
+                    ts = evt.get("ts", int(time.time()))
+                    value = evt.get("value")
+                    if value is not None:
+                        portfolio_history.append((ts, float(value)))
                 else:
                     sym = evt.get("symbol")
                     if not sym:

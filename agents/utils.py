@@ -24,7 +24,7 @@ def format_log(data: Any) -> str:
     return pformat(data, width=60)
 
 
-from typing import Iterable
+
 
 
 def stream_chat_completion(client, *, prefix: str = "", color: str = "", reset: str = "", **kwargs) -> dict:
@@ -65,7 +65,11 @@ def stream_chat_completion(client, *, prefix: str = "", color: str = "", reset: 
         for tc in getattr(delta, "tool_calls", []) or []:
             entry = tool_calls.setdefault(
                 getattr(tc, "index", 0),
-                {"id": tc.id, "function": {"name": "", "arguments": ""}},
+                {
+                    "id": tc.id,
+                    "type": getattr(tc, "type", "function"),
+                    "function": {"name": "", "arguments": ""},
+                },
             )
             name = getattr(tc.function, "name", "")
             if name:

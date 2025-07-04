@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Set
 import aiohttp
 import openai
 from mcp import ClientSession
@@ -9,6 +9,16 @@ from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
 import time
+from datetime import timedelta
+from temporalio.client import (
+    Client,
+    Schedule,
+    ScheduleActionStartWorkflow,
+    ScheduleSpec,
+    ScheduleIntervalSpec,
+    RPCError,
+    RPCStatusCode,
+)
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
@@ -21,20 +31,17 @@ ALLOWED_TOOLS = {
     "get_portfolio_status",
 }
 
+NUDGE_SCHEDULE_ID = "ensemble-nudge"
+
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are a strategy ensemble agent. You take note of the current status of the portfolio, "
-    "aggregate trading signals from multiple strategies, and autonomously execute trades. "
-    "You have tools for fetching the current status of the portfolio, broadcasting intents, "
-    "and placing mock orders. Always call these tools yourself."
-    "Before approving or rejecting any intent, always call `get_portfolio_status` to "
-    "review cash balances, open positions and entry prices. Use this information to "
-    "validate whether a BUY or SELL makes sense. Do your best to avoid selling below "
-    "the entry price whenever possible."
-    "Before deciding, also call `get_historical_ticks` to review recent price data and infer performance yourself. "
-    "Decide whether or not it makes sense to execute the intent via `place_mock_order` "
-    "without waiting for human confirmation, then briefly explain your decision & the outcome."
+    "You are a portfolio management agent operating autonomously. "
+    "Every 30 seconds you wake up to review current account status and recent market data "
+    "for all tracked symbols. Use `get_historical_ticks` and `get_portfolio_status` to gather "
+    "the necessary information. After analyzing trends and available balances, decide whether "
+    "to place any trades via `place_mock_order`. Provide a short explanation of your reasoning "
+    "whenever you trade."
 )
 
 
@@ -57,57 +64,65 @@ def _tool_result_data(result: Any) -> Any:
         return result.model_dump()
     return result
 
-async def _latest_price(
-    session: aiohttp.ClientSession, base_url: str, symbol: str
-) -> float:
-    """Return the most recent market price for ``symbol``."""
-    url = base_url.rstrip("/") + "/signal/market_tick"
-    params = {"after": int(time.time()) - 60}
-    headers = {"Accept": "text/event-stream"}
-    last_price = 0.0
-    end_time = asyncio.get_event_loop().time() + 2
-    try:
-        async with session.get(url, params=params, headers=headers) as resp:
-            if resp.status != 200:
-                return 0.0
-            while asyncio.get_event_loop().time() < end_time:
-                line = await resp.content.readline()
-                if not line:
-                    break
-                text = line.decode().strip()
-                if not text or not text.startswith("data:"):
-                    continue
-                try:
-                    evt = json.loads(text[5:].strip())
-                except Exception:
-                    continue
-                if evt.get("symbol") != symbol:
-                    continue
-                data = evt.get("data", {})
-                if "last" in data:
-                    last_price = float(data["last"])
-                elif {"bid", "ask"}.issubset(data):
-                    last_price = (float(data["bid"]) + float(data["ask"])) / 2
-    except Exception:
-        return 0.0
 
-    return last_price
-
-async def _stream_strategy_signals(
-    session: aiohttp.ClientSession, base_url: str
-) -> AsyncIterator[dict]:
-    """Yield strategy signals from the MCP server."""
+async def _watch_symbols(
+    session: aiohttp.ClientSession,
+    base_url: str,
+    symbols: Set[str],
+) -> None:
+    """Maintain the set of active symbols based on incoming market ticks."""
     cursor = 0
-    url = base_url.rstrip("/") + "/signal/strategy_signal"
+    last_seen: dict[str, int] = {}
+    url = base_url.rstrip("/") + "/signal/market_tick"
     headers = {"Accept": "text/event-stream"}
-
     while True:
         try:
             async with session.get(url, params={"after": cursor}, headers=headers) as resp:
                 if resp.status != 200:
                     await asyncio.sleep(1)
                     continue
+                while True:
+                    line = await resp.content.readline()
+                    if not line:
+                        break
+                    text = line.decode().strip()
+                    if not text or not text.startswith("data:"):
+                        continue
+                    try:
+                        evt = json.loads(text[5:].strip())
+                    except Exception:
+                        continue
+                    sym = evt.get("symbol")
+                    ts = evt.get("ts")
+                    if sym is None or ts is None:
+                        continue
+                    cursor = max(cursor, ts)
+                    last_seen[sym] = ts
+                    now = int(time.time())
+                    new_set = {
+                        s for s, t in last_seen.items() if now - t < 10
+                    }
+                    if new_set != symbols:
+                        symbols.clear()
+                        symbols.update(new_set)
+                        print(f"[EnsembleAgent] Active symbols: {sorted(symbols)}")
+        except Exception:
+            await asyncio.sleep(1)
 
+
+async def _stream_nudges(
+    session: aiohttp.ClientSession, base_url: str
+) -> AsyncIterator[int]:
+    """Yield timestamps from ensemble nudge events."""
+    cursor = 0
+    url = base_url.rstrip("/") + "/signal/ensemble_nudge"
+    headers = {"Accept": "text/event-stream"}
+    while True:
+        try:
+            async with session.get(url, params={"after": cursor}, headers=headers) as resp:
+                if resp.status != 200:
+                    await asyncio.sleep(1)
+                    continue
                 while True:
                     line = await resp.content.readline()
                     if not line:
@@ -120,20 +135,49 @@ async def _stream_strategy_signals(
                     except Exception:
                         continue
                     ts = evt.get("ts")
-                    if ts is not None:
-                        cursor = max(cursor, ts)
-                    yield evt
+                    if ts is None:
+                        continue
+                    cursor = max(cursor, ts)
+                    yield ts
         except Exception:
             await asyncio.sleep(1)
 
+
+async def _ensure_schedule(client: Client) -> None:
+    """Create the nudge schedule if it doesn't already exist."""
+    handle = client.get_schedule_handle(NUDGE_SCHEDULE_ID)
+    try:
+        await handle.describe()
+        return
+    except RPCError as err:
+        if err.status != RPCStatusCode.NOT_FOUND:
+            raise
+
+    schedule = Schedule(
+        action=ScheduleActionStartWorkflow(
+            workflow="tools.ensemble_nudge.EnsembleNudgeWorkflow.run",
+            task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+        ),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]),
+    )
+    await client.create_schedule(NUDGE_SCHEDULE_ID, schedule)
+
+
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
-    """Run the ensemble agent and react to strategy signals."""
+    """Run the ensemble agent and act on scheduled nudges."""
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp"
 
-    # Streaming strategy signals requires an indefinite timeout
     timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
+        temporal = await Client.connect(
+            os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
+            namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
+        )
+        symbols: Set[str] = set()
+        symbol_task = asyncio.create_task(_watch_symbols(http_session, base_url, symbols))
+        await _ensure_schedule(temporal)
+
         async with streamablehttp_client(mcp_url) as (
             read_stream,
             write_stream,
@@ -150,37 +194,18 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     [t.name for t in tools],
                 )
 
-                async for incoming_signal in _stream_strategy_signals(
-                    http_session, base_url
-                ):
-                    intent = {
-                        "symbol": incoming_signal.get("symbol"),
-                        "side": incoming_signal.get("side"),
-                        "qty": 1.0,
-                        "ts": incoming_signal.get("ts"),
-                    }
-                    price = await _latest_price(http_session, base_url, intent["symbol"])
-                    intent["price"] = price
-                    status_result = await session.call_tool("get_portfolio_status", {})
-                    status = _tool_result_data(status_result)
-                    positions = status.get("positions", {}) if isinstance(status, dict) else {}
-                    cash = status.get("cash", 0.0) if isinstance(status, dict) else 0.0
-                    if (
-                        intent["side"] == "SELL"
-                        and positions.get(intent["symbol"], 0.0) <= 0.0
-                    ):
-                        print("[EnsembleAgent] Skipping SELL - no position")
+                async for ts in _stream_nudges(http_session, base_url):
+                    if not symbols:
                         continue
-                    if intent["side"] == "BUY" and cash < price * intent["qty"]:
-                        print("[EnsembleAgent] Skipping BUY - insufficient cash")
-                        continue
-                    intent_id = f"{intent['side']}-{intent['symbol']}-{intent['ts']}"
-                    signal_str = (
-                        f"Strategy signal received: {json.dumps(incoming_signal)}. "
-                        f"Current portfolio: {json.dumps(status)}. "
-                        f"Latest price: {price}. Decide whether to approve this trade intent."
-                    )
-                    conversation.append({"role": "user", "content": signal_str})
+                    print(f"[EnsembleAgent] Nudge @ {ts} for {sorted(symbols)}")
+                    history: dict[str, Any] = {}
+                    for sym in sorted(symbols):
+                        res = await session.call_tool("get_historical_ticks", {"symbol": sym, "days": 1})
+                        history[sym] = _tool_result_data(res)
+                    status_res = await session.call_tool("get_portfolio_status", {})
+                    status = _tool_result_data(status_res)
+                    info = {"portfolio": status, "history": history}
+                    conversation.append({"role": "user", "content": json.dumps(info)})
                     openai_tools = [
                         {
                             "type": "function",
@@ -217,8 +242,6 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 func_args = json.loads(
                                     tool_call["function"].get("arguments") or "{}"
                                 )
-                                if func_name == "place_mock_order" and "intent" not in func_args:
-                                    func_args["intent"] = intent
                                 if func_name not in ALLOWED_TOOLS:
                                     print(f"[EnsembleAgent] Tool not allowed: {func_name}")
                                     continue
@@ -246,8 +269,6 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             )
                             func_name = msg["function_call"].get("name")
                             func_args = json.loads(msg["function_call"].get("arguments") or "{}")
-                            if func_name == "place_mock_order" and "intent" not in func_args:
-                                func_args["intent"] = intent
                             if func_name not in ALLOWED_TOOLS:
                                 print(f"[EnsembleAgent] Tool not allowed: {func_name}")
                                 continue

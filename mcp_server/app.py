@@ -6,7 +6,7 @@ import asyncio
 import os
 import secrets
 from typing import Any, Dict, List
-from datetime import datetime
+from datetime import datetime, UTC
 import json
 
 from mcp.server.fastmcp import FastMCP
@@ -148,7 +148,7 @@ async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dic
         stored ticks.
     """
 
-    cutoff = 0 if days is None else int(datetime.utcnow().timestamp()) - days * 86400
+    cutoff = 0 if days is None else int(datetime.now(UTC).timestamp()) - days * 86400
     client = await get_temporal_client()
     wf_id = f"feature-{symbol.replace('/', '-')}"
     logger.info("Querying workflow %s for ticks >= %d", wf_id, cutoff)
@@ -227,7 +227,7 @@ async def record_signal(request: Request) -> Response:
     payload = await request.json()
     ts = payload.get("ts")
     if ts is None:
-        ts = int(datetime.utcnow().timestamp())
+        ts = int(datetime.now(UTC).timestamp())
         payload["ts"] = ts
     signal_log.setdefault(name, []).append(payload)
     logger.debug("Recorded signal %s", name)

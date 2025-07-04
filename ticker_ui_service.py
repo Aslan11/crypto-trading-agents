@@ -87,7 +87,9 @@ class BrailleChart:
         bits[cy][cx] |= BRAILLE_DOTS[y % 4][x % 2]
         colors[cy][cx] = color
 
-    def _plot_line(self, bits, colors, x0: int, y0: int, x1: int, y1: int, color: int) -> None:
+    def _plot_line(
+        self, bits, colors, x0: int, y0: int, x1: int, y1: int, color: int
+    ) -> None:
         dx = abs(x1 - x0)
         dy = abs(y1 - y0)
         sx = 1 if x0 < x1 else -1
@@ -170,7 +172,12 @@ class BrailleChart:
             win.addstr(inner_y + cy, inner_x, label)
             for cx in range(chart_w):
                 ch = chr(0x2800 + bits[cy][cx])
-                win.addstr(inner_y + cy, inner_x + LABEL_WIDTH + LABEL_PAD + cx, ch, curses.color_pair(colors[cy][cx]))
+                win.addstr(
+                    inner_y + cy,
+                    inner_x + LABEL_WIDTH + LABEL_PAD + cx,
+                    ch,
+                    curses.color_pair(colors[cy][cx]),
+                )
 
         # x axis labels every 5 minutes
         if ts_vals:
@@ -181,7 +188,11 @@ class BrailleChart:
                     if pos < chart_w:
                         label = time.strftime("%H:%M", time.localtime(next_mark))
                         lx = inner_x + LABEL_WIDTH + LABEL_PAD + pos - len(label) // 2
-                        if lx >= inner_x + LABEL_WIDTH + LABEL_PAD and lx + len(label) < inner_x + LABEL_WIDTH + LABEL_PAD + chart_w:
+                        if (
+                            lx >= inner_x + LABEL_WIDTH + LABEL_PAD
+                            and lx + len(label)
+                            < inner_x + LABEL_WIDTH + LABEL_PAD + chart_w
+                        ):
                             win.addstr(inner_y + chart_h, lx, label)
                     next_mark += 300
 
@@ -225,9 +236,32 @@ def _portfolio_poller(url: str, q: "queue.Queue[dict]", stop: threading.Event) -
                         await session.initialize()
                         while not stop.is_set():
                             try:
-                                result = await session.call_tool("get_portfolio_status", {})
-                                data = result.structuredContent if hasattr(result, "structuredContent") else result
-                                q.put({"type": "portfolio_status", "ts": int(time.time()), "data": data})
+                                result = await session.call_tool(
+                                    "get_portfolio_status", {}
+                                )
+                                # fastmcp's call_tool returns a dataclass with
+                                # `data` and `structured_content` attributes.
+                                if hasattr(result, "data") and result.data is not None:
+                                    data = result.data
+                                elif (
+                                    hasattr(result, "structured_content")
+                                    and result.structured_content is not None
+                                ):
+                                    data = result.structured_content
+                                elif (
+                                    hasattr(result, "structuredContent")
+                                    and result.structuredContent is not None
+                                ):
+                                    data = result.structuredContent
+                                else:
+                                    data = {}
+                                q.put(
+                                    {
+                                        "type": "portfolio_status",
+                                        "ts": int(time.time()),
+                                        "data": data,
+                                    }
+                                )
                             except Exception as err:
                                 logger.warning("Portfolio status poll error: %s", err)
                             await asyncio.sleep(1)
@@ -238,8 +272,9 @@ def _portfolio_poller(url: str, q: "queue.Queue[dict]", stop: threading.Event) -
     asyncio.run(_run())
 
 
-
-def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: threading.Event) -> None:
+def run_curses(
+    stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: threading.Event
+) -> None:
     curses.curs_set(0)
     curses.start_color()
     curses.use_default_colors()
@@ -281,7 +316,10 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
                     cash = evt.get("data", {}).get("cash", 0.0)
                     positions = evt.get("data", {}).get("positions", {})
                     ts = evt.get("ts", int(time.time()))
-                    value = cash + sum(float(qty) * latest_price.get(sym, 0.0) for sym, qty in positions.items())
+                    value = cash + sum(
+                        float(qty) * latest_price.get(sym, 0.0)
+                        for sym, qty in positions.items()
+                    )
                     portfolio_history.append((ts, float(value)))
                 elif evt.get("type") == "portfolio_value":
                     ts = evt.get("ts", int(time.time()))
@@ -304,10 +342,14 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
                     ts = evt.get("ts")
                     if ts is None:
                         ts_ms = evt.get("data", {}).get("timestamp")
-                        ts = int(ts_ms / 1000) if ts_ms is not None else int(time.time())
+                        ts = (
+                            int(ts_ms / 1000) if ts_ms is not None else int(time.time())
+                        )
                     if price is not None:
                         latest_price[sym] = float(price)
-                        data.setdefault(sym, deque(maxlen=360)).append((ts, float(price)))
+                        data.setdefault(sym, deque(maxlen=360)).append(
+                            (ts, float(price))
+                        )
         except queue.Empty:
             pass
 
@@ -355,7 +397,9 @@ def main() -> None:
     stop = threading.Event()
 
     t = threading.Thread(target=_sse_listener, args=(args.url, q, stop), daemon=True)
-    p = threading.Thread(target=_portfolio_poller, args=(args.status_url, q, stop), daemon=True)
+    p = threading.Thread(
+        target=_portfolio_poller, args=(args.status_url, q, stop), daemon=True
+    )
     t.start()
     p.start()
 

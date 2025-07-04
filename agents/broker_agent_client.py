@@ -18,6 +18,13 @@ ORANGE = "\033[33m"
 PINK = "\033[95m"
 RESET = "\033[0m"
 
+# Tools this agent is allowed to call
+ALLOWED_TOOLS = {
+    "start_market_stream",
+    "get_historical_ticks",
+    "get_portfolio_status",
+}
+
 EXCHANGE = "coinbaseexchange"
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "WARNING")
@@ -65,7 +72,8 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
     async with streamablehttp_client(url) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
-            tools = (await session.list_tools()).tools
+            all_tools = (await session.list_tools()).tools
+            tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
             conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
             print(
                 f"[BrokerAgent] Connected to MCP server with tools: {[t.name for t in tools]}"
@@ -130,6 +138,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     for call in msg_dict.get("tool_calls", []):
                         func_name = call["function"]["name"]
                         func_args = json.loads(call["function"].get("arguments") or "{}")
+                        if func_name not in ALLOWED_TOOLS:
+                            logger.warning("Tool not allowed: %s", func_name)
+                            continue
                         print(f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}")
                         try:
                             result = await session.call_tool(func_name, func_args)
@@ -165,6 +176,9 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         logger.error("Received function_call without name: %s", msg_dict)
                         continue
                     func_args = json.loads(function_call.get("arguments") or "{}")
+                    if func_name not in ALLOWED_TOOLS:
+                        logger.warning("Tool not allowed: %s", func_name)
+                        continue
                     print(f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}")
                     try:
                         result = await session.call_tool(func_name, func_args)

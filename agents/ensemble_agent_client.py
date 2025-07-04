@@ -6,7 +6,7 @@ import aiohttp
 import openai
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from .utils import stream_chat_completion
+from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
 import time
 

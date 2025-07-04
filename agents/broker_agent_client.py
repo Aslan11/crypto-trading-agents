@@ -13,7 +13,7 @@ except Exception:  # pragma: no cover - optional dependency
     _openai_client = None
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from .utils import stream_chat_completion
+from agents.utils import stream_chat_completion
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"

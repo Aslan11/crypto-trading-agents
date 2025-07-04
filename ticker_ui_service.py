@@ -313,13 +313,17 @@ def run_curses(
                         data.setdefault(s, deque(maxlen=360))
                     data.setdefault("Portfolio", portfolio_history)
                 elif evt.get("type") == "portfolio_status":
-                    cash = evt.get("data", {}).get("cash", 0.0)
-                    positions = evt.get("data", {}).get("positions", {})
+                    data_dict = evt.get("data", {})
+                    cash = data_dict.get("cash", 0.0)
+                    positions = data_dict.get("positions", {})
+                    entry_prices = data_dict.get("entry_prices", {})
+                    pnl = data_dict.get("pnl", 0.0)
                     ts = evt.get("ts", int(time.time()))
-                    value = cash + sum(
-                        float(qty) * latest_price.get(sym, 0.0)
+                    entry_value = sum(
+                        float(qty) * float(entry_prices.get(sym, 0.0))
                         for sym, qty in positions.items()
                     )
+                    value = cash + entry_value + float(pnl)
                     portfolio_history.append((ts, float(value)))
                 elif evt.get("type") == "portfolio_value":
                     ts = evt.get("ts", int(time.time()))

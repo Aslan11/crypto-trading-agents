@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import curses
 import json
-import math
 import queue
 import signal
 import threading
@@ -220,21 +219,6 @@ def _portfolio_poller(url: str, q: "queue.Queue[dict]", stop: threading.Event) -
             pass
         time.sleep(1)
 
-def _demo_source(q: "queue.Queue[dict]", stop: threading.Event) -> None:
-    symbols = ["BTC-USD", "ETH-USD"]
-    q.put({"type": "pairs", "symbols": symbols})
-    t = 0
-    portfolio = 250000.0
-    while not stop.is_set():
-        for sym in symbols:
-            base = 30000 if sym == "BTC-USD" else 2000
-            price = base + math.sin(t / 10) * (base * 0.02)
-            q.put({"type": "tick", "symbol": sym, "ts": int(time.time()), "price": price})
-        # simple oscillating portfolio value for demo mode
-        portfolio = 250000 + math.sin(t / 5) * 5000
-        q.put({"type": "portfolio_value", "ts": int(time.time()), "value": portfolio})
-        t += 1
-        time.sleep(1)
 
 
 def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: threading.Event) -> None:
@@ -337,7 +321,6 @@ def run_curses(stdscr: "curses._CursesWindow", q: "queue.Queue[dict]", stop: thr
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--demo", action="store_true", help="Run with demo data")
     parser.add_argument(
         "--url",
         default="http://localhost:8080/signal/market_tick",
@@ -353,15 +336,10 @@ def main() -> None:
     q: queue.Queue[dict] = queue.Queue()
     stop = threading.Event()
 
-    if args.demo:
-        t = threading.Thread(target=_demo_source, args=(q, stop), daemon=True)
-        p = None
-    else:
-        t = threading.Thread(target=_sse_listener, args=(args.url, q, stop), daemon=True)
-        p = threading.Thread(target=_portfolio_poller, args=(args.status_url, q, stop), daemon=True)
+    t = threading.Thread(target=_sse_listener, args=(args.url, q, stop), daemon=True)
+    p = threading.Thread(target=_portfolio_poller, args=(args.status_url, q, stop), daemon=True)
     t.start()
-    if p is not None:
-        p.start()
+    p.start()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
@@ -369,8 +347,7 @@ def main() -> None:
     curses.wrapper(run_curses, q, stop)
     stop.set()
     t.join()
-    if p is not None:
-        p.join()
+    p.join()
 
 
 if __name__ == "__main__":

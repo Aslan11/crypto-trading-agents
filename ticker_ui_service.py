@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import curses
 import json
+import logging
 import queue
 import signal
 import threading
@@ -14,6 +15,8 @@ from collections import deque
 from typing import Deque, Dict, List
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 BRAILLE_DOTS = [
     [0x01, 0x08],  # row 0: dots 1 and 4
@@ -203,7 +206,8 @@ def _sse_listener(url: str, q: "queue.Queue[dict]", stop: threading.Event) -> No
                     except Exception:
                         continue
                     q.put(evt)
-        except Exception:
+        except Exception as err:
+            logger.warning("SSE listener error: %s", err)
             time.sleep(1)
 
 
@@ -215,8 +219,10 @@ def _portfolio_poller(url: str, q: "queue.Queue[dict]", stop: threading.Event) -
             if resp.status_code == 200:
                 data = resp.json()
                 q.put({"type": "portfolio_status", "ts": int(time.time()), "data": data})
-        except Exception:
-            pass
+            else:
+                logger.warning("Portfolio status poll failed with status %s", resp.status_code)
+        except Exception as err:
+            logger.warning("Portfolio status poll error: %s", err)
         time.sleep(1)
 
 

@@ -27,10 +27,10 @@ openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 SYSTEM_PROMPT = (
     "You are an autonomous trading agent awakened every 30 seconds by a scheduler. "
     "Use your tools to fetch historical price data and the current portfolio status "
-    "for all active trading pairs. Analyze the information and decide whether to "
-    "place buy or sell orders via `place_mock_order`. Always check `get_portfolio_status` "
-    "before trading and avoid selling below the entry price when possible. Respond "
-    "with a brief explanation of each decision."
+    "for all active trading pairs. Analyze the information provided by get_historical_ticks "
+    "and decide whether to place buy or sell orders via `place_mock_order`. Always check "
+     "`get_portfolio_status` before trading and avoid selling below the entry price"
+    " when possible. Respond with a brief explanation of each decision."
 )
 
 
@@ -103,7 +103,7 @@ async def _ensure_schedule(client: Client) -> None:
 
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     base_url = server_url.rstrip("/")
-    mcp_url = base_url + "/mcp"
+    mcp_url = base_url + "/mcp/"
     timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
         async with streamablehttp_client(mcp_url) as (read_stream, write_stream, _):

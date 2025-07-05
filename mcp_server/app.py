@@ -143,37 +143,53 @@ async def place_mock_order(intent: Dict[str, Any]) -> Dict[str, Any]:
     return fill
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
-async def get_historical_ticks(symbol: str, days: int | None = None) -> List[Dict[str, float]]:
-    """Return historical ticks for ``symbol`` fetched from its feature workflow.
+async def get_historical_ticks(
+    symbols: List[str] | None = None,
+    symbol: str | None = None,
+    days: int | None = None,
+) -> Dict[str, List[Dict[str, float]]]:
+    """Return historical ticks for one or more symbols.
 
     Parameters
     ----------
+    symbols:
+        List of asset pairs in ``BASE/QUOTE`` format.
     symbol:
-        Asset pair in ``BASE/QUOTE`` format.
+        Single asset pair if ``symbols`` not provided (for backward compatibility).
     days:
         Number of days of history requested. ``None`` (default) returns **all**
         stored ticks.
     """
 
+    if symbols is None:
+        if symbol is None:
+            raise ValueError("symbol or symbols required")
+        symbols = [symbol]
+
     cutoff = 0 if days is None else int(datetime.now(timezone.utc).timestamp()) - days * 86400
     client = await get_temporal_client()
-    wf_id = f"feature-{symbol.replace('/', '-')}"
-    logger.info("Querying workflow %s for ticks >= %d", wf_id, cutoff)
-    handle = client.get_workflow_handle(wf_id)
-    try:
-        result = await handle.query("historical_ticks", cutoff)
-    except RPCError as err:
-        if err.status == RPCStatusCode.NOT_FOUND:
-            logger.warning("Feature workflow %s not found", wf_id)
-            return []
-        raise
+    results: Dict[str, List[Dict[str, float]]] = {}
+    for sym in symbols:
+        wf_id = f"feature-{sym.replace('/', '-')}"
+        logger.info("Querying workflow %s for ticks >= %d", wf_id, cutoff)
+        handle = client.get_workflow_handle(wf_id)
+        try:
+            ticks_raw = await handle.query("historical_ticks", cutoff)
+        except RPCError as err:
+            if err.status == RPCStatusCode.NOT_FOUND:
+                logger.warning("Feature workflow %s not found", wf_id)
+                results[sym] = []
+                continue
+            raise
 
-    ticks = [
-        {"ts": int(t["ts"]), "price": float(t["price"])}
-        for t in result
-    ]
-    logger.info("Retrieved %d ticks for %s", len(ticks), symbol)
-    return ticks
+        ticks = [
+            {"ts": int(t["ts"]), "price": float(t["price"])}
+            for t in ticks_raw
+        ]
+        logger.info("Retrieved %d ticks for %s", len(ticks), sym)
+        results[sym] = ticks
+
+    return results
 
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})

@@ -41,7 +41,7 @@ openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
     "You are a portfolio management agent that wakes every 30 seconds when nudged. "
-    "On each nudge you must first call `get_historical_ticks` for every active symbol and "
+    "On each nudge call `get_historical_ticks` once with all active symbols, "
     "then call `get_portfolio_status` to review cash balances and open positions. "
     "If you decide to trade, call `place_mock_order` with an intent containing `symbol`, "
     "`side` (BUY or SELL), `qty`, `price` and `type` (market or limit). "
@@ -211,12 +211,11 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     if not symbols:
                         continue
                     print(f"[EnsembleAgent] Nudge @ {ts} for {sorted(symbols)}")
-                    history: dict[str, Any] = {}
-                    for sym in sorted(symbols):
-                        res = await session.call_tool(
-                            "get_historical_ticks", {"symbol": sym, "days": 1}
-                        )
-                        history[sym] = _tool_result_data(res)
+                    res = await session.call_tool(
+                        "get_historical_ticks",
+                        {"symbols": sorted(symbols), "days": 1},
+                    )
+                    history = _tool_result_data(res)
                     status_res = await session.call_tool("get_portfolio_status", {})
                     status = _tool_result_data(status_res)
                     info = {"portfolio": status, "history": history}

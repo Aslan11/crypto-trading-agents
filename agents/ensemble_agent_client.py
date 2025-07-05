@@ -4,6 +4,7 @@ import asyncio
 from typing import Any, AsyncIterator, Set
 import aiohttp
 import openai
+import logging
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
@@ -34,15 +35,17 @@ ALLOWED_TOOLS = {
 
 NUDGE_SCHEDULE_ID = "ensemble-nudge"
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are a portfolio management agent operating autonomously. "
-    "Every 30 seconds you wake up to review current account status and recent market data "
-    "for all tracked symbols. Use `get_historical_ticks` and `get_portfolio_status` to gather "
-    "the necessary information. After analyzing trends and available balances, decide whether "
-    "to place any trades via `place_mock_order`. Provide a short explanation of your reasoning "
-    "whenever you trade."
+    "You are a portfolio management agent that wakes every 30 seconds when nudged. "
+    "On each nudge you must first call `get_historical_ticks` for every active symbol and "
+    "then call `get_portfolio_status` to review cash balances and open positions. "
+    "Only after analyzing this information may you decide to trade using `place_mock_order`. "
+    "Briefly explain your reasoning whenever you execute a trade."
 )
 
 

@@ -9,7 +9,6 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
-import time
 from datetime import timedelta
 from temporalio.client import (
     Client,
@@ -77,10 +76,9 @@ async def _watch_symbols(
     base_url: str,
     symbols: Set[str],
 ) -> None:
-    """Maintain the set of active symbols based on incoming market ticks."""
+    """Update ``symbols`` whenever the broker agent selects pairs."""
     cursor = 0
-    last_seen: dict[str, int] = {}
-    url = base_url.rstrip("/") + "/signal/market_tick"
+    url = base_url.rstrip("/") + "/signal/active_symbols"
     headers = {"Accept": "text/event-stream"}
     while True:
         try:
@@ -101,18 +99,18 @@ async def _watch_symbols(
                         evt = json.loads(text[5:].strip())
                     except Exception:
                         continue
-                    sym = evt.get("symbol")
                     ts = evt.get("ts")
-                    if sym is None or ts is None:
+                    syms = evt.get("symbols")
+                    if ts is None or not isinstance(syms, list):
                         continue
                     cursor = max(cursor, ts)
-                    last_seen[sym] = ts
-                    now = int(time.time())
-                    new_set = {s for s, t in last_seen.items() if now - t < 10}
+                    new_set = set(syms)
                     if new_set != symbols:
                         symbols.clear()
                         symbols.update(new_set)
-                        print(f"[EnsembleAgent] Active symbols: {sorted(symbols)}")
+                        print(
+                            f"[EnsembleAgent] Active symbols updated: {sorted(symbols)}"
+                        )
         except Exception:
             await asyncio.sleep(1)
 

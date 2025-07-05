@@ -83,8 +83,15 @@ async def subscribe_cex_stream(
 async def start_market_stream(
     symbols: List[str], interval_sec: int = 1
 ) -> Dict[str, str]:
-    """Convenience wrapper around ``subscribe_cex_stream``."""
-    return await subscribe_cex_stream(symbols, interval_sec)
+    """Convenience wrapper around ``subscribe_cex_stream``.
+
+    Also records the selected symbols for the ensemble agent.
+    """
+    result = await subscribe_cex_stream(symbols, interval_sec)
+    signal_log.setdefault("active_symbols", []).append(
+        {"symbols": symbols, "ts": int(datetime.now(timezone.utc).timestamp())}
+    )
+    return result
 
 
 @app.tool(annotations={"title": "Evaluate Momentum Strategy", "readOnlyHint": True})

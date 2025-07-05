@@ -178,7 +178,7 @@ async def _ensure_schedule(client: Client) -> None:
 async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
     """Run the ensemble agent and act on scheduled nudges."""
     base_url = server_url.rstrip("/")
-    mcp_url = base_url + "/mcp"
+    mcp_url = base_url + "/mcp/"
 
     timeout = aiohttp.ClientTimeout(total=None)
     async with aiohttp.ClientSession(timeout=timeout) as http_session:

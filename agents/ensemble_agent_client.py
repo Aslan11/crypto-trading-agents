@@ -19,6 +19,7 @@ from temporalio.client import (
     RPCError,
     RPCStatusCode,
 )
+from tools.ensemble_nudge import EnsembleNudgeWorkflow
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
@@ -159,7 +160,7 @@ async def _ensure_schedule(client: Client) -> None:
 
     schedule = Schedule(
         action=ScheduleActionStartWorkflow(
-            workflow="tools.ensemble_nudge.EnsembleNudgeWorkflow.run",
+            workflow=EnsembleNudgeWorkflow.run,
             args=[],
             id="ensemble-nudge-wf",
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),

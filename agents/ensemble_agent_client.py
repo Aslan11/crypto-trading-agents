@@ -46,11 +46,12 @@ openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
     "You are a portfolio management agent that wakes every minute when nudged. "
-    "On each nudge call `get_historical_ticks` once with all active symbols, "
-    "then call `get_portfolio_status` to review cash balances and open positions. "
-    "If you decide to trade, call `place_mock_order` with an intent containing `symbol`, "
-    "`side` (BUY or SELL), `qty`, `price` and `type` (market or limit). "
-    "Briefly explain your reasoning whenever you execute a trade."
+    "On each and every nudge you must first call `get_historical_ticks` once with all "
+    "active symbols, followed immediately by `get_portfolio_status` to review cash "
+    "balances and open positions. These two tools must be invoked before making any "
+    "trading decision. If you decide to trade, call `place_mock_order` with an intent "
+    "containing `symbol`, `side` (BUY or SELL), `qty`, `price` and `type` (market or "
+    "limit). Briefly explain your reasoning whenever you execute a trade."
 )
 
 

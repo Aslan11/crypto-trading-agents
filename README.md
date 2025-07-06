@@ -128,6 +128,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    analyzes market data to decide whether to trade using `place_mock_order`.
 5. Filled orders are recorded in the
    `ExecutionLedgerWorkflow`.
+6. You can type commands at the `>` prompt at any time to ask follow-up
+   questions or adjust the ensemble agent's behavior while it runs.
 
 
 `subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*

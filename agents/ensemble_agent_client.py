@@ -40,7 +40,7 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are a portfolio management agent that wakes every 30 seconds when nudged. "
+    "You are a portfolio management agent that wakes every minute when nudged. "
     "On each nudge call `get_historical_ticks` once with all active symbols, "
     "then call `get_portfolio_status` to review cash balances and open positions. "
     "If you decide to trade, call `place_mock_order` with an intent containing `symbol`, "
@@ -168,7 +168,7 @@ async def _ensure_schedule(client: Client) -> None:
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         ),
         spec=ScheduleSpec(
-            intervals=[ScheduleIntervalSpec(every=timedelta(seconds=30))]
+            intervals=[ScheduleIntervalSpec(every=timedelta(minutes=1))]
         ),
     )
     await client.create_schedule(NUDGE_SCHEDULE_ID, schedule)

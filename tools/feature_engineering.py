@@ -8,6 +8,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from temporalio import activity, workflow
+from temporalio.client import Client
 import aiohttp
 import os
 import asyncio
@@ -25,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
+TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
+TASK_QUEUE = os.environ.get("TASK_QUEUE", "mcp-tools")
+
+_TEMPORAL_CLIENT: Client | None = None
 
 
 @activity.defn
@@ -92,6 +98,31 @@ async def record_vector(vector: dict) -> None:
             await session.post(url, json=vector)
         except Exception as exc:
             logger.error("Failed to record vector: %s", exc)
+
+
+async def _get_client() -> Client:
+    """Return a cached Temporal client."""
+    global _TEMPORAL_CLIENT
+    if _TEMPORAL_CLIENT is None:
+        _TEMPORAL_CLIENT = await Client.connect(
+            TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE
+        )
+    return _TEMPORAL_CLIENT
+
+
+@activity.defn
+async def signal_compute_vector(symbol: str, tick: dict) -> None:
+    """Start or signal a ComputeFeatureVector workflow for ``symbol``."""
+    client = await _get_client()
+    wf_id = f"feature-{symbol.replace('/', '-')}"
+    await client.start_workflow(
+        ComputeFeatureVector.run,
+        id=wf_id,
+        task_queue=TASK_QUEUE,
+        start_signal="market_tick",
+        start_signal_args=[tick],
+        args=[symbol, VECTOR_WINDOW_SEC, VECTOR_CONTINUE_EVERY, VECTOR_HISTORY_LIMIT],
+    )
 
 
 @workflow.defn

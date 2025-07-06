@@ -6,13 +6,12 @@ import asyncio
 from datetime import timedelta
 import logging
 import os
-from typing import Any, List, Dict
+from typing import Any, List
 
 import aiohttp
 from pydantic import BaseModel
 from temporalio import activity, workflow
-from temporalio.workflow import ChildWorkflowHandle
-from tools.feature_engineering import ComputeFeatureVector
+from tools.feature_engineering import signal_compute_vector
 
 
 class MarketTick(BaseModel):
@@ -79,15 +78,7 @@ class SubscribeCEXStream:
         history_limit: int = STREAM_HISTORY_LIMIT,
     ) -> None:
         """Stream tickers indefinitely, continuing as new periodically."""
-        # Launch feature vector workflows for each symbol and retain handles
-        child_handles: Dict[str, ChildWorkflowHandle] = {}
-        for sym in symbols:
-            handle = await workflow.start_child_workflow(
-                ComputeFeatureVector.run,
-                args=[sym],
-                id=f"feature-{sym.replace('/', '-')}",
-            )
-            child_handles[sym] = handle
+        # Feature vector workflows are started lazily via an activity
 
         cycles = 0
         while True:
@@ -107,9 +98,11 @@ class SubscribeCEXStream:
                     ticker,
                     schedule_to_close_timeout=timedelta(seconds=5),
                 )
-                handle = child_handles.get(ticker.get("symbol"))
-                if handle is not None:
-                    await handle.signal("market_tick", ticker)
+                await workflow.execute_activity(
+                    signal_compute_vector,
+                    args=[ticker.get("symbol"), ticker],
+                    schedule_to_close_timeout=timedelta(seconds=5),
+                )
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 return

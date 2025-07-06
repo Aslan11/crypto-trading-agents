@@ -8,7 +8,6 @@ A 24×7 multi-agent crypto trading stack built on Temporal and Model Context Pro
 - [Durable Tools Catalog](#durable-tools-catalog)
 - [Getting Started](#getting-started)
 - [Demo](#demo)
-- [Development Workflow](#development-workflow)
 - [Repository Layout](#repository-layout)
 - [Contributing](#contributing)
 - [License](#license)
@@ -24,29 +23,43 @@ Temporal supplies resilient workflows while MCP gives agents a shared, tool-base
 
 ## Architecture
 ```
-┌─────────────┐    ┌─────────────────┐
-│ Market Data │ ──▶│ Strategy Agents │
-│   Streams   │    └───────┬─────────┘
-└─────────────┘            │ signals
-                           ▼
-                 ┌──────────────────┐
-                 │ Ensemble & Risk  │
-                 └────────┬─────────┘
-                          │ intents
-                          ▼
-                 ┌──────────────────┐
-                 │    Intent Bus    │
-                 └────────┬─────────┘
-                          │ intents
-                          ▼
-                 ┌──────────────────┐
-                 │ Execution Service│
-                 └────────┬─────────┘
-                          │ fills
-                          ▼
-                 ┌──────────────────┐
-                 │ Execution Ledger │
-                 └──────────────────┘
+                 ┌─────┐
+                 │User │
+                 └─┬───┘
+                   │ commands
+                   ▼
+           ┌──────────────────┐
+           │  Broker Agent    │
+           └──────┬───────────┘
+                  │ start_market_stream
+                  ▼
+           ┌──────────────────┐
+           │ Market Stream WF │
+           └──────┬───────────┘
+                  │ ticks
+                  ▼
+           ┌──────────────────┐
+           │ Feature Vector   │
+           └──────┬───────────┘
+                  │ history
+                  ▼
+           ┌──────────────────┐
+           │ Ensemble Agent   │<─────────────┐
+           └──────┬───────────┘              │
+                  │ orders                   │ nudges
+                  ▼                          │
+           ┌──────────────────┐              │
+           │ Mock Order WF    │              │
+           └──────┬───────────┘              │
+                  │ fills                    │
+                  ▼                          │
+           ┌──────────────────┐              │
+           │ Execution Ledger │              │
+           └──────────────────┘              │
+                                            ▼
+                                    ┌──────────┐
+                                    │ Nudge WF │
+                                    └──────────┘
 ```
 Each block corresponds to one or more MCP tools (Temporal workflows) described below.
 
@@ -72,6 +85,13 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 | Python       | 3.11 or newer| Data & strategy agents                       |
 | Temporal CLI | 1.24+        | `brew install temporal` or use Temporal Cloud|
 | Docker       | latest       | Local infra (Redis, Kafka, Postgres)         |
+
+Required environment variables:
+
+- `OPENAI_API_KEY` – enables the broker and ensemble agents to use OpenAI models.
+- `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` – API credentials for Coinbase Exchange.
+- `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` and `TASK_QUEUE` – Temporal connection settings (defaults are shown in `.env`).
+- `MCP_PORT` – port for the MCP server (defaults to `8080`).
 
 ### Quick Setup (local dev)
 ```bash
@@ -100,14 +120,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 
 ### Walking through the demo
 1. With the tmux session running, open a new terminal window.
-2. Kick off a market data workflow for Bitcoin:
-   ```bash
-   curl -X POST http://localhost:8080/mcp/tools/start_market_stream \
-     -H 'Accept: application/json, text/event-stream' \
-     -H 'Content-Type: application/json' \
-     -d '{"symbols": ["BTC/USD"], "interval_sec": 1}'
-   ```
-   The `broker_agent_client` does this automatically once you select trading pairs.
+2. When prompted for trading pairs, tell the broker agent **"all of them"**.
+   This instructs it to begin streaming data for every supported pair.
 3. `start_market_stream` spawns a `subscribe_cex_stream` workflow that
    broadcasts each ticker to its `ComputeFeatureVector` child.
 4. The ensemble agent wakes up periodically via a scheduled workflow and
@@ -125,21 +139,15 @@ also checks its current history length and continues early when it exceeds
 `ComputeFeatureVector` behaves the same way using the `VECTOR_CONTINUE_EVERY`
 and `VECTOR_HISTORY_LIMIT` environment variables.
 
-## Development Workflow
-- Create a new tool under `tools/` and register it with the MCP server.
-- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK.
-- Unit-test determinism with `make replay` to replay recent workflows.
-- Hot-reload – both MCP server and Python workers use `--watch` for instant feedback.
-- Deploy – push to `main`; CI builds a Docker image and promotes to your Temporal namespace.
-
 ## Repository Layout
 ```
-├── agents/          # Strategy & system agents (Python workers)
-├── tools/           # Durable tool workflows (Python + Temporal SDK)
-├── scripts/         # One-off maintenance & retraining jobs
-├── infra/           # docker-compose, terraform, helm charts
-├── docs/            # Deep-dives, ADRs, tool schemas
-└── tests/           # Pytest & Playwright test suites
+├── agents/          # Broker and ensemble agents
+├── tools/           # Durable workflows used as MCP tools
+├── mcp_server/      # FastAPI server exposing the tools
+├── worker/          # Temporal worker loading workflows
+├── tests/           # Unit tests for tools and agents
+├── run_stack.sh     # tmux helper to launch local stack
+└── ticker_ui_service.py  # Simple websocket ticker UI
 ```
 
 ## Contributing

@@ -109,7 +109,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    ```
    The `broker_agent_client` does this automatically once you select trading pairs.
 3. `start_market_stream` records ticks to the `market_tick` signal.
-4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
+4. `subscribe_cex_stream` launches `ComputeFeatureVector` workflows for each symbol and
+   signals them with fresh ticks.
 5. The ensemble agent wakes up periodically via a scheduled workflow and
    analyzes market data to decide whether to trade using `place_mock_order`.
 6. Filled orders are recorded in the

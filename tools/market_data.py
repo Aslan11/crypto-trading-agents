@@ -11,6 +11,7 @@ from typing import Any, List
 import aiohttp
 from pydantic import BaseModel
 from temporalio import activity, workflow
+from tools.feature_engineering import ComputeFeatureVector
 
 
 class MarketTick(BaseModel):
@@ -77,6 +78,14 @@ class SubscribeCEXStream:
         history_limit: int = STREAM_HISTORY_LIMIT,
     ) -> None:
         """Stream tickers indefinitely, continuing as new periodically."""
+        # Launch feature vector workflows for each symbol
+        for sym in symbols:
+            await workflow.start_child_workflow(
+                ComputeFeatureVector.run,
+                args=[sym],
+                id=f"feature-{sym.replace('/', '-')}",
+            )
+
         cycles = 0
         while True:
             tickers = await asyncio.gather(

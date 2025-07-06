@@ -56,7 +56,7 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
-| `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
+| `ComputeFeatureVector`   | Store tick history for queries                | Market tick           |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
 | `SignAndSendTx`          | Sign and broadcast an EVM transaction          | Execution             |
@@ -109,8 +109,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    ```
    The `broker_agent_client` does this automatically once you select trading pairs.
 3. `start_market_stream` records ticks to the `market_tick` signal.
-4. `subscribe_cex_stream` launches `ComputeFeatureVector` workflows for each symbol and
-   signals them with fresh ticks.
+4. `subscribe_cex_stream` launches a `ComputeFeatureVector` workflow per symbol
+   to record incoming ticks.
 5. The ensemble agent wakes up periodically via a scheduled workflow and
    analyzes market data to decide whether to trade using `place_mock_order`.
 6. Filled orders are recorded in the

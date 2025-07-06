@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 from collections import deque
-from typing import Deque, Dict, List
+from typing import Deque, Dict, List, Tuple
 
 import requests
 

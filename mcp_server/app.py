@@ -19,7 +19,6 @@ from starlette.requests import Request
 from tools.market_data import SubscribeCEXStream
 from tools.strategy_signal import EvaluateStrategyMomentum
 from tools.execution import PlaceMockOrder
-from tools.wallet import SignAndSendTx
 from agents.workflows import ExecutionLedgerWorkflow
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -147,6 +146,7 @@ async def get_historical_ticks(
     symbols: List[str] | None = None,
     symbol: str | None = None,
     days: int | None = None,
+    since_ts: int | None = None,
 ) -> Dict[str, List[Dict[str, float]]]:
     """Return historical ticks for one or more symbols.
 
@@ -159,6 +159,9 @@ async def get_historical_ticks(
     days:
         Number of days of history requested. ``None`` (default) returns **all**
         stored ticks.
+    since_ts:
+        Unix timestamp in seconds. If provided, overrides ``days`` and returns
+        ticks at or after this time.
     """
 
     if symbols is None:
@@ -166,7 +169,10 @@ async def get_historical_ticks(
             raise ValueError("symbol or symbols required")
         symbols = [symbol]
 
-    cutoff = 0 if days is None else int(datetime.now(timezone.utc).timestamp()) - days * 86400
+    if since_ts is not None:
+        cutoff = since_ts
+    else:
+        cutoff = 0 if days is None else int(datetime.now(timezone.utc).timestamp()) - days * 86400
     client = await get_temporal_client()
     results: Dict[str, List[Dict[str, float]]] = {}
     for sym in symbols:

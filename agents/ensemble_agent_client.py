@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from typing import Any, AsyncIterator, Set
+from typing import Any, AsyncIterator, Set, Dict
 import aiohttp
 import openai
 import logging
@@ -167,9 +167,7 @@ async def _ensure_schedule(client: Client) -> None:
             id="ensemble-nudge-wf",
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         ),
-        spec=ScheduleSpec(
-            intervals=[ScheduleIntervalSpec(every=timedelta(minutes=1))]
-        ),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(minutes=1))]),
     )
     await client.create_schedule(NUDGE_SCHEDULE_ID, schedule)
 
@@ -189,6 +187,8 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
         symbol_task = asyncio.create_task(
             _watch_symbols(http_session, base_url, symbols)
         )
+        # track the most recent tick timestamp sent for each symbol
+        last_tick_ts: Dict[str, int] = {}
         await _ensure_schedule(temporal)
 
         async with streamablehttp_client(mcp_url) as (
@@ -216,9 +216,18 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         {"symbols": sorted(symbols), "days": 1},
                     )
                     history = _tool_result_data(res)
+                    new_history: Dict[str, list] = {}
+                    for sym, ticks in history.items():
+                        last_ts = last_tick_ts.get(sym, 0)
+                        valid_ticks = [t for t in ticks if t.get("ts", 0) > last_ts]
+                        if valid_ticks:
+                            new_history[sym] = valid_ticks
+                        if ticks:
+                            max_ts = max(t.get("ts", 0) for t in ticks)
+                            last_tick_ts[sym] = max(last_ts, max_ts)
                     status_res = await session.call_tool("get_portfolio_status", {})
                     status = _tool_result_data(status_res)
-                    info = {"portfolio": status, "history": history}
+                    info = {"portfolio": status, "history": new_history}
                     conversation.append({"role": "user", "content": json.dumps(info)})
                     openai_tools = [
                         {
@@ -307,7 +316,6 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         conversation.append(
                             {"role": "assistant", "content": assistant_reply}
                         )
-                        conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                         break
 
 

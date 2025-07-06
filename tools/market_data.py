@@ -85,7 +85,7 @@ class SubscribeCEXStream:
                 )
                 for t in tickers
             ]
-            await asyncio.gather(*(t.result() for t in tasks))
+            await asyncio.gather(*tasks)
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 return

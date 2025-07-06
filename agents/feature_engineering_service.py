@@ -14,7 +14,7 @@ import json
 import aiohttp
 from temporalio.client import Client
 
-from agents.utils import print_banner, format_log
+from agents.utils import print_banner
 
 
 def _add_project_root_to_path() -> None:
@@ -39,7 +39,6 @@ logging.basicConfig(level=logging.INFO)
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
-LOG_EVERY = int(os.environ.get("LOG_EVERY", "10"))
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 TASK_QUEUE = os.environ.get("TASK_QUEUE", "mcp-tools")

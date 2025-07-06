@@ -8,6 +8,8 @@ import logging
 import os
 from typing import Any, List
 
+import aiohttp
+
 from pydantic import BaseModel
 from temporalio import activity, workflow
 from tools.feature_engineering import signal_compute_vector
@@ -20,6 +22,10 @@ class MarketTick(BaseModel):
     symbol: str
     data: dict[str, Any]
 
+
+# MCP server endpoint for recording tick signals
+MCP_HOST = os.environ.get("MCP_HOST", "localhost")
+MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
 # Automatically continue the workflow periodically to avoid unbounded history
 STREAM_CONTINUE_EVERY = int(os.environ.get("STREAM_CONTINUE_EVERY", "3600"))
@@ -47,6 +53,18 @@ async def fetch_ticker(symbol: str) -> dict[str, Any]:
         raise
     finally:
         await client.close()
+
+
+@activity.defn
+async def record_tick(tick: dict) -> None:
+    """Send tick payload to the MCP server signal log."""
+    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            await session.post(url, json=tick)
+        except Exception as exc:
+            logger.error("Failed to record tick: %s", exc)
 
 
 @workflow.defn
@@ -77,14 +95,22 @@ class SubscribeCEXStream:
                     for symbol in symbols
                 ]
             )
-            tasks = [
-                workflow.start_activity(
-                    signal_compute_vector,
-                    args=[t.get("symbol"), t],
-                    schedule_to_close_timeout=timedelta(seconds=5),
+            tasks = []
+            for t in tickers:
+                tasks.append(
+                    workflow.start_activity(
+                        record_tick,
+                        t,
+                        schedule_to_close_timeout=timedelta(seconds=5),
+                    )
                 )
-                for t in tickers
-            ]
+                tasks.append(
+                    workflow.start_activity(
+                        signal_compute_vector,
+                        args=[t.get("symbol"), t],
+                        schedule_to_close_timeout=timedelta(seconds=5),
+                    )
+                )
             await asyncio.gather(*tasks)
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:

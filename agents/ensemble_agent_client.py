@@ -75,6 +75,7 @@ async def _watch_symbols(
     session: aiohttp.ClientSession,
     base_url: str,
     symbols: Set[str],
+    ready: asyncio.Event | None = None,
 ) -> None:
     """Update ``symbols`` whenever the broker agent selects pairs."""
     cursor = 0
@@ -108,6 +109,8 @@ async def _watch_symbols(
                     if new_set != symbols:
                         symbols.clear()
                         symbols.update(new_set)
+                        if new_set and ready and not ready.is_set():
+                            ready.set()
                         print(
                             f"[EnsembleAgent] Active symbols updated: {sorted(symbols)}"
                         )
@@ -186,10 +189,12 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
             namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
         )
         symbols: Set[str] = set()
+        ready = asyncio.Event()
         symbol_task = asyncio.create_task(
-            _watch_symbols(http_session, base_url, symbols)
+            _watch_symbols(http_session, base_url, symbols, ready)
         )
         last_tick: dict[str, int] = {}
+        await ready.wait()
         await _ensure_schedule(temporal)
 
         async with streamablehttp_client(mcp_url) as (

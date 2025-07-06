@@ -108,12 +108,11 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
      -d '{"symbols": ["BTC/USD"], "interval_sec": 1}'
    ```
    The `broker_agent_client` does this automatically once you select trading pairs.
-3. `start_market_stream` records ticks to the `market_tick` signal.
-4. `subscribe_cex_stream` launches a `ComputeFeatureVector` workflow per symbol
-   to record incoming ticks.
-5. The ensemble agent wakes up periodically via a scheduled workflow and
+3. `start_market_stream` spawns a `subscribe_cex_stream` workflow that
+   broadcasts each ticker to its `ComputeFeatureVector` child.
+4. The ensemble agent wakes up periodically via a scheduled workflow and
    analyzes market data to decide whether to trade using `place_mock_order`.
-6. Filled orders are recorded in the
+5. Filled orders are recorded in the
    `ExecutionLedgerWorkflow`.
 
 

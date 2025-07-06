@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections import deque
 from decimal import Decimal
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from temporalio import workflow
 

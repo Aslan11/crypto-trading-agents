@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pprint import pformat
+from typing import Any
+
 
 def print_banner(name: str, purpose: str) -> None:
     """Print a simple ASCII banner with ``name`` and ``purpose``."""
@@ -12,9 +15,6 @@ def print_banner(name: str, purpose: str) -> None:
     for line in lines:
         print(f"* {line.ljust(width - 4)} *")
     print(border)
-
-from pprint import pformat
-from typing import Any
 
 
 def format_log(data: Any) -> str:

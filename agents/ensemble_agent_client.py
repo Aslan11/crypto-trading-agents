@@ -9,7 +9,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from temporalio.client import (
     Client,
     Schedule,
@@ -36,6 +36,8 @@ ALLOWED_TOOLS = {
 # broker agent applies the same limit to avoid exceeding the LLM context
 # window.
 MAX_CONVERSATION_LENGTH = 20
+# Maximum historical lookback in days for the initial tick request
+TICK_LOOKBACK_DAYS = int(os.environ.get("TICK_LOOKBACK_DAYS", "1"))
 
 NUDGE_SCHEDULE_ID = "ensemble-nudge"
 
@@ -51,7 +53,8 @@ SYSTEM_PROMPT = (
     "balances and open positions. These two tools must be invoked before making any "
     "trading decision. If you decide to trade, call `place_mock_order` with an intent "
     "containing `symbol`, `side` (BUY or SELL), `qty`, `price` and `type` (market or "
-    "limit). Briefly explain your reasoning whenever you execute a trade."
+    "limit). Include the `since_ts` parameter when requesting historical ticks so you "
+    "only fetch new data. Briefly explain your reasoning whenever you execute a trade."
 )
 
 
@@ -190,7 +193,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
             namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
         )
         symbols: Set[str] = set()
-        symbol_task = asyncio.create_task(
+        _symbol_task = asyncio.create_task(
             _watch_symbols(http_session, base_url, symbols)
         )
         # track the most recent tick timestamp sent for each symbol
@@ -217,9 +220,15 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     if not symbols:
                         continue
                     print(f"[EnsembleAgent] Nudge @ {ts} for {sorted(symbols)}")
+                    if last_tick_ts:
+                        since_ts = min(last_tick_ts.values())
+                    else:
+                        since_ts = int(
+                            datetime.now(timezone.utc).timestamp()
+                        ) - TICK_LOOKBACK_DAYS * 86400
                     res = await session.call_tool(
                         "get_historical_ticks",
-                        {"symbols": sorted(symbols), "days": 1},
+                        {"symbols": sorted(symbols), "since_ts": since_ts},
                     )
                     history = _tool_result_data(res)
                     new_history: Dict[str, list] = {}

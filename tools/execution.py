@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 @activity.defn
 async def mock_fill(intent: Dict) -> Dict:
     """Return a fill dict for the provided intent."""
-    qty = intent["qty"]
-    price = intent["price"]
+    qty = float(intent.get("qty") or intent.get("volume", 0))
+    price = float(intent.get("price", 0))
     cost = qty * price
     logger.info("Mock fill for %s %s @%s", intent["side"], qty, price)
     return {**intent, "fill_price": price, "cost": cost}

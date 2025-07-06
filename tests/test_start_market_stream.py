@@ -1,6 +1,6 @@
 import asyncio
 import os
-from temporalio.testing import docker_service
+from temporalio.testing import WorkflowEnvironment
 from fastapi.testclient import TestClient
 
 from mcp_server.app import app
@@ -10,9 +10,9 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_start_market_stream():
-    async with docker_service() as svc:
-        os.environ["TEMPORAL_ADDRESS"] = f"{svc.target_host}:{svc.grpc_port}"
-        os.environ["TEMPORAL_NAMESPACE"] = svc.namespace
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        os.environ["TEMPORAL_ADDRESS"] = env.client.config()["target"]
+        os.environ["TEMPORAL_NAMESPACE"] = env.client.namespace
         worker_task = asyncio.create_task(worker_main())
         client = TestClient(app)
         try:

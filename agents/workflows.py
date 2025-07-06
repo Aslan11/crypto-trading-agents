@@ -75,54 +75,6 @@ class EnsembleWorkflow:
         await workflow.wait_condition(lambda: False)
 
 
-@workflow.defn
-class MomentumWorkflow:
-    """Detect SMA crossovers from feature vectors."""
-
-    def __init__(self) -> None:
-        self.vectors: deque[Dict] = deque(maxlen=2)
-        self.signals: List[Dict] = []
-        self.cooldown = 30
-        self.last_sent = 0
-
-    @workflow.signal
-    def add_vector(self, vector: Dict) -> None:
-        self.vectors.append(vector)
-
-    @workflow.query
-    def next_signal(self, after_ts: int) -> Dict | None:
-        items = [s for s in self.signals if s["ts"] > after_ts]
-        return items[0] if items else None
-
-    @staticmethod
-    def _cross(prev: Dict, curr: Dict) -> str | None:
-        p1, p5 = prev.get("sma1"), prev.get("sma5")
-        c1, c5 = curr.get("sma1"), curr.get("sma5")
-        if None in (p1, p5, c1, c5):
-            return None
-        if p1 < p5 and c1 > c5:
-            return "BUY"
-        if p1 > p5 and c1 < c5:
-            return "SELL"
-        return None
-
-    @workflow.run
-    async def run(self, cooldown: int = 30) -> None:
-        self.cooldown = cooldown
-        while True:
-            await workflow.wait_condition(lambda: len(self.vectors) == 2)
-            prev, curr = self.vectors[0], self.vectors[1]
-            side = self._cross(prev, curr)
-            if not side:
-                self.vectors.popleft()
-                continue
-            now = int(workflow.now().timestamp())
-            if now - self.last_sent < self.cooldown:
-                self.vectors.popleft()
-                continue
-            self.last_sent = now
-            self.signals.append({"side": side, "ts": now})
-            self.vectors.popleft()
 
 
 @workflow.defn

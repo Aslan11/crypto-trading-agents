@@ -2,7 +2,7 @@ import asyncio
 import os
 
 import pytest
-from temporalio.testing import docker_service
+from temporalio.testing import WorkflowEnvironment
 from fastapi.testclient import TestClient
 
 from mcp_server.app import app
@@ -11,9 +11,9 @@ from worker.main import main as worker_main
 
 @pytest.mark.asyncio
 async def test_get_portfolio_status_includes_pnl():
-    async with docker_service() as svc:
-        os.environ["TEMPORAL_ADDRESS"] = f"{svc.target_host}:{svc.grpc_port}"
-        os.environ["TEMPORAL_NAMESPACE"] = svc.namespace
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        os.environ["TEMPORAL_ADDRESS"] = env.client.config()["target"]
+        os.environ["TEMPORAL_NAMESPACE"] = env.client.namespace
         worker_task = asyncio.create_task(worker_main())
         client = TestClient(app)
         try:

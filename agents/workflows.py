@@ -10,43 +10,6 @@ from temporalio import workflow
 
 
 @workflow.defn
-class FeatureStoreWorkflow:
-    """Persist feature vectors signalled from agents."""
-
-    def __init__(self) -> None:
-        self.store: Dict[Tuple[str, int], Dict] = {}
-        self.count = 0
-
-    @workflow.signal
-    def add_vector(self, symbol: str, ts: int, data: Dict) -> None:
-        self.store[(symbol, ts)] = data
-        self.count += 1
-
-    @workflow.query
-    def latest_vector(self, symbol: str) -> Dict | None:
-        matches = [(ts, vec) for (sym, ts), vec in self.store.items() if sym == symbol]
-        if not matches:
-            return None
-        ts, vec = max(matches, key=lambda kv: kv[0])
-        return vec
-
-    @workflow.query
-    def next_vector(self, symbol: str, after_ts: int) -> Tuple[int, Dict] | None:
-        items = sorted(
-            [(ts, v) for (sym, ts), v in self.store.items() if sym == symbol and ts > after_ts],
-            key=lambda kv: kv[0],
-        )
-        if not items:
-            return None
-        ts, vec = items[0]
-        return ts, vec
-
-    @workflow.run
-    async def run(self) -> None:
-        await workflow.wait_condition(lambda: False)
-
-
-@workflow.defn
 class EnsembleWorkflow:
     """Store latest prices and approved intents."""
 

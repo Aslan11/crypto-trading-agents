@@ -24,29 +24,29 @@ Temporal supplies resilient workflows while MCP gives agents a shared, tool-base
 
 ## Architecture
 ```
-┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│ Market Data │ ──▶│ Feature Vectors  │ ──▶│ Strategy Agents │
-│   Streams   │    │     Store        │    └───────┬─────────┘
-└─────────────┘    └──────────────────┘            │ signals
-                                                   ▼
-                                         ┌──────────────────┐
-                                         │ Ensemble & Risk  │
-                                         └────────┬─────────┘
-                                                  │ intents
-                                                  ▼
-                                         ┌──────────────────┐
-                                         │    Intent Bus    │
-                                         └────────┬─────────┘
-                                                  │ intents
-                                                  ▼
-                                         ┌──────────────────┐
-                                         │ Execution Service│
-                                         └────────┬─────────┘
-                                                  │ fills
-                                                  ▼
-                                         ┌──────────────────┐
-                                         │ Execution Ledger │
-                                         └──────────────────┘
+┌─────────────┐    ┌─────────────────┐
+│ Market Data │ ──▶│ Strategy Agents │
+│   Streams   │    └───────┬─────────┘
+└─────────────┘            │ signals
+                           ▼
+                 ┌──────────────────┐
+                 │ Ensemble & Risk  │
+                 └────────┬─────────┘
+                          │ intents
+                          ▼
+                 ┌──────────────────┐
+                 │    Intent Bus    │
+                 └────────┬─────────┘
+                          │ intents
+                          ▼
+                 ┌──────────────────┐
+                 │ Execution Service│
+                 └────────┬─────────┘
+                          │ fills
+                          ▼
+                 ┌──────────────────┐
+                 │ Execution Ledger │
+                 └──────────────────┘
 ```
 Each block corresponds to one or more MCP tools (Temporal workflows) described below.
 
@@ -56,7 +56,7 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
-| `ComputeFeatureVector`   | Compute rolling indicators from ticks          | Market tick           |
+| `ComputeFeatureVector`   | Store tick history for queries                | Market tick           |
 | `IntentBus`              | Broadcast approved intents to subscribers      | Approved intents      |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
 | `SignAndSendTx`          | Sign and broadcast an EVM transaction          | Execution             |
@@ -108,11 +108,11 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
      -d '{"symbols": ["BTC/USD"], "interval_sec": 1}'
    ```
    The `broker_agent_client` does this automatically once you select trading pairs.
-3. `start_market_stream` records ticks to the `market_tick` signal.
-4. The feature engineering service processes those ticks via `ComputeFeatureVector`.
-5. The ensemble agent wakes up periodically via a scheduled workflow and
+3. `start_market_stream` spawns a `subscribe_cex_stream` workflow that
+   broadcasts each ticker to its `ComputeFeatureVector` child.
+4. The ensemble agent wakes up periodically via a scheduled workflow and
    analyzes market data to decide whether to trade using `place_mock_order`.
-6. Filled orders are recorded in the
+5. Filled orders are recorded in the
    `ExecutionLedgerWorkflow`.
 
 
@@ -127,7 +127,7 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 
 ## Development Workflow
 - Create a new tool under `tools/` and register it with the MCP server.
-- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK. Use `subscribe_vectors(symbol)` from `agents.feature_engineering_service` to stream processed feature rows into your strategy logic.
+- Write a strategy agent in `agents/` that calls your tool via the MCP client SDK.
 - Unit-test determinism with `make replay` to replay recent workflows.
 - Hot-reload – both MCP server and Python workers use `--watch` for instant feedback.
 - Deploy – push to `main`; CI builds a Docker image and promotes to your Temporal namespace.

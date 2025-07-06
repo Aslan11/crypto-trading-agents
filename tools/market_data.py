@@ -9,8 +9,10 @@ import os
 from typing import Any, List
 
 import aiohttp
+
 from pydantic import BaseModel
 from temporalio import activity, workflow
+from tools.feature_engineering import signal_compute_vector
 
 
 class MarketTick(BaseModel):
@@ -21,8 +23,10 @@ class MarketTick(BaseModel):
     data: dict[str, Any]
 
 
+# MCP server endpoint for recording tick signals
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
+
 # Automatically continue the workflow periodically to avoid unbounded history
 STREAM_CONTINUE_EVERY = int(os.environ.get("STREAM_CONTINUE_EVERY", "3600"))
 STREAM_HISTORY_LIMIT = int(os.environ.get("STREAM_HISTORY_LIMIT", "9000"))
@@ -53,7 +57,7 @@ async def fetch_ticker(symbol: str) -> dict[str, Any]:
 
 @activity.defn
 async def record_tick(tick: dict) -> None:
-    """Send tick payload to MCP server signal log."""
+    """Send tick payload to the MCP server signal log."""
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
     timeout = aiohttp.ClientTimeout(total=5)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -77,6 +81,8 @@ class SubscribeCEXStream:
         history_limit: int = STREAM_HISTORY_LIMIT,
     ) -> None:
         """Stream tickers indefinitely, continuing as new periodically."""
+        # Feature vector workflows are started lazily via an activity
+
         cycles = 0
         while True:
             tickers = await asyncio.gather(
@@ -89,14 +95,23 @@ class SubscribeCEXStream:
                     for symbol in symbols
                 ]
             )
-            for ticker in tickers:
-                await workflow.execute_activity(
-                    record_tick,
-                    ticker,
-                    schedule_to_close_timeout=timedelta(seconds=5),
+            tasks = []
+            for t in tickers:
+                tasks.append(
+                    workflow.start_activity(
+                        record_tick,
+                        t,
+                        schedule_to_close_timeout=timedelta(seconds=5),
+                    )
                 )
-                if hasattr(workflow, "signal_child_workflows"):
-                    await workflow.signal_child_workflows("market_tick", ticker)
+                tasks.append(
+                    workflow.start_activity(
+                        signal_compute_vector,
+                        args=[t.get("symbol"), t],
+                        schedule_to_close_timeout=timedelta(seconds=5),
+                    )
+                )
+            await asyncio.gather(*tasks)
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 return

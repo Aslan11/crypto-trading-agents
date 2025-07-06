@@ -32,6 +32,11 @@ ALLOWED_TOOLS = {
     "get_portfolio_status",
 }
 
+# Maximum number of messages to keep in the conversation history. The
+# broker agent applies the same limit to avoid exceeding the LLM context
+# window.
+MAX_CONVERSATION_LENGTH = 20
+
 NUDGE_SCHEDULE_ID = "ensemble-nudge"
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -317,6 +322,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             {"role": "assistant", "content": assistant_reply}
                         )
                         break
+
+                    if len(conversation) > MAX_CONVERSATION_LENGTH:
+                        conversation = [conversation[0]] + conversation[-(MAX_CONVERSATION_LENGTH - 1):]
+
 
 
 if __name__ == "__main__":

@@ -1,15 +1,15 @@
 import os
 import json
 import asyncio
-from typing import Any, AsyncIterator, Set, Dict
+from typing import Any, AsyncIterator, Set
 import aiohttp
 import openai
 import logging
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
-from mcp.types import CallToolResult, TextContent
-from datetime import datetime, timedelta, timezone
+
+
 from temporalio.client import (
     Client,
     Schedule,
@@ -36,8 +36,6 @@ ALLOWED_TOOLS = {
 # broker agent applies the same limit to avoid exceeding the LLM context
 # window.
 MAX_CONVERSATION_LENGTH = 20
-# Maximum historical lookback in days for the initial tick request
-TICK_LOOKBACK_DAYS = int(os.environ.get("TICK_LOOKBACK_DAYS", "1"))
 
 NUDGE_SCHEDULE_ID = "ensemble-nudge"
 
@@ -48,36 +46,15 @@ openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
     "You are a portfolio management agent that wakes every minute when nudged. "
-    "On each and every nudge you must first call `get_historical_ticks` once with all "
-    "active symbols, followed immediately by `get_portfolio_status` to review cash "
-    "balances and open positions. These two tools must be invoked before making any "
-    "trading decision. If you decide to trade, call `place_mock_order` with an intent "
-    "containing `symbol`, `side` (BUY or SELL), `qty`, `price` and `type` (market or "
-    "limit). Include the `since_ts` parameter when requesting historical ticks so you "
-    "only fetch new data. Briefly explain your reasoning whenever you execute a trade."
+    "On each nudge call `get_historical_ticks` exactly once with all active symbols "
+    "and include a `since_ts` parameter so you only fetch new data. Immediately after "
+    "that, call `get_portfolio_status` exactly once to review cash balances and open "
+    "positions. Once you have this information you may decide whether to place a trade "
+    "using `place_mock_order` which requires `symbol`, `side` (BUY or SELL), `qty`, "
+    "`price` and `type` (market or limit). Briefly explain your reasoning whenever you "
+    "execute a trade."
 )
 
-
-def _tool_result_data(result: Any) -> Any:
-    """Return JSON-friendly data from a tool call result."""
-    if isinstance(result, CallToolResult):
-        if result.content:
-            parsed: list[Any] = []
-            for item in result.content:
-                if isinstance(item, TextContent):
-                    try:
-                        parsed.append(json.loads(item.text))
-                    except Exception:
-                        parsed.append(item.text)
-                else:
-                    parsed.append(
-                        item.model_dump() if hasattr(item, "model_dump") else item
-                    )
-            return parsed if len(parsed) > 1 else parsed[0]
-        return []
-    if hasattr(result, "model_dump"):
-        return result.model_dump()
-    return result
 
 
 async def _watch_symbols(
@@ -196,8 +173,6 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
         _symbol_task = asyncio.create_task(
             _watch_symbols(http_session, base_url, symbols)
         )
-        # track the most recent tick timestamp sent for each symbol
-        last_tick_ts: Dict[str, int] = {}
         await _ensure_schedule(temporal)
 
         async with streamablehttp_client(mcp_url) as (
@@ -220,30 +195,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     if not symbols:
                         continue
                     print(f"[EnsembleAgent] Nudge @ {ts} for {sorted(symbols)}")
-                    if last_tick_ts:
-                        since_ts = min(last_tick_ts.values())
-                    else:
-                        since_ts = int(
-                            datetime.now(timezone.utc).timestamp()
-                        ) - TICK_LOOKBACK_DAYS * 86400
-                    res = await session.call_tool(
-                        "get_historical_ticks",
-                        {"symbols": sorted(symbols), "since_ts": since_ts},
-                    )
-                    history = _tool_result_data(res)
-                    new_history: Dict[str, list] = {}
-                    for sym, ticks in history.items():
-                        last_ts = last_tick_ts.get(sym, 0)
-                        valid_ticks = [t for t in ticks if t.get("ts", 0) > last_ts]
-                        if valid_ticks:
-                            new_history[sym] = valid_ticks
-                        if ticks:
-                            max_ts = max(t.get("ts", 0) for t in ticks)
-                            last_tick_ts[sym] = max(last_ts, max_ts)
-                    status_res = await session.call_tool("get_portfolio_status", {})
-                    status = _tool_result_data(status_res)
-                    info = {"portfolio": status, "history": new_history}
-                    conversation.append({"role": "user", "content": json.dumps(info)})
+                    conversation.append({"role": "user", "content": f"nudge {ts}"})
                     openai_tools = [
                         {
                             "type": "function",

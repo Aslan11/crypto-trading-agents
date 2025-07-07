@@ -84,7 +84,7 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 |--------------|--------------|----------------------------------------------|
 | Python       | 3.11 or newer| Data & strategy agents                       |
 | Temporal CLI | 1.24+        | `brew install temporal` or use Temporal Cloud|
-| Docker       | latest       | Local infra (Redis, Kafka, Postgres)         |
+| tmux         | latest       | Required for `run_stack.sh` start script     |
 
 Required environment variables:
 
@@ -98,14 +98,14 @@ Required environment variables:
 # Clone and bootstrap
 git clone https://github.com/your-org/durable-crypto-agents.git
 cd durable-crypto-agents
-make dev-up        # spins up Temporal + infra via docker-compose
 
 # Activate Python env
 python -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install uv
+uv sync
 
-# Start MCP server
-python mcp_server/app.py
+# Launch the full stack
+./run_stack.sh
 ```
 Point your agent workers at `localhost:8080` (default MCP port) and confirm health at <http://localhost:8080/healthz>.
 

@@ -252,6 +252,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                 all_tools = tools_resp.tools
                 tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
                 conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+                last_since_ts = 0
                 print(
                     "[EnsembleAgent] Connected to MCP server with tools:",
                     [t.name for t in tools],
@@ -265,7 +266,11 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         {
                             "role": "user",
                             "content": json.dumps(
-                                {"nudge": ts, "symbols": sorted(symbols)}
+                                {
+                                    "nudge": ts,
+                                    "symbols": sorted(symbols),
+                                    "since_ts": last_since_ts,
+                                }
                             ),
                         }
                     )
@@ -310,6 +315,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                         f"[EnsembleAgent] Tool not allowed: {func_name}"
                                     )
                                     continue
+                                if func_name == "get_historical_ticks":
+                                    func_args["since_ts"] = last_since_ts
+                                    func_args["symbols"] = sorted(symbols)
                                 print(
                                     f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                                 )
@@ -322,6 +330,23 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                         "content": json.dumps(_tool_result_data(result)),
                                     }
                                 )
+                                if func_name == "get_historical_ticks":
+                                    try:
+                                        new_ts = max(
+                                            (
+                                                int(t.get("ts", 0))
+                                                for ticks in result.values()
+                                                for t in ticks
+                                            ),
+                                            default=last_since_ts,
+                                        )
+                                        if new_ts > last_since_ts:
+                                            last_since_ts = new_ts
+                                            print(
+                                                f"[EnsembleAgent] Updated since_ts to {last_since_ts}"
+                                            )
+                                    except Exception:
+                                        pass
                             continue
 
                         if msg.get("function_call"):
@@ -339,6 +364,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             if func_name not in ALLOWED_TOOLS:
                                 print(f"[EnsembleAgent] Tool not allowed: {func_name}")
                                 continue
+                            if func_name == "get_historical_ticks":
+                                func_args["since_ts"] = last_since_ts
+                                func_args["symbols"] = sorted(symbols)
                             print(
                                 f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
                             )
@@ -350,6 +378,23 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                     "content": json.dumps(_tool_result_data(result)),
                                 }
                             )
+                            if func_name == "get_historical_ticks":
+                                try:
+                                    new_ts = max(
+                                        (
+                                            int(t.get("ts", 0))
+                                            for ticks in result.values()
+                                            for t in ticks
+                                        ),
+                                        default=last_since_ts,
+                                    )
+                                    if new_ts > last_since_ts:
+                                        last_since_ts = new_ts
+                                        print(
+                                            f"[EnsembleAgent] Updated since_ts to {last_since_ts}"
+                                        )
+                                except Exception:
+                                    pass
                             continue
 
                         assistant_reply = msg.get("content", "")

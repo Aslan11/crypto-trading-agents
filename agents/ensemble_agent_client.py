@@ -90,7 +90,7 @@ SYSTEM_PROMPT = (
     "   • Never call `place_mock_order` for HOLD decisions.\n\n"
 
     # ───────────────────────────────  STATE PERSISTENCE  ───────────────────────────────
-    "After processing, store the newest tick timestamp per symbol for next nudge's `since_ts`.\n\n"
+    "After processing, store the newest tick timestamp for next nudge's `since_ts`.\n\n"
 
     # ───────────────────────────────  REPORTING  ───────────────────────────────
     "Output a structured report listing every symbol with its decision & rationale, "

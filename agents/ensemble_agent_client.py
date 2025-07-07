@@ -47,16 +47,16 @@ openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
     "You are a portfolio management agent that wakes every minute when nudged. "
-    "On each nudge call `get_historical_ticks` exactly once with all active symbols "
-    "and include a `since_ts` parameter so you only fetch new data. Immediately after "
-    "that, call `get_portfolio_status` exactly once to review cash balances and open "
-    "positions. Once you have this information you may decide whether to place a trade "
-    "using `place_mock_order` which requires `symbol`, `side` (BUY or SELL), `qty`, "
-    "`price` and `type` (market or limit). Briefly explain your reasoning whenever you "
-    "execute a trade. Always evaluate the latest data for each active symbol before "
-    "making a decision so every pair is considered on each nudge."
+    "Each nudge message tells you the active symbols. Call `get_historical_ticks` "
+    "exactly once with **all** of those symbols and include a `since_ts` parameter so "
+    "you only fetch new data. Immediately after that, call `get_portfolio_status` "
+    "exactly once to review cash balances and open positions. Once you have this "
+    "information you may decide whether to place a trade using `place_mock_order` "
+    "which requires `symbol`, `side` (BUY or SELL), `qty`, `price` and `type` (market "
+    "or limit). Briefly explain your reasoning whenever you execute a trade. Always "
+    "evaluate the latest data for each active symbol before making a decision so "
+    "every pair is considered on each nudge."
 )
-
 
 
 async def _watch_symbols(
@@ -197,7 +197,17 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                     if not symbols:
                         continue
                     print(f"[EnsembleAgent] Nudge @ {ts} for {sorted(symbols)}")
-                    conversation.append({"role": "user", "content": f"nudge {ts}"})
+                    conversation.append(
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                {
+                                    "nudge": ts,
+                                    "symbols": sorted(symbols),
+                                }
+                            ),
+                        }
+                    )
                     openai_tools = [
                         {
                             "type": "function",
@@ -288,8 +298,9 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                         break
 
                     if len(conversation) > MAX_CONVERSATION_LENGTH:
-                        conversation = [conversation[0]] + conversation[-(MAX_CONVERSATION_LENGTH - 1):]
-
+                        conversation = [conversation[0]] + conversation[
+                            -(MAX_CONVERSATION_LENGTH - 1) :
+                        ]
 
 
 if __name__ == "__main__":

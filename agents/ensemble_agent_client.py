@@ -52,7 +52,8 @@ SYSTEM_PROMPT = (
     "positions. Once you have this information you may decide whether to place a trade "
     "using `place_mock_order` which requires `symbol`, `side` (BUY or SELL), `qty`, "
     "`price` and `type` (market or limit). Briefly explain your reasoning whenever you "
-    "execute a trade."
+    "execute a trade. Always evaluate the latest data for each active symbol before "
+    "making a decision so every pair is considered on each nudge."
 )
 
 

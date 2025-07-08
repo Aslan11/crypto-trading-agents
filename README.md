@@ -44,7 +44,7 @@ Temporal supplies resilient workflows while MCP gives agents a shared, tool-base
                   │ history
                   ▼
            ┌──────────────────┐
-           │ Ensemble Agent   │<─────────────┐
+           │ Execution Agent   │<─────────────┐
            └──────┬───────────┘              │
                   │ orders                   │ nudges
                   ▼                          │
@@ -88,7 +88,7 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 
 Required environment variables:
 
-- `OPENAI_API_KEY` – enables the broker and ensemble agents to use OpenAI models.
+- `OPENAI_API_KEY` – enables the broker and execution agents to use OpenAI models.
 - `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` – API credentials for Coinbase Exchange.
 - `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` and `TASK_QUEUE` – Temporal connection settings (defaults are shown in `.env`).
 - `MCP_PORT` – port for the MCP server (defaults to `8080`).
@@ -124,7 +124,7 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
    This instructs it to begin streaming data for every supported pair.
 3. `start_market_stream` spawns a `subscribe_cex_stream` workflow that
    broadcasts each ticker to its `ComputeFeatureVector` child.
-4. The ensemble agent wakes up periodically via a scheduled workflow and
+4. The execution agent wakes up periodically via a scheduled workflow and
    analyzes market data to decide whether to trade using `place_mock_order`.
 5. Filled orders are recorded in the
    `ExecutionLedgerWorkflow`.
@@ -141,7 +141,7 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 
 ## Repository Layout
 ```
-├── agents/          # Broker and ensemble agents
+├── agents/          # Broker and execution agents
 ├── tools/           # Durable workflows used as MCP tools
 ├── mcp_server/      # FastAPI server exposing the tools
 ├── worker/          # Temporal worker loading workflows

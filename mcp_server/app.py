@@ -84,7 +84,7 @@ async def start_market_stream(
 ) -> Dict[str, str]:
     """Convenience wrapper around ``subscribe_cex_stream``.
 
-    Also records the selected symbols for the ensemble agent.
+    Also records the selected symbols for the execution agent.
     """
     result = await subscribe_cex_stream(symbols, interval_sec)
     signal_log.setdefault("active_symbols", []).append(

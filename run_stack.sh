@@ -29,7 +29,7 @@ fi
 # │ worker/main.py│ broker_agent_client.py │
 # ├───────────────┼────────────────────────┤
 # │ Pane 4        │ Pane 5                 │
-# │ ensemble_agent_client.py │ ticker_ui_service.py    │
+# │ execution_agent_client.py │ ticker_ui_service.py    │
 # └────────────────────────────────────────┘
 ###############################################################################
 
@@ -52,10 +52,10 @@ tmux send-keys    -t $MCP_PANE 'source .venv/bin/activate && PYTHONPATH="$PWD" p
 tmux select-pane  -t $WORKER_PANE
 BROKER_PANE=$(tmux split-window -h -P -F "#{pane_id}")
 tmux send-keys    -t $BROKER_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/broker_agent_client.py' C-m
-# 5. Pane 4 – ensemble agent (split Pane 3 vertically ↓)
+# 5. Pane 4 – execution agent (split Pane 3 vertically ↓)
 tmux select-pane  -t $BROKER_PANE
 ENS_PANE=$(tmux split-window -v -P -F "#{pane_id}")
-tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/ensemble_agent_client.py' C-m
+tmux send-keys    -t $ENS_PANE 'sleep 2 && source .venv/bin/activate && PYTHONPATH="$PWD" python agents/execution_agent_client.py' C-m
 # 6. Pane 5 – ticker UI (split Pane 4 horizontally →)
 tmux select-pane  -t $ENS_PANE
 UI_PANE=$(tmux split-window -h -P -F "#{pane_id}")

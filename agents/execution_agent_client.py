@@ -161,7 +161,7 @@ async def _watch_symbols(
                         symbols.clear()
                         symbols.update(new_set)
                         print(
-                            f"[EnsembleAgent] Active symbols updated: {sorted(symbols)}"
+                            f"[ExecutionAgent] Active symbols updated: {sorted(symbols)}"
                         )
         except Exception:
             await asyncio.sleep(1)
@@ -224,8 +224,8 @@ async def _ensure_schedule(client: Client) -> None:
     await client.create_schedule(NUDGE_SCHEDULE_ID, schedule)
 
 
-async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
-    """Run the ensemble agent and act on scheduled nudges."""
+async def run_execution_agent(server_url: str = "http://localhost:8080") -> None:
+    """Run the execution agent and act on scheduled nudges."""
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp/"
 
@@ -253,14 +253,14 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                 tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
                 conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
                 print(
-                    "[EnsembleAgent] Connected to MCP server with tools:",
+                    "[ExecutionAgent] Connected to MCP server with tools:",
                     [t.name for t in tools],
                 )
 
                 async for ts in _stream_nudges(http_session, base_url):
                     if not symbols:
                         continue
-                    print(f"[EnsembleAgent] Nudge @ {ts} for {sorted(symbols)}")
+                    print(f"[ExecutionAgent] Nudge @ {ts} for {sorted(symbols)}")
                     conversation.append(
                         {
                             "role": "user",
@@ -287,7 +287,7 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                             messages=conversation,
                             tools=openai_tools,
                             tool_choice="auto",
-                            prefix="[EnsembleAgent] Decision: ",
+                            prefix="[ExecutionAgent] Decision: ",
                             color=PINK,
                             reset=RESET,
                         )
@@ -307,11 +307,11 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 )
                                 if func_name not in ALLOWED_TOOLS:
                                     print(
-                                        f"[EnsembleAgent] Tool not allowed: {func_name}"
+                                        f"[ExecutionAgent] Tool not allowed: {func_name}"
                                     )
                                     continue
                                 print(
-                                    f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
+                                    f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} {func_args}{RESET}"
                                 )
                                 result = await session.call_tool(func_name, func_args)
                                 conversation.append(
@@ -337,10 +337,10 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
                                 msg["function_call"].get("arguments") or "{}"
                             )
                             if func_name not in ALLOWED_TOOLS:
-                                print(f"[EnsembleAgent] Tool not allowed: {func_name}")
+                                print(f"[ExecutionAgent] Tool not allowed: {func_name}")
                                 continue
                             print(
-                                f"{ORANGE}[EnsembleAgent] Tool requested: {func_name} {func_args}{RESET}"
+                                f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} {func_args}{RESET}"
                             )
                             result = await session.call_tool(func_name, func_args)
                             conversation.append(
@@ -365,5 +365,5 @@ async def run_ensemble_agent(server_url: str = "http://localhost:8080") -> None:
 
 if __name__ == "__main__":
     asyncio.run(
-        run_ensemble_agent(os.environ.get("MCP_SERVER", "http://localhost:8080"))
+        run_execution_agent(os.environ.get("MCP_SERVER", "http://localhost:8080"))
     )

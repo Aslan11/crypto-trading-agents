@@ -281,16 +281,21 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         for tool in tools
                     ]
                     while True:
-                        msg = stream_chat_completion(
-                            openai_client,
-                            model=os.environ.get("OPENAI_MODEL", "o4-mini"),
-                            messages=conversation,
-                            tools=openai_tools,
-                            tool_choice="auto",
-                            prefix="[ExecutionAgent] Decision: ",
-                            color=PINK,
-                            reset=RESET,
-                        )
+                        try:
+                            msg = stream_chat_completion(
+                                openai_client,
+                                model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+                                messages=conversation,
+                                tools=openai_tools,
+                                tool_choice="auto",
+                                prefix="[ExecutionAgent] Decision: ",
+                                color=PINK,
+                                reset=RESET,
+                            )
+                        except openai.OpenAIError as exc:
+                            print(f"[ExecutionAgent] LLM request failed: {exc}")
+                            conversation = [conversation[0], conversation[-1]]
+                            break
 
                         if msg.get("tool_calls"):
                             conversation.append(

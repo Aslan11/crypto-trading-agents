@@ -19,7 +19,10 @@ from starlette.requests import Request
 from tools.market_data import SubscribeCEXStream
 from tools.strategy_signal import EvaluateStrategyMomentum
 from tools.execution import PlaceMockOrder, OrderIntent
-from agents.workflows import ExecutionLedgerWorkflow
+from agents.workflows import (
+    ExecutionLedgerWorkflow,
+    BrokerAgentWorkflow,
+)
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
@@ -112,9 +115,21 @@ async def start_market_stream(
         ``workflow_id`` and ``run_id`` of the started workflow.
     """
     result = await subscribe_cex_stream(symbols, interval_sec)
-    signal_log.setdefault("active_symbols", []).append(
-        {"symbols": symbols, "ts": int(datetime.now(timezone.utc).timestamp())}
-    )
+    client = await get_temporal_client()
+    wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.signal("set_symbols", symbols)
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                BrokerAgentWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+            await handle.signal("set_symbols", symbols)
+        else:
+            raise
     return result
 
 

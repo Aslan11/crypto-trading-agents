@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 import logging
 from datetime import timedelta
-import aiohttp
 from temporalio import activity, workflow
+from temporalio.client import Client, RPCError, RPCStatusCode
+from agents.workflows import ExecutionAgentWorkflow
 
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
@@ -15,13 +16,24 @@ logger = logging.getLogger(__name__)
 
 @activity.defn
 async def record_nudge(payload: dict) -> None:
-    url = f"http://{MCP_HOST}:{MCP_PORT}/signal/ensemble_nudge"
-    timeout = aiohttp.ClientTimeout(total=5)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        try:
-            await session.post(url, json=payload)
-        except Exception as exc:
-            logger.error("Failed to record nudge: %s", exc)
+    """Signal the execution-agent workflow with the provided timestamp."""
+    address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+    namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+    wf_id = os.environ.get("EXECUTION_WF_ID", "execution-agent")
+    client = await Client.connect(address, namespace=namespace)
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.signal("nudge", payload.get("ts"))
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                ExecutionAgentWorkflow.run,
+                id=wf_id,
+                task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+            )
+            await handle.signal("nudge", payload.get("ts"))
+        else:
+            raise
 
 @workflow.defn
 class EnsembleNudgeWorkflow:

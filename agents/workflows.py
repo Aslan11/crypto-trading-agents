@@ -105,3 +105,43 @@ class ExecutionLedgerWorkflow:
     @workflow.run
     async def run(self) -> None:
         await workflow.wait_condition(lambda: False)
+
+
+@workflow.defn
+class BrokerAgentWorkflow:
+    """Workflow storing active trading symbols for the broker agent."""
+
+    def __init__(self) -> None:
+        self.symbols: list[str] = []
+
+    @workflow.signal
+    def set_symbols(self, symbols: list[str]) -> None:
+        self.symbols = list(symbols)
+
+    @workflow.query
+    def get_symbols(self) -> list[str]:
+        return list(self.symbols)
+
+    @workflow.run
+    async def run(self) -> None:
+        await workflow.wait_condition(lambda: False)
+
+
+@workflow.defn
+class ExecutionAgentWorkflow:
+    """Workflow that receives nudge signals for the execution agent."""
+
+    def __init__(self) -> None:
+        self.nudges: list[int] = []
+
+    @workflow.signal
+    def nudge(self, ts: int) -> None:
+        self.nudges.append(ts)
+
+    @workflow.query
+    def get_nudges(self) -> list[int]:
+        return list(self.nudges)
+
+    @workflow.run
+    async def run(self) -> None:
+        await workflow.wait_condition(lambda: False)

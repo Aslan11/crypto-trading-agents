@@ -18,7 +18,7 @@ from starlette.requests import Request
 # Import workflow classes
 from tools.market_data import SubscribeCEXStream
 from tools.strategy_signal import EvaluateStrategyMomentum
-from tools.execution import PlaceMockOrder
+from tools.execution import PlaceMockOrder, OrderIntent
 from agents.workflows import ExecutionLedgerWorkflow
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -54,7 +54,20 @@ async def get_temporal_client() -> Client:
 async def subscribe_cex_stream(
     symbols: List[str], interval_sec: int = 1
 ) -> Dict[str, str]:
-    """Start a durable workflow to stream market data from a CEX."""
+    """Start a durable workflow to stream market data from a CEX.
+
+    Parameters
+    ----------
+    symbols:
+        List of asset pairs in ``BASE/QUOTE`` format.
+    interval_sec:
+        Number of seconds between ticker fetches.
+
+    Returns
+    -------
+    Dict[str, str]
+        ``workflow_id`` and ``run_id`` of the started workflow.
+    """
     client = await get_temporal_client()
     workflow_id = f"stream-{secrets.token_hex(4)}"
     logger.info(
@@ -85,6 +98,18 @@ async def start_market_stream(
     """Convenience wrapper around ``subscribe_cex_stream``.
 
     Also records the selected symbols for the execution agent.
+
+    Parameters
+    ----------
+    symbols:
+        Trading pairs to stream.
+    interval_sec:
+        Seconds between ticker fetches.
+
+    Returns
+    -------
+    Dict[str, str]
+        ``workflow_id`` and ``run_id`` of the started workflow.
     """
     result = await subscribe_cex_stream(symbols, interval_sec)
     signal_log.setdefault("active_symbols", []).append(
@@ -97,7 +122,20 @@ async def start_market_stream(
 async def evaluate_strategy_momentum(
     signal: Dict[str, Any], cooldown_sec: int = 0
 ) -> Dict[str, Any]:
-    """Invoke the momentum strategy evaluation workflow."""
+    """Invoke the momentum strategy evaluation workflow.
+
+    Parameters
+    ----------
+    signal:
+        Raw strategy signal payload.
+    cooldown_sec:
+        Optional delay after logging the signal.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The logged ``signal`` payload.
+    """
     client = await get_temporal_client()
     workflow_id = f"momentum-{secrets.token_hex(4)}"
     logger.info("Evaluating momentum strategy: cooldown=%s", cooldown_sec)
@@ -119,8 +157,19 @@ async def evaluate_strategy_momentum(
         "destructiveHint": False,
     }
 )
-async def place_mock_order(intent: Dict[str, Any]) -> Dict[str, Any]:
-    """Simulate executing an order intent."""
+async def place_mock_order(intent: OrderIntent) -> Dict[str, Any]:
+    """Simulate executing an order intent.
+
+    Parameters
+    ----------
+    intent:
+        Order details with keys ``symbol``, ``side``, ``qty``, ``price`` and ``type``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Fill information including ``fill_price`` and ``cost``.
+    """
     client = await get_temporal_client()
     workflow_id = f"order-{secrets.token_hex(4)}"
     logger.info("Placing mock order via workflow %s", workflow_id)
@@ -200,7 +249,13 @@ async def get_historical_ticks(
 
 @app.tool(annotations={"title": "Get Portfolio Status", "readOnlyHint": True})
 async def get_portfolio_status() -> Dict[str, Any]:
-    """Retrieve current portfolio cash and positions from the ledger."""
+    """Retrieve current portfolio cash and positions from the ledger.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Cash balance, open positions, entry prices and PnL.
+    """
     client = await get_temporal_client()
     wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
     logger.info("Fetching portfolio status from %s", wf_id)

@@ -2,7 +2,6 @@ import os
 import json
 import asyncio
 from typing import Any, AsyncIterator, Set
-import aiohttp
 import openai
 import logging
 from mcp import ClientSession
@@ -123,83 +122,46 @@ def _tool_result_data(result: Any) -> Any:
     return result
 
 
-async def _watch_symbols(
-    session: aiohttp.ClientSession,
-    base_url: str,
-    symbols: Set[str],
-) -> None:
-    """Update ``symbols`` whenever the broker agent selects pairs."""
-    cursor = 0
-    url = base_url.rstrip("/") + "/signal/active_symbols"
-    headers = {"Accept": "text/event-stream"}
+async def _watch_symbols(client: Client, symbols: Set[str]) -> None:
+    """Poll broker workflow for selected symbols."""
+    wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
     while True:
         try:
-            async with session.get(
-                url, params={"after": cursor}, headers=headers
-            ) as resp:
-                if resp.status != 200:
-                    await asyncio.sleep(1)
-                    continue
-                while True:
-                    line = await resp.content.readline()
-                    if not line:
-                        break
-                    text = line.decode().strip()
-                    if not text or not text.startswith("data:"):
-                        continue
-                    try:
-                        evt = json.loads(text[5:].strip())
-                    except Exception:
-                        continue
-                    ts = evt.get("ts")
-                    syms = evt.get("symbols")
-                    if ts is None or not isinstance(syms, list):
-                        continue
-                    cursor = max(cursor, ts)
-                    new_set = set(syms)
-                    if new_set != symbols:
-                        symbols.clear()
-                        symbols.update(new_set)
-                        print(
-                            f"[ExecutionAgent] Active symbols updated: {sorted(symbols)}"
-                        )
-        except Exception:
-            await asyncio.sleep(1)
+            handle = client.get_workflow_handle(wf_id)
+            syms: list[str] = await handle.query("get_symbols")
+            new_set = set(syms)
+            if new_set != symbols:
+                symbols.clear()
+                symbols.update(new_set)
+                print(
+                    f"[ExecutionAgent] Active symbols updated: {sorted(symbols)}"
+                )
+        except RPCError as err:
+            if err.status != RPCStatusCode.NOT_FOUND:
+                print(f"[ExecutionAgent] Failed to query broker workflow: {err}")
+        except Exception as exc:
+            print(f"[ExecutionAgent] Error watching symbols: {exc}")
+        await asyncio.sleep(1)
 
 
-async def _stream_nudges(
-    session: aiohttp.ClientSession, base_url: str
-) -> AsyncIterator[int]:
-    """Yield timestamps from ensemble nudge events."""
+async def _stream_nudges(client: Client) -> AsyncIterator[int]:
+    """Yield timestamps from execution-agent workflow nudges."""
+    wf_id = os.environ.get("EXECUTION_WF_ID", "execution-agent")
     cursor = 0
-    url = base_url.rstrip("/") + "/signal/ensemble_nudge"
-    headers = {"Accept": "text/event-stream"}
     while True:
         try:
-            async with session.get(
-                url, params={"after": cursor}, headers=headers
-            ) as resp:
-                if resp.status != 200:
-                    await asyncio.sleep(1)
-                    continue
-                while True:
-                    line = await resp.content.readline()
-                    if not line:
-                        break
-                    text = line.decode().strip()
-                    if not text or not text.startswith("data:"):
-                        continue
-                    try:
-                        evt = json.loads(text[5:].strip())
-                    except Exception:
-                        continue
-                    ts = evt.get("ts")
-                    if ts is None:
-                        continue
-                    cursor = max(cursor, ts)
+            handle = client.get_workflow_handle(wf_id)
+            nudges: list[int] = await handle.query("get_nudges")
+            for ts in nudges:
+                if ts > cursor:
+                    cursor = ts
                     yield ts
-        except Exception:
-            await asyncio.sleep(1)
+        except RPCError as err:
+            if err.status != RPCStatusCode.NOT_FOUND:
+                print(f"[ExecutionAgent] Failed to query execution workflow: {err}")
+        except Exception as exc:
+            print(f"[ExecutionAgent] Error streaming nudges: {exc}")
+        await asyncio.sleep(1)
 
 
 async def _ensure_schedule(client: Client) -> None:
@@ -229,19 +191,15 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp/"
 
-    timeout = aiohttp.ClientTimeout(total=None)
-    async with aiohttp.ClientSession(timeout=timeout) as http_session:
-        temporal = await Client.connect(
-            os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
-            namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
-        )
-        symbols: Set[str] = set()
-        _symbol_task = asyncio.create_task(
-            _watch_symbols(http_session, base_url, symbols)
-        )
-        await _ensure_schedule(temporal)
+    temporal = await Client.connect(
+        os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
+        namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
+    )
+    symbols: Set[str] = set()
+    _symbol_task = asyncio.create_task(_watch_symbols(temporal, symbols))
+    await _ensure_schedule(temporal)
 
-        async with streamablehttp_client(mcp_url) as (
+    async with streamablehttp_client(mcp_url) as (
             read_stream,
             write_stream,
             _,
@@ -257,7 +215,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     [t.name for t in tools],
                 )
 
-                async for ts in _stream_nudges(http_session, base_url):
+                async for ts in _stream_nudges(temporal):
                     if not symbols:
                         continue
                     print(f"[ExecutionAgent] Nudge @ {ts} for {sorted(symbols)}")

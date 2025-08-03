@@ -8,6 +8,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
+from agents.context_manager import create_context_manager
 from datetime import timedelta
 from temporalio.client import (
     Client,
@@ -32,10 +33,7 @@ ALLOWED_TOOLS = {
     "get_portfolio_status",
 }
 
-# Maximum number of messages to keep in the conversation history. The
-# broker agent applies the same limit to avoid exceeding the LLM context
-# window.
-MAX_CONVERSATION_LENGTH = 20
+# Context management is now handled by the ContextManager class
 
 NUDGE_SCHEDULE_ID = "ensemble-nudge"
 
@@ -45,50 +43,57 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are a portfolio‑management agent in a proactive AI system that wakes only when nudged. "
-    "You have a moderate risk profile and focus on short‑horizon scalping. "
-    "You have complete agency and will not interact with humans, but you must obey EVERY rule below.\n\n"
-    # ───────────────────────────────  GLOBAL NUDGE LIFECYCLE  ───────────────────────────────
-    "**Exactly one `get_historical_ticks` per nudge**\n"
-    "   • Maintain an internal Boolean flag `called_ticks` (initially False each nudge).\n"
-    "   • When the nudge arrives, first set `called_ticks` to False.\n"
-    "   • Immediately call `get_historical_ticks` with:\n"
-    "       ▸ `symbols`: ALL followed tickers (no omissions)\n"
-    "       ▸ `since_ts`: the latest timestamp already processed (0 on first use)\n"
-    "   • After this call, set `called_ticks = True` and **never call it again** "
-    "until the next nudge. If logic ever tries a second call while `called_ticks` is True, "
-    "abort the call and treat it as a fatal logic error.\n\n"
-    "**Exactly one `get_portfolio_status` per nudge**, called *after* the single "
-    "`get_historical_ticks` call.\n\n"
-    # ───────────────────────────────  PER‑SYMBOL ANALYSIS  ───────────────────────────────
-    "For every symbol returned:\n"
-    "   • Combine new ticks with current positions & cash.\n"
-    "   • Decide: BUY, SELL, or HOLD.\n"
-    "   • Record a short rationale (even for HOLD).\n\n"
-    # ───────────────────────────────  SAFETY CHECKS  ───────────────────────────────
-    "Before placing an order:\n"
-    "   • BUY → ensure cash ≥ qty × price.\n"
-    "   • SELL → ensure position qty ≥ desired qty.\n"
-    "   • If either check fails, downgrade decision to HOLD.\n\n"
-    # ───────────────────────────────  ORDER EXECUTION  ───────────────────────────────
-    "Only when the **final** decision is BUY or SELL, call `place_mock_order` **once per trade** "
-    "with exactly the following payload (note the surrounding **`intent`** key):\n"
-    "      `{"
-    '"intent": {'
-    '"symbol": <str>, '
-    '"side": "BUY" | "SELL", '
-    '"qty": <number>, '
-    '"price": <number>, '
-    '"type": "market" | "limit"'
-    "}}`\n"
-    "   • Never pass 'HOLD' as the `side`.\n"
-    "   • Never call `place_mock_order` for HOLD decisions.\n\n"
-    # ───────────────────────────────  STATE PERSISTENCE  ───────────────────────────────
-    "After processing, store the newest tick timestamp for next nudge's `since_ts`.\n\n"
-    # ───────────────────────────────  REPORTING  ───────────────────────────────
-    "Output a structured report listing every symbol with its decision & rationale, "
-    "then list any order intents submitted.\n\n"
-    "All rules are mandatory. Skipping, reordering, or violating any rule constitutes a fatal error."
+    "You are an autonomous portfolio management agent with moderate risk tolerance. "
+    "You operate on scheduled nudges and make data-driven trading decisions for cryptocurrency pairs.\n\n"
+    
+    "OPERATIONAL WORKFLOW:\n"
+    "Each nudge triggers this sequence:\n"
+    "1. Call `get_historical_ticks` once with all symbols and latest processed timestamp\n"
+    "2. Call `get_portfolio_status` once to get current positions and cash\n"
+    "3. Analyze each symbol for trading opportunities\n"
+    "4. Execute safety checks before placing any orders\n"
+    "5. Submit approved orders and generate summary report\n\n"
+    
+    "DECISION FRAMEWORK:\n"
+    "For each symbol, analyze:\n"
+    "• Price momentum and trend direction from recent ticks\n"
+    "• Volume patterns and market liquidity\n"
+    "• Current position size and portfolio balance\n"
+    "• Risk-reward ratio for potential trades\n"
+    "• Market correlation and portfolio diversification\n\n"
+    
+    "Make one of three decisions: BUY, SELL, or HOLD\n"
+    "Always provide clear rationale for each decision.\n\n"
+    
+    "RISK MANAGEMENT:\n"
+    "Before executing any trade:\n"
+    "• BUY orders: Ensure available cash ≥ (quantity × price × 1.01) for slippage\n"
+    "• SELL orders: Ensure current position ≥ desired sell quantity\n"
+    "• Limit individual position sizes to reasonable portfolio percentages\n"
+    "• If safety checks fail, default to HOLD decision\n\n"
+    
+    "ORDER EXECUTION:\n"
+    "For BUY or SELL decisions, use `place_mock_order` with this exact structure:\n"
+    '{\n'
+    '  "intent": {\n'
+    '    "symbol": <string>,\n'
+    '    "side": "BUY" | "SELL",\n'
+    '    "qty": <number>,\n'
+    '    "price": <number>,\n'
+    '    "type": "market" | "limit"\n'
+    '  }\n'
+    '}\n\n'
+    
+    "Never submit orders for HOLD decisions.\n\n"
+    
+    "REPORTING:\n"
+    "Provide a structured summary containing:\n"
+    "• Analysis and decision for each symbol with rationale\n"
+    "• List of orders submitted (if any)\n"
+    "• Portfolio impact and risk assessment\n"
+    "• Key market observations\n\n"
+    
+    "Remember the latest timestamp from processed ticks for the next nudge cycle."
 )
 
 
@@ -202,6 +207,10 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp/"
 
+    # Initialize context manager
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+    context_manager = create_context_manager(model=model, openai_client=openai_client)
+
     temporal = await Client.connect(
         os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
         namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
@@ -263,7 +272,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         )
                     except openai.OpenAIError as exc:
                         print(f"[ExecutionAgent] LLM request failed: {exc}")
-                        conversation = [conversation[0], conversation[-1]]
+                        # Keep system prompt and last user message on error
+                        if len(conversation) >= 2:
+                            conversation = [conversation[0], conversation[-1]]
                         break
 
                     if msg.get("tool_calls"):
@@ -330,10 +341,8 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     )
                     break
 
-                if len(conversation) > MAX_CONVERSATION_LENGTH:
-                    conversation = [conversation[0]] + conversation[
-                        -(MAX_CONVERSATION_LENGTH - 1) :
-                    ]
+                # Manage conversation context intelligently
+                conversation = await context_manager.manage_context(conversation)
 
 
 if __name__ == "__main__":

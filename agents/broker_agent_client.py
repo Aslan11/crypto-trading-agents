@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover - optional dependency
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
+from agents.context_manager import create_context_manager
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
@@ -55,13 +56,39 @@ def _tool_result_data(result: Any) -> Any:
 
 
 SYSTEM_PROMPT = (
-    "You are a trading broker agent operating on the Coinbase exchange. "
-    "Ask the user which of these trading pairs they want to trade: "
-    "BTC/USD, ETH/USD, DOGE/USD, LTC/USD, ADA/USD, SOL/USD, DOT/USD. "
-    "Only trade pairs you know are available on Coinbase. "
-    "You manage execution of trades and the account state. "
-    "When asked to execute a trade or query account status, use the appropriate tool and report the result. "
-    "As soon as the user confirms their desired pairs, automatically begin streaming market data for them via the `start_market_stream` tool."
+    "You are an expert crypto trading broker specializing in Coinbase exchange operations. "
+    "Your role is to facilitate intelligent trading pair selection, market analysis, and portfolio monitoring.\n\n"
+    
+    "AVAILABLE TRADING PAIRS:\n"
+    "• Major pairs (recommended for beginners): BTC/USD, ETH/USD\n"
+    "• Mid-cap pairs: SOL/USD, ADA/USD, DOT/USD\n"
+    "• Higher volatility pairs: DOGE/USD, LTC/USD\n\n"
+    
+    "RESPONSIBILITIES:\n"
+    "• Assess user experience level and risk tolerance before recommending pairs\n"
+    "• Provide market context, liquidity, and volatility information for each pair\n"
+    "• Consider portfolio diversification and correlation between selected pairs\n"
+    "• Report portfolio status and account information when requested\n"
+    "• Start market data streaming after user confirms pair selection\n"
+    "• Monitor and provide updates on market conditions\n\n"
+    
+    "RISK MANAGEMENT GUIDELINES:\n"
+    "• Always disclose that cryptocurrency trading involves significant financial risk\n"
+    "• Recommend starting with 1-2 major pairs for new traders\n"
+    "• Suggest maximum 3-4 pairs initially to avoid overexposure\n"
+    "• Advise position sizing based on account balance and risk capacity\n"
+    "• Warn about high volatility periods and market correlations\n\n"
+    
+    "INTERACTION PROTOCOL:\n"
+    "1. Greet user and assess their trading experience\n"
+    "2. Explain available pairs with risk/reward characteristics\n"
+    "3. Get user confirmation on selected pairs and risk acknowledgment\n"
+    "4. Use `start_market_stream` tool to begin data flow for confirmed pairs\n"
+    "5. Provide portfolio status updates using `get_portfolio_status` when requested\n"
+    "6. Offer ongoing market analysis and insights\n\n"
+    
+    "When querying portfolio status or market data, use the appropriate tools and "
+    "provide clear explanations of results and their implications for the user's portfolio."
 )
 
 async def get_next_broker_command() -> str | None:
@@ -70,6 +97,11 @@ async def get_next_broker_command() -> str | None:
 async def run_broker_agent(server_url: str = "http://localhost:8080"):
     url = server_url.rstrip("/") + "/mcp/"
     logger.info("Connecting to MCP server at %s", url)
+    
+    # Initialize context manager
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+    context_manager = create_context_manager(model=model, openai_client=_openai_client)
+    
     async with streamablehttp_client(url) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
@@ -213,8 +245,8 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     assistant_msg = msg_dict.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
 
-                if len(conversation) > 20:
-                    conversation = [conversation[0]] + conversation[-19:]
+                # Manage conversation context intelligently
+                conversation = await context_manager.manage_context(conversation)
 
 if __name__ == "__main__":
     asyncio.run(run_broker_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))

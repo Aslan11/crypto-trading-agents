@@ -17,6 +17,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from agents.prompt_manager import create_prompt_manager
 from agents.workflows import JudgeAgentWorkflow, ExecutionLedgerWorkflow
 from tools.performance_analysis import PerformanceAnalyzer, format_performance_report
+from tools.agent_logger import AgentLogger
 
 ORANGE = "\033[33m"
 CYAN = "\033[36m"
@@ -39,6 +40,7 @@ class JudgeAgent:
         self.mcp_session = mcp_session
         self.performance_analyzer = PerformanceAnalyzer()
         self.prompt_manager = None
+        self.agent_logger = AgentLogger("judge_agent")
         
         # Evaluation criteria weights
         self.criteria_weights = {
@@ -488,6 +490,40 @@ Respond in JSON format:
             
             # Record evaluation
             await self.record_evaluation(evaluation)
+            
+            # Log comprehensive evaluation to file
+            try:
+                self.agent_logger.log_summary(
+                    summary_type="performance_evaluation",
+                    data={
+                        "evaluation_period_days": evaluation.get("evaluation_period_days", 7),
+                        "overall_score": evaluation["overall_score"],
+                        "component_scores": evaluation["component_scores"],
+                        "performance_metrics": {
+                            "total_trades": evaluation["metrics"]["total_trades"],
+                            "annualized_return": evaluation["metrics"]["annualized_return"],
+                            "sharpe_ratio": evaluation["metrics"]["sharpe_ratio"],
+                            "max_drawdown": evaluation["metrics"]["max_drawdown"],
+                            "win_rate": evaluation["metrics"]["win_rate"]
+                        },
+                        "decision_analysis": evaluation["decision_analysis"],
+                        "prompt_update": evaluation.get("prompt_update", {"implemented": False}),
+                        "recommendations": evaluation.get("recommendations", [])
+                    },
+                    performance_data=performance_data,
+                    trigger_type=performance_data.get("trigger_type", "scheduled")
+                )
+                
+                # Log prompt update action if one was implemented
+                if evaluation.get("prompt_update", {}).get("implemented"):
+                    self.agent_logger.log_action(
+                        action_type="prompt_update",
+                        details=evaluation["prompt_update"]["update_spec"],
+                        result={"success": True}
+                    )
+                    
+            except Exception as log_error:
+                logger.error(f"Failed to log evaluation: {log_error}")
             
             # Mark any trigger requests as processed
             await self._mark_triggers_processed()

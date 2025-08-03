@@ -20,6 +20,7 @@ class ExecutionLedgerWorkflow:
         self.entry_price: Dict[str, Decimal] = {}
         self.fill_count = 0
         self.transaction_history: List[Dict] = []
+        self.realized_pnl = Decimal("0")  # Track actual realized gains/losses from closed positions
 
     @workflow.signal
     def record_fill(self, fill: Dict) -> None:
@@ -53,9 +54,17 @@ class ExecutionLedgerWorkflow:
                     (avg_price * current_qty + price * qty) / new_qty
                 )
             self.positions[symbol] = new_qty
-        else:
+        else:  # SELL
             self.cash += cost
             new_qty = current_qty - qty
+            
+            # Calculate realized PnL for the sold quantity
+            if current_qty > 0 and symbol in self.entry_price:
+                entry_price = self.entry_price[symbol]
+                # Realized PnL = (sell_price - entry_price) * quantity_sold
+                position_realized_pnl = (price - entry_price) * qty
+                self.realized_pnl += position_realized_pnl
+            
             if new_qty <= 0:
                 self.positions.pop(symbol, None)
                 self.entry_price.pop(symbol, None)
@@ -65,23 +74,11 @@ class ExecutionLedgerWorkflow:
 
     @workflow.query
     def get_pnl(self) -> float:
-        position_value = sum(
-            q * self.last_price.get(sym, Decimal("0"))
-            for sym, q in self.positions.items()
-        )
-        pnl = (self.cash + position_value) - self.initial_cash
-        return float(pnl)
-
-    @workflow.query
-    def get_realized_pnl(self) -> float:
-        """Calculate realized PnL from completed transactions (cash gained/lost from trading)."""
-        # Realized PnL is simply the change in cash from trading activities
-        realized_pnl = self.cash - self.initial_cash
-        return float(realized_pnl)
-
-    @workflow.query
-    def get_unrealized_pnl(self) -> float:
-        """Calculate unrealized PnL from current open positions."""
+        """Calculate total PnL as the sum of realized + unrealized PnL."""
+        return float(self.realized_pnl + self.get_unrealized_pnl_decimal())
+    
+    def get_unrealized_pnl_decimal(self) -> Decimal:
+        """Calculate unrealized PnL from current open positions (internal helper)."""
         unrealized_pnl = Decimal("0")
         
         for symbol, quantity in self.positions.items():
@@ -94,7 +91,17 @@ class ExecutionLedgerWorkflow:
                     position_pnl = (current_price - entry_price) * quantity
                     unrealized_pnl += position_pnl
         
-        return float(unrealized_pnl)
+        return unrealized_pnl
+
+    @workflow.query
+    def get_realized_pnl(self) -> float:
+        """Calculate realized PnL from completed transactions (closed positions only)."""
+        return float(self.realized_pnl)
+
+    @workflow.query
+    def get_unrealized_pnl(self) -> float:
+        """Calculate unrealized PnL from current open positions."""
+        return float(self.get_unrealized_pnl_decimal())
 
     @workflow.query
     def get_cash(self) -> float:

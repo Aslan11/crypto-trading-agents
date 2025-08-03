@@ -22,6 +22,7 @@ from temporalio.client import (
 )
 from tools.ensemble_nudge import EnsembleNudgeWorkflow
 from agents.workflows import BrokerAgentWorkflow, ExecutionAgentWorkflow
+from tools.agent_logger import AgentLogger
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
@@ -285,6 +286,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
             # Track latest processed timestamp for data continuity
             latest_processed_ts = None
             
+            # Initialize agent logger
+            agent_logger = AgentLogger("execution_agent")
+            
             async for ts in _stream_nudges(temporal):
                 if not symbols:
                     continue
@@ -323,22 +327,26 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 
                 # Extract and update latest processed timestamp for next cycle
                 historical_ticks_data = _tool_result_data(historical_data)
+                
                 if historical_ticks_data and isinstance(historical_ticks_data, dict):
                     # Find the latest timestamp from all symbols' tick data
                     max_timestamp = 0
-                    for symbol_data in historical_ticks_data.values():
+                    
+                    for symbol, symbol_data in historical_ticks_data.items():
                         if isinstance(symbol_data, list) and symbol_data:
                             # Get the latest timestamp from this symbol's ticks
-                            symbol_max = max(tick.get('timestamp', 0) for tick in symbol_data if isinstance(tick, dict))
-                            max_timestamp = max(max_timestamp, symbol_max)
+                            for tick in symbol_data:
+                                if isinstance(tick, dict):
+                                    # Try both 'ts' and 'timestamp' fields
+                                    tick_ts = tick.get('ts', 0) or tick.get('timestamp', 0)
+                                    if tick_ts > 0:
+                                        max_timestamp = max(max_timestamp, tick_ts)
                     
                     if max_timestamp > 0:
                         latest_processed_ts = max_timestamp
                         print(f"[ExecutionAgent] Updated latest processed timestamp: {latest_processed_ts}")
                     else:
                         print(f"[ExecutionAgent] Warning: No valid timestamps found in tick data")
-                else:
-                    print(f"[ExecutionAgent] Warning: Invalid historical tick data format")
                 
                 # Compile all data for LLM analysis
                 collected_data = {
@@ -459,6 +467,49 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     conversation.append(
                         {"role": "assistant", "content": assistant_reply}
                     )
+                    
+                    # Log comprehensive decision with all context
+                    try:
+                        # Extract decisions from the current cycle only (tool calls made in this response)
+                        decisions_made = []
+                        if msg.get("tool_calls"):
+                            for tool_call in msg["tool_calls"]:
+                                if tool_call["function"]["name"] == "place_mock_order":
+                                    order_args = json.loads(tool_call["function"]["arguments"])
+                                    decisions_made.append({
+                                        "action": "place_order",
+                                        "details": order_args
+                                    })
+                        
+                        # Log the comprehensive decision
+                        agent_logger.log_decision(
+                            nudge_timestamp=ts,
+                            symbols=sorted(symbols),
+                            market_data={"historical_ticks": _tool_result_data(historical_data)},
+                            portfolio_data=_tool_result_data(portfolio_data),
+                            user_preferences=_tool_result_data(user_preferences),
+                            decisions={
+                                "orders_placed": len(decisions_made),
+                                "decisions": decisions_made,
+                                "hold_decisions": len(symbols) - len(decisions_made)
+                            },
+                            reasoning=assistant_reply,
+                            performance_metrics=_tool_result_data(performance_metrics),
+                            risk_metrics=_tool_result_data(risk_metrics),
+                            latest_processed_timestamp=latest_processed_ts
+                        )
+                        
+                        # Log each individual action
+                        for decision in decisions_made:
+                            agent_logger.log_action(
+                                action_type="order_placement",
+                                details=decision["details"],
+                                nudge_timestamp=ts
+                            )
+                            
+                    except Exception as log_error:
+                        print(f"[ExecutionAgent] Failed to log decision: {log_error}")
+                    
                     break
 
                 # Manage conversation context intelligently

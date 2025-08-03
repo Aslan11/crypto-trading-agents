@@ -24,10 +24,21 @@ from agents.workflows import (
     BrokerAgentWorkflow,
     JudgeAgentWorkflow,
 )
+from tools.agent_logger import AgentLogger
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+# Initialize market tick logger for data continuity monitoring
+market_tick_logger = AgentLogger("market_data")
+
+# Track tick statistics for continuity monitoring
+tick_stats = {
+    "symbols": {},  # symbol -> {count, last_timestamp, first_timestamp}
+    "total_ticks": 0,
+    "session_start": int(datetime.now(timezone.utc).timestamp())
+}
 
 # Initialize FastMCP
 app = FastMCP("crypto-trading-server")
@@ -693,6 +704,47 @@ async def workflow_status(request: Request) -> Response:
     return JSONResponse({"status": status_name, "result": result})
 
 
+def _log_tick_continuity_summary() -> None:
+    """Log a summary of tick data continuity for monitoring."""
+    try:
+        current_time = int(datetime.now(timezone.utc).timestamp())
+        session_duration = current_time - tick_stats["session_start"]
+        
+        # Calculate continuity metrics per symbol
+        symbol_continuity = {}
+        for symbol, stats in tick_stats["symbols"].items():
+            data_span = stats["last_timestamp"] - stats["first_timestamp"]
+            expected_ticks = max(1, data_span)  # Assume ~1 tick per second
+            continuity_ratio = stats["count"] / expected_ticks if expected_ticks > 0 else 1.0
+            
+            symbol_continuity[symbol] = {
+                "tick_count": stats["count"],
+                "data_span_seconds": data_span,
+                "continuity_ratio": min(1.0, continuity_ratio),
+                "first_tick": stats["first_timestamp"],
+                "latest_tick": stats["last_timestamp"],
+                "gap_from_now": current_time - stats["last_timestamp"]
+            }
+        
+        market_tick_logger.log_summary(
+            summary_type="tick_continuity_report",
+            data={
+                "session_duration_seconds": session_duration,
+                "total_ticks_received": tick_stats["total_ticks"],
+                "symbols_tracked": len(tick_stats["symbols"]),
+                "symbols_continuity": symbol_continuity,
+                "overall_tick_rate": tick_stats["total_ticks"] / session_duration if session_duration > 0 else 0,
+                "potential_gaps": [
+                    symbol for symbol, stats in symbol_continuity.items() 
+                    if stats["gap_from_now"] > 30  # More than 30 seconds since last tick
+                ]
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to log tick continuity summary: {e}")
+
+
 @app.custom_route("/signal/{name}", methods=["POST"])
 async def record_signal(request: Request) -> Response:
     """Record a signal event for services still using HTTP polling."""
@@ -704,6 +756,53 @@ async def record_signal(request: Request) -> Response:
         ts = int(datetime.now(timezone.utc).timestamp())
         payload["ts"] = ts
     signal_log.setdefault(name, []).append(payload)
+    
+    # Log market tick data for continuity monitoring
+    if name == "market_tick":
+        try:
+            symbol = payload.get("symbol")
+            tick_timestamp = payload.get("timestamp", ts)
+            
+            # Update tick statistics
+            tick_stats["total_ticks"] += 1
+            if symbol:
+                if symbol not in tick_stats["symbols"]:
+                    tick_stats["symbols"][symbol] = {
+                        "count": 0,
+                        "first_timestamp": tick_timestamp,
+                        "last_timestamp": tick_timestamp
+                    }
+                
+                symbol_stats = tick_stats["symbols"][symbol]
+                symbol_stats["count"] += 1
+                symbol_stats["last_timestamp"] = max(symbol_stats["last_timestamp"], tick_timestamp)
+                symbol_stats["first_timestamp"] = min(symbol_stats["first_timestamp"], tick_timestamp)
+            
+            # Log individual tick
+            market_tick_logger.log_action(
+                action_type="market_tick_received",
+                details={
+                    "symbol": symbol,
+                    "price": payload.get("price"),
+                    "timestamp": tick_timestamp,
+                    "volume": payload.get("volume"),
+                    "high": payload.get("high"),
+                    "low": payload.get("low"),
+                    "open": payload.get("open"),
+                    "close": payload.get("close")
+                },
+                result={"recorded": True},
+                signal_name=name,
+                payload_timestamp=ts
+            )
+            
+            # Log periodic summary (every 100 ticks)
+            if tick_stats["total_ticks"] % 100 == 0:
+                _log_tick_continuity_summary()
+                
+        except Exception as log_error:
+            logger.error(f"Failed to log market tick: {log_error}")
+    
     logger.debug("Recorded signal %s", name)
     return Response(status_code=204)
 

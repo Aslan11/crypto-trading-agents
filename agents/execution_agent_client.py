@@ -9,6 +9,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
 from agents.context_manager import create_context_manager
+from agents.prompt_manager import create_prompt_manager
 from datetime import timedelta
 from temporalio.client import (
     Client,
@@ -43,8 +44,9 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are an autonomous portfolio management agent with moderate risk tolerance. "
-    "You operate on scheduled nudges and make data-driven trading decisions for cryptocurrency pairs.\n\n"
+    "You are an autonomous portfolio management agent with adaptive risk tolerance. "
+    "You operate on scheduled nudges and make data-driven trading decisions for cryptocurrency pairs "
+    "based on user preferences and risk profile.\n\n"
     
     "OPERATIONAL WORKFLOW:\n"
     "Each nudge triggers this sequence:\n"
@@ -207,14 +209,15 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp/"
 
-    # Initialize context manager
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o")
-    context_manager = create_context_manager(model=model, openai_client=openai_client)
-
     temporal = await Client.connect(
         os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
         namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
     )
+    
+    # Initialize context and prompt managers
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+    context_manager = create_context_manager(model=model, openai_client=openai_client)
+    prompt_manager = await create_prompt_manager(temporal_client=temporal)
     symbols: Set[str] = set()
     _symbol_task = asyncio.create_task(_watch_symbols(temporal, symbols))
     await _ensure_schedule(temporal)
@@ -229,7 +232,41 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
             tools_resp = await session.list_tools()
             all_tools = tools_resp.tools
             tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
-            conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+            
+            # Get user preferences to incorporate into prompt
+            user_preferences = {}
+            try:
+                broker_handle = temporal.get_workflow_handle(os.environ.get("BROKER_WF_ID", "broker-agent"))
+                await broker_handle.describe()
+                user_preferences = await broker_handle.query("get_user_preferences")
+                print(f"[ExecutionAgent] Retrieved user preferences: risk_tolerance={user_preferences.get('risk_tolerance', 'moderate')}")
+            except Exception as exc:
+                print(f"[ExecutionAgent] Could not retrieve user preferences, using defaults: {exc}")
+                user_preferences = {"risk_tolerance": "moderate", "experience_level": "intermediate"}
+
+            # Get current prompt dynamically with user preferences context
+            current_prompt = SYSTEM_PROMPT  # Default fallback
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # Pass user preferences as context to the prompt manager
+                    context = {
+                        "risk_mode": user_preferences.get("risk_tolerance", "moderate"),
+                        "experience_level": user_preferences.get("experience_level", "intermediate"),
+                        "user_preferences": user_preferences
+                    }
+                    current_prompt = await prompt_manager.get_current_prompt("execution_agent", context)
+                    print(f"[ExecutionAgent] Using dynamic prompt with {user_preferences.get('risk_tolerance', 'moderate')} risk tolerance (length: {len(current_prompt)} chars)")
+                    break
+                except Exception as exc:
+                    if attempt < max_retries - 1:
+                        print(f"[ExecutionAgent] Attempt {attempt + 1}/{max_retries} failed to get dynamic prompt, retrying in 2s: {exc}")
+                        await asyncio.sleep(2)
+                    else:
+                        print(f"[ExecutionAgent] All attempts failed to get dynamic prompt, using default: {exc}")
+                        current_prompt = SYSTEM_PROMPT
+            
+            conversation = [{"role": "system", "content": current_prompt}]
             print(
                 "[ExecutionAgent] Connected to MCP server with tools:",
                 [t.name for t in tools],

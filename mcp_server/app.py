@@ -22,6 +22,7 @@ from tools.execution import PlaceMockOrder, OrderIntent
 from agents.workflows import (
     ExecutionLedgerWorkflow,
     BrokerAgentWorkflow,
+    JudgeAgentWorkflow,
 )
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -134,6 +135,79 @@ async def start_market_stream(
     return result
 
 
+@app.tool(annotations={"title": "Set User Preferences", "readOnlyHint": False})
+async def set_user_preferences(preferences: Dict[str, Any]) -> Dict[str, str]:
+    """Set user trading preferences including risk tolerance.
+
+    Parameters
+    ----------
+    preferences:
+        Dictionary of user preferences including risk_tolerance, experience_level, etc.
+
+    Returns
+    -------
+    Dict[str, str]
+        Confirmation of preferences set.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
+    logger.info("Setting user preferences: %s", preferences)
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                BrokerAgentWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    await handle.signal("set_user_preferences", preferences)
+    logger.info("User preferences updated successfully")
+    
+    return {
+        "status": "success",
+        "message": f"Updated user preferences: {', '.join(preferences.keys())}",
+        "preferences_set": str(list(preferences.keys()))
+    }
+
+
+@app.tool(annotations={"title": "Get User Preferences", "readOnlyHint": True})
+async def get_user_preferences() -> Dict[str, Any]:
+    """Get current user trading preferences.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Current user preferences including risk tolerance, experience level, etc.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
+    logger.info("Retrieving user preferences")
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                BrokerAgentWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    preferences = await handle.query("get_user_preferences")
+    logger.info("Retrieved user preferences")
+    
+    return preferences
+
+
 @app.tool(annotations={"title": "Evaluate Momentum Strategy", "readOnlyHint": True})
 async def evaluate_strategy_momentum(
     signal: Dict[str, Any], cooldown_sec: int = 0
@@ -198,12 +272,27 @@ async def place_mock_order(intent: OrderIntent) -> Dict[str, Any]:
     fill = await handle.result()
     logger.info("Order workflow %s completed", workflow_id)
     try:
-        ledger = client.get_workflow_handle(
-            os.environ.get("LEDGER_WF_ID", "mock-ledger")
-        )
+        ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+        ledger = client.get_workflow_handle(ledger_wf_id)
+        
+        # Ensure ledger workflow exists
+        try:
+            await ledger.describe()
+        except RPCError as err:
+            if err.status == RPCStatusCode.NOT_FOUND:
+                ledger = await client.start_workflow(
+                    ExecutionLedgerWorkflow.run,
+                    id=ledger_wf_id,
+                    task_queue="mcp-tools",
+                )
+                logger.info("Started ledger workflow %s", ledger_wf_id)
+            else:
+                raise
+        
         await ledger.signal("record_fill", fill)
-    except Exception:
-        pass
+        logger.info("Recorded fill in ledger: %s %s %s", fill["side"], fill["qty"], fill["symbol"])
+    except Exception as exc:
+        logger.error("Failed to record fill in ledger: %s", exc)
     return fill
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
@@ -297,6 +386,281 @@ async def get_portfolio_status() -> Dict[str, Any]:
         "positions": positions,
         "entry_prices": entry_prices,
         "pnl": pnl,
+    }
+
+
+@app.tool(annotations={"title": "Get Transaction History", "readOnlyHint": True})
+async def get_transaction_history(
+    since_ts: int = 0, limit: int = 1000
+) -> Dict[str, Any]:
+    """Get transaction history from the execution ledger.
+    
+    Parameters
+    ----------
+    since_ts:
+        Unix timestamp in seconds. Only transactions at or after this time.
+    limit:
+        Maximum number of transactions to return.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Transaction history with metadata.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+    logger.info("Fetching transaction history from %s", wf_id)
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    transactions = await handle.query("get_transaction_history", {"since_ts": since_ts, "limit": limit})
+    logger.info("Retrieved %d transactions", len(transactions))
+    
+    return {
+        "transactions": transactions,
+        "count": len(transactions),
+        "since_timestamp": since_ts,
+        "limit": limit
+    }
+
+
+@app.tool(annotations={"title": "Get Performance Metrics", "readOnlyHint": True})
+async def get_performance_metrics(window_days: int = 30) -> Dict[str, Any]:
+    """Get performance metrics from the execution ledger.
+    
+    Parameters
+    ----------
+    window_days:
+        Number of days to analyze for performance metrics.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Performance metrics including returns, drawdown, trade statistics.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+    logger.info("Fetching performance metrics from %s for %d days", wf_id, window_days)
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    metrics = await handle.query("get_performance_metrics", window_days)
+    logger.info("Retrieved performance metrics")
+    
+    return metrics
+
+
+@app.tool(annotations={"title": "Get Risk Metrics", "readOnlyHint": True})
+async def get_risk_metrics() -> Dict[str, Any]:
+    """Get current risk metrics from the execution ledger.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Risk metrics including position concentration, leverage, cash ratio.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+    logger.info("Fetching risk metrics from %s", wf_id)
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    metrics = await handle.query("get_risk_metrics")
+    logger.info("Retrieved risk metrics")
+    
+    return metrics
+
+
+@app.tool(annotations={"title": "Trigger Performance Evaluation", "readOnlyHint": False})
+async def trigger_performance_evaluation(
+    window_days: int = 7, force: bool = False
+) -> Dict[str, Any]:
+    """Trigger a performance evaluation by the judge agent.
+    
+    Parameters
+    ----------
+    window_days:
+        Number of days to analyze for the evaluation.
+    force:
+        Force evaluation even if cooldown period hasn't elapsed.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Evaluation trigger result.
+    """
+    client = await get_temporal_client()
+    judge_wf_id = os.environ.get("JUDGE_WF_ID", "judge-agent")
+    logger.info("Triggering performance evaluation")
+    
+    try:
+        handle = client.get_workflow_handle(judge_wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                JudgeAgentWorkflow.run,
+                id=judge_wf_id,
+                task_queue="mcp-tools",
+            )
+            logger.info("Started judge agent workflow")
+        else:
+            raise
+    
+    # Check if evaluation should be triggered
+    if not force:
+        should_evaluate = await handle.query("should_trigger_evaluation", 4)
+        if not should_evaluate:
+            return {
+                "triggered": False,
+                "reason": "Evaluation cooldown period has not elapsed",
+                "suggestion": "Use force=true to override cooldown"
+            }
+    
+    # Create evaluation trigger signal
+    trigger_data = {
+        "window_days": window_days,
+        "trigger_timestamp": int(datetime.now(timezone.utc).timestamp()),
+        "force": force
+    }
+    
+    # Signal the judge agent to trigger an immediate evaluation
+    await handle.signal("trigger_immediate_evaluation", {
+        "window_days": window_days,
+        "forced": force,
+        "trigger_timestamp": trigger_data["trigger_timestamp"]
+    })
+    
+    logger.info("Performance evaluation triggered")
+    
+    return {
+        "triggered": True,
+        "window_days": window_days,
+        "forced": force,
+        "message": "Performance evaluation has been requested"
+    }
+
+
+@app.tool(annotations={"title": "Get Judge Evaluations", "readOnlyHint": True})
+async def get_judge_evaluations(limit: int = 20, since_ts: int = 0) -> Dict[str, Any]:
+    """Get recent performance evaluations from the judge agent.
+    
+    Parameters
+    ----------
+    limit:
+        Maximum number of evaluations to return.
+    since_ts:
+        Unix timestamp in seconds. Only evaluations at or after this time.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Recent evaluations and performance trends.
+    """
+    client = await get_temporal_client()
+    judge_wf_id = os.environ.get("JUDGE_WF_ID", "judge-agent")
+    logger.info("Fetching judge evaluations")
+    
+    try:
+        handle = client.get_workflow_handle(judge_wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            logger.warning("Judge workflow not found")
+            return {
+                "evaluations": [],
+                "count": 0,
+                "trend": {"trend": "unknown", "avg_score": 0.0}
+            }
+        else:
+            raise
+    
+    evaluations = await handle.query("get_evaluations", {"limit": limit, "since_ts": since_ts})
+    trend = await handle.query("get_performance_trend", 30)
+    
+    logger.info("Retrieved %d evaluations", len(evaluations))
+    
+    return {
+        "evaluations": evaluations,
+        "count": len(evaluations),
+        "trend": trend
+    }
+
+
+@app.tool(annotations={"title": "Get Prompt History", "readOnlyHint": True})
+async def get_prompt_history(limit: int = 10) -> Dict[str, Any]:
+    """Get prompt version history from the judge agent.
+    
+    Parameters
+    ----------
+    limit:
+        Maximum number of prompt versions to return.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Prompt version history and current active version.
+    """
+    client = await get_temporal_client()
+    judge_wf_id = os.environ.get("JUDGE_WF_ID", "judge-agent")
+    logger.info("Fetching prompt history")
+    
+    try:
+        handle = client.get_workflow_handle(judge_wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            logger.warning("Judge workflow not found")
+            return {
+                "versions": [],
+                "current_version": {},
+                "count": 0
+            }
+        else:
+            raise
+    
+    versions = await handle.query("get_prompt_versions", limit)
+    current_version = await handle.query("get_current_prompt_version")
+    
+    logger.info("Retrieved %d prompt versions", len(versions))
+    
+    return {
+        "versions": versions,
+        "current_version": current_version,
+        "count": len(versions)
     }
 
 

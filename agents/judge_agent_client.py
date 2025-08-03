@@ -368,8 +368,15 @@ Respond in JSON format:
             changes = update_spec["changes"]
             
             # Generate context for prompt rendering
+            if "conservative" in target_template:
+                risk_mode = "conservative"
+            elif update_type == "increase_aggressiveness":
+                risk_mode = "aggressive"
+            else:
+                risk_mode = "standard"
+                
             context = {
-                "risk_mode": "conservative" if "conservative" in target_template else "standard",
+                "risk_mode": risk_mode,
                 "performance_trend": ["declining"] if "poor" in reason.lower() else ["stable"]
             }
             

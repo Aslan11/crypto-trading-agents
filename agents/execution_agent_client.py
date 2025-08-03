@@ -49,22 +49,20 @@ openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
     "You are an autonomous portfolio management agent with adaptive risk tolerance. "
-    "You operate on scheduled nudges and make data-driven trading decisions for cryptocurrency pairs "
+    "You analyze comprehensive market data and make data-driven trading decisions for cryptocurrency pairs "
     "based on user preferences and risk profile.\n\n"
     
-    "OPERATIONAL WORKFLOW:\n"
-    "Each nudge triggers this sequence:\n"
-    "1. Call `get_historical_ticks` with all symbols and since_ts = LATEST PROCESSED timestamp\n"
-    "   → CRITICAL: Use the latest processed timestamp from your PREVIOUS cycle, NOT the current nudge timestamp\n"
-    "   → Example: If nudge @ 1754203140 but latest processed was 1754203085, use since_ts: 1754203085\n"
-    "2. Call `get_portfolio_status` once to get current positions and cash\n"
-    "3. Call `get_user_preferences` to get current risk tolerance and trading preferences\n"
-    "4. Call `get_performance_metrics` to understand recent trading performance\n"
-    "5. Call `get_risk_metrics` to assess current portfolio risk exposure\n"
-    "6. Analyze each symbol for trading opportunities based on collected data\n"
-    "7. Execute safety checks before placing any orders\n"
-    "8. Submit approved orders and generate summary report\n"
-    "9. Record latest processed timestamp from historical ticks for next cycle\n\n"
+    "DATA-DRIVEN ANALYSIS WORKFLOW:\n"
+    "You will receive complete market data including:\n"
+    "• Historical price ticks with volume and timestamps\n"
+    "• Current portfolio positions, cash, and P&L\n"
+    "• User risk preferences and trading style\n"
+    "• Recent performance metrics and trading success rates\n"
+    "• Current risk exposure and portfolio concentration\n\n"
+    
+    "YOUR ROLE:\n"
+    "Analyze the provided data and make trading decisions. You do NOT need to call data collection tools - "
+    "all necessary data is provided in the input. Focus on analysis and decision-making.\n\n"
     
     "DECISION FRAMEWORK:\n"
     "For each symbol, analyze:\n"
@@ -294,25 +292,67 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 if not symbols:
                     continue
                 print(f"[ExecutionAgent] Nudge @ {ts} for {sorted(symbols)}")
+                
+                # ===============================
+                # DETERMINISTIC DATA COLLECTION PHASE (PARALLEL)
+                # ===============================
+                print(f"[ExecutionAgent] Starting mandatory data collection (parallel)...")
+                
+                # Start all data collection tasks in parallel
+                since_ts = ts - 60  # Default to 60 seconds ago, will be overridden by latest processed
+                tasks = [
+                    session.call_tool("get_historical_ticks", {
+                        "symbols": sorted(symbols),
+                        "since_ts": since_ts
+                    }),
+                    session.call_tool("get_portfolio_status", {}),
+                    session.call_tool("get_user_preferences", {}),
+                    session.call_tool("get_performance_metrics", {}),
+                    session.call_tool("get_risk_metrics", {})
+                ]
+                
+                # Wait for all tasks to complete
+                results = await asyncio.gather(*tasks)
+                historical_data, portfolio_data, user_preferences, performance_metrics, risk_metrics = results
+                
+                print(f"[ExecutionAgent] ✓ Collected all data in parallel")
+                
+                # Compile all data for LLM analysis
+                collected_data = {
+                    "nudge_timestamp": ts,
+                    "symbols": sorted(symbols),
+                    "historical_ticks": _tool_result_data(historical_data),
+                    "portfolio_status": _tool_result_data(portfolio_data),
+                    "user_preferences": _tool_result_data(user_preferences),
+                    "performance_metrics": _tool_result_data(performance_metrics),
+                    "risk_metrics": _tool_result_data(risk_metrics)
+                }
+                
+                print(f"[ExecutionAgent] Data collection complete. Starting analysis phase...")
+                
+                # ===============================
+                # LLM ANALYSIS PHASE
+                # ===============================
                 conversation.append(
                     {
                         "role": "user",
-                        "content": json.dumps(
-                            {"nudge": ts, "symbols": sorted(symbols)}
-                        ),
+                        "content": json.dumps(collected_data),
                     }
                 )
-                openai_tools = [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.inputSchema,
-                        },
-                    }
-                    for tool in tools
-                ]
+                # Only provide order execution tool to LLM (data collection is handled deterministically)
+                order_tool = next((t for t in tools if t.name == "place_mock_order"), None)
+                openai_tools = []
+                if order_tool:
+                    openai_tools = [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": order_tool.name,
+                                "description": order_tool.description,
+                                "parameters": order_tool.inputSchema,
+                            },
+                        }
+                    ]
                 while True:
                     try:
                         msg = stream_chat_completion(
@@ -345,8 +385,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                             func_args = json.loads(
                                 tool_call["function"].get("arguments") or "{}"
                             )
-                            if func_name not in ALLOWED_TOOLS:
-                                print(f"[ExecutionAgent] Tool not allowed: {func_name}")
+                            # Only allow order execution in LLM phase (data collection handled separately)
+                            if func_name != "place_mock_order":
+                                print(f"[ExecutionAgent] Tool not allowed in analysis phase: {func_name}")
                                 continue
                             print(
                                 f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} {func_args}{RESET}"
@@ -374,8 +415,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         func_args = json.loads(
                             msg["function_call"].get("arguments") or "{}"
                         )
-                        if func_name not in ALLOWED_TOOLS:
-                            print(f"[ExecutionAgent] Tool not allowed: {func_name}")
+                        # Only allow order execution in LLM phase (data collection handled separately)
+                        if func_name != "place_mock_order":
+                            print(f"[ExecutionAgent] Tool not allowed in analysis phase: {func_name}")
                             continue
                         print(
                             f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} {func_args}{RESET}"

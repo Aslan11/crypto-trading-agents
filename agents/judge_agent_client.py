@@ -535,8 +535,8 @@ async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
                         # Log why we're not evaluating (but less frequently)
                         print(f"{CYAN}[JudgeAgent] Evaluation not needed - checking again in 30 minutes{RESET}")
                     
-                    # Sleep for 30 minutes before checking again
-                    await asyncio.sleep(30 * 60)
+                    # Sleep for 10 minutes before checking again
+                    await asyncio.sleep(10 * 60)
                     
                 except KeyboardInterrupt:
                     print(f"{ORANGE}[JudgeAgent] Shutting down...{RESET}")

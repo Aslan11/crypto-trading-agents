@@ -359,7 +359,13 @@ async def get_portfolio_status() -> Dict[str, Any]:
     Returns
     -------
     Dict[str, Any]
-        Cash balance, open positions, entry prices and PnL.
+        Cash balance, open positions, entry prices, total PnL, realized PnL, and unrealized PnL.
+        - cash: Current cash balance
+        - positions: Current position sizes by symbol
+        - entry_prices: Weighted average entry prices for positions
+        - total_pnl: Total profit/loss (realized + unrealized)
+        - realized_pnl: Realized profit/loss from completed trades
+        - unrealized_pnl: Unrealized profit/loss from open positions
     """
     client = await get_temporal_client()
     wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
@@ -380,12 +386,16 @@ async def get_portfolio_status() -> Dict[str, Any]:
     positions = await handle.query("get_positions")
     entry_prices = await handle.query("get_entry_prices")
     pnl = await handle.query("get_pnl")
+    realized_pnl = await handle.query("get_realized_pnl")
+    unrealized_pnl = await handle.query("get_unrealized_pnl")
     logger.info("Ledger status retrieved")
     return {
         "cash": cash,
         "positions": positions,
         "entry_prices": entry_prices,
-        "pnl": pnl,
+        "total_pnl": pnl,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
     }
 
 

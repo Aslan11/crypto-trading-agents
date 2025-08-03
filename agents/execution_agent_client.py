@@ -103,15 +103,9 @@ SYSTEM_PROMPT = (
     "• Analysis and decision for each symbol with rationale\n"
     "• List of orders submitted (if any)\n"
     "• Portfolio impact and risk assessment\n"
-    "• Key market observations\n"
-    "• Latest processed timestamp: [HIGHEST timestamp from historical ticks data]\n\n"
+    "• Key market observations\n\n"
     
-    "CRITICAL TIMESTAMP TRACKING:\n"
-    "At the end of each cycle, you MUST:\n"
-    "1. Find the HIGHEST timestamp from all the historical ticks data you received\n"
-    "2. Report this as 'Latest processed timestamp: XXXXX'\n"
-    "3. Use THIS timestamp (not the nudge timestamp) as since_ts in your NEXT cycle\n"
-    "4. This ensures continuous data collection without gaps or duplicates"
+    "NOTE: Data continuity is handled automatically by the system. Focus on analysis and decision-making."
 )
 
 
@@ -288,6 +282,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 [t.name for t in tools],
             )
 
+            # Track latest processed timestamp for data continuity
+            latest_processed_ts = None
+            
             async for ts in _stream_nudges(temporal):
                 if not symbols:
                     continue
@@ -298,8 +295,15 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 # ===============================
                 print(f"[ExecutionAgent] Starting mandatory data collection (parallel)...")
                 
+                # Determine since_ts for data continuity
+                if latest_processed_ts is not None:
+                    since_ts = latest_processed_ts
+                    print(f"[ExecutionAgent] Using latest processed timestamp: {since_ts}")
+                else:
+                    since_ts = ts - 60  # Initial fallback: 60 seconds ago
+                    print(f"[ExecutionAgent] No previous timestamp, using fallback: {since_ts}")
+                
                 # Start all data collection tasks in parallel
-                since_ts = ts - 60  # Default to 60 seconds ago, will be overridden by latest processed
                 tasks = [
                     session.call_tool("get_historical_ticks", {
                         "symbols": sorted(symbols),
@@ -316,6 +320,25 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 historical_data, portfolio_data, user_preferences, performance_metrics, risk_metrics = results
                 
                 print(f"[ExecutionAgent] ✓ Collected all data in parallel")
+                
+                # Extract and update latest processed timestamp for next cycle
+                historical_ticks_data = _tool_result_data(historical_data)
+                if historical_ticks_data and isinstance(historical_ticks_data, dict):
+                    # Find the latest timestamp from all symbols' tick data
+                    max_timestamp = 0
+                    for symbol_data in historical_ticks_data.values():
+                        if isinstance(symbol_data, list) and symbol_data:
+                            # Get the latest timestamp from this symbol's ticks
+                            symbol_max = max(tick.get('timestamp', 0) for tick in symbol_data if isinstance(tick, dict))
+                            max_timestamp = max(max_timestamp, symbol_max)
+                    
+                    if max_timestamp > 0:
+                        latest_processed_ts = max_timestamp
+                        print(f"[ExecutionAgent] Updated latest processed timestamp: {latest_processed_ts}")
+                    else:
+                        print(f"[ExecutionAgent] Warning: No valid timestamps found in tick data")
+                else:
+                    print(f"[ExecutionAgent] Warning: Invalid historical tick data format")
                 
                 # Compile all data for LLM analysis
                 collected_data = {

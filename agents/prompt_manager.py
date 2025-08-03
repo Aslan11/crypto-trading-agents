@@ -110,18 +110,16 @@ class PromptManager:
                 name="operational_workflow",
                 content=(
                     "OPERATIONAL WORKFLOW:\n"
-                    "Each nudge triggers this sequence:\n"
-                    "1. Call `get_historical_ticks` with all symbols and since_ts = LATEST PROCESSED timestamp\n"
-                    "   → CRITICAL: Use the latest processed timestamp from your PREVIOUS cycle, NOT the current nudge timestamp\n"
-                    "   → Example: If nudge @ 1754203140 but latest processed was 1754203085, use since_ts: 1754203085\n"
-                    "2. Call `get_portfolio_status` once to get current positions and cash\n"
-                    "3. Call `get_user_preferences` to get current risk tolerance and trading preferences\n"
-                    "4. Call `get_performance_metrics` to understand recent trading performance\n"
-                    "5. Call `get_risk_metrics` to assess current portfolio risk exposure\n"
-                    "6. Analyze each symbol for trading opportunities based on collected data\n"
-                    "7. Execute safety checks before placing any orders\n"
-                    "8. Submit approved orders and generate summary report\n"
-                    "9. Record latest processed timestamp from historical ticks for next cycle"
+                    "Data Collection: All market data, portfolio status, user preferences, performance metrics, "
+                    "and risk metrics are automatically collected and provided to you.\n\n"
+                    "Your Role: Analyze the provided comprehensive data and make trading decisions:\n"
+                    "1. Analyze market trends and price movements from historical ticks\n"
+                    "2. Review current portfolio positions and available cash\n"
+                    "3. Consider user risk tolerance and trading preferences\n"
+                    "4. Evaluate recent performance and risk exposure\n"
+                    "5. Make BUY, SELL, or HOLD decisions for each symbol\n"
+                    "6. Execute approved orders and provide structured summary\n\n"
+                    "Data continuity and timestamp tracking are handled automatically by the system."
                 ),
                 priority=900
             ),

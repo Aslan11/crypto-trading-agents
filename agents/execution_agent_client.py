@@ -32,6 +32,10 @@ ALLOWED_TOOLS = {
     "place_mock_order",
     "get_historical_ticks",
     "get_portfolio_status",
+    "get_user_preferences",
+    "get_transaction_history",
+    "get_performance_metrics",
+    "get_risk_metrics",
 }
 
 # Context management is now handled by the ContextManager class
@@ -54,16 +58,21 @@ SYSTEM_PROMPT = (
     "   → CRITICAL: Use the latest processed timestamp from your PREVIOUS cycle, NOT the current nudge timestamp\n"
     "   → Example: If nudge @ 1754203140 but latest processed was 1754203085, use since_ts: 1754203085\n"
     "2. Call `get_portfolio_status` once to get current positions and cash\n"
-    "3. Analyze each symbol for trading opportunities\n"
-    "4. Execute safety checks before placing any orders\n"
-    "5. Submit approved orders and generate summary report\n"
-    "6. Record latest processed timestamp from historical ticks for next cycle\n\n"
+    "3. Call `get_user_preferences` to get current risk tolerance and trading preferences\n"
+    "4. Call `get_performance_metrics` to understand recent trading performance\n"
+    "5. Call `get_risk_metrics` to assess current portfolio risk exposure\n"
+    "6. Analyze each symbol for trading opportunities based on collected data\n"
+    "7. Execute safety checks before placing any orders\n"
+    "8. Submit approved orders and generate summary report\n"
+    "9. Record latest processed timestamp from historical ticks for next cycle\n\n"
     
     "DECISION FRAMEWORK:\n"
     "For each symbol, analyze:\n"
     "• Price momentum and trend direction from recent ticks\n"
-    "• Volume patterns and market liquidity\n"
     "• Current position size and portfolio balance\n"
+    "• User risk tolerance and trading preferences\n"
+    "• Recent performance metrics and trading success rates\n"
+    "• Current portfolio risk exposure and concentration\n"
     "• Risk-reward ratio for potential trades\n"
     "• Market correlation and portfolio diversification\n\n"
     

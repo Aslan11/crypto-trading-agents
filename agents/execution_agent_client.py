@@ -50,11 +50,14 @@ SYSTEM_PROMPT = (
     
     "OPERATIONAL WORKFLOW:\n"
     "Each nudge triggers this sequence:\n"
-    "1. Call `get_historical_ticks` once with all symbols and latest processed timestamp\n"
+    "1. Call `get_historical_ticks` with all symbols and since_ts = LATEST PROCESSED timestamp\n"
+    "   → CRITICAL: Use the latest processed timestamp from your PREVIOUS cycle, NOT the current nudge timestamp\n"
+    "   → Example: If nudge @ 1754203140 but latest processed was 1754203085, use since_ts: 1754203085\n"
     "2. Call `get_portfolio_status` once to get current positions and cash\n"
     "3. Analyze each symbol for trading opportunities\n"
     "4. Execute safety checks before placing any orders\n"
-    "5. Submit approved orders and generate summary report\n\n"
+    "5. Submit approved orders and generate summary report\n"
+    "6. Record latest processed timestamp from historical ticks for next cycle\n\n"
     
     "DECISION FRAMEWORK:\n"
     "For each symbol, analyze:\n"
@@ -93,9 +96,15 @@ SYSTEM_PROMPT = (
     "• Analysis and decision for each symbol with rationale\n"
     "• List of orders submitted (if any)\n"
     "• Portfolio impact and risk assessment\n"
-    "• Key market observations\n\n"
+    "• Key market observations\n"
+    "• Latest processed timestamp: [HIGHEST timestamp from historical ticks data]\n\n"
     
-    "Remember the latest timestamp from processed ticks for the next nudge cycle."
+    "CRITICAL TIMESTAMP TRACKING:\n"
+    "At the end of each cycle, you MUST:\n"
+    "1. Find the HIGHEST timestamp from all the historical ticks data you received\n"
+    "2. Report this as 'Latest processed timestamp: XXXXX'\n"
+    "3. Use THIS timestamp (not the nudge timestamp) as since_ts in your NEXT cycle\n"
+    "4. This ensures continuous data collection without gaps or duplicates"
 )
 
 

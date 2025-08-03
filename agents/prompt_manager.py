@@ -111,11 +111,14 @@ class PromptManager:
                 content=(
                     "OPERATIONAL WORKFLOW:\n"
                     "Each nudge triggers this sequence:\n"
-                    "1. Call `get_historical_ticks` once with all symbols and latest processed timestamp\n"
+                    "1. Call `get_historical_ticks` with all symbols and since_ts = LATEST PROCESSED timestamp\n"
+                    "   → CRITICAL: Use the latest processed timestamp from your PREVIOUS cycle, NOT the current nudge timestamp\n"
+                    "   → Example: If nudge @ 1754203140 but latest processed was 1754203085, use since_ts: 1754203085\n"
                     "2. Call `get_portfolio_status` once to get current positions and cash\n"
                     "3. Analyze each symbol for trading opportunities\n"
                     "4. Execute safety checks before placing any orders\n"
-                    "5. Submit approved orders and generate summary report"
+                    "5. Submit approved orders and generate summary report\n"
+                    "6. Record latest processed timestamp from historical ticks for next cycle"
                 ),
                 priority=900
             ),

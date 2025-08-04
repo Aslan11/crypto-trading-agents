@@ -393,13 +393,38 @@ async def get_portfolio_status() -> Dict[str, Any]:
             )
         else:
             raise
+    
+    # Get basic data first
     cash = await handle.query("get_cash")
     positions = await handle.query("get_positions")
     entry_prices = await handle.query("get_entry_prices")
-    pnl = await handle.query("get_pnl")
     realized_pnl = await handle.query("get_realized_pnl")
-    unrealized_pnl = await handle.query("get_unrealized_pnl")
-    logger.info("Ledger status retrieved")
+    
+    # Get live market prices for all positions
+    live_prices = {}
+    if positions:
+        symbols = list(positions.keys())
+        try:
+            # Fetch latest market prices for all positions
+            historical_data = await get_historical_ticks(symbols, since_ts=int(datetime.now(timezone.utc).timestamp()) - 60)
+            for symbol, ticks in historical_data.items():
+                if ticks:
+                    # Get the most recent price
+                    latest_tick = max(ticks, key=lambda t: t["ts"])
+                    live_prices[symbol] = latest_tick["price"]
+        except Exception as e:
+            logger.warning("Failed to fetch live prices: %s", e)
+    
+    # Calculate P&L with live prices if available, otherwise fall back
+    if live_prices:
+        pnl = await handle.query("get_pnl_with_live_prices", live_prices)
+        unrealized_pnl = await handle.query("get_unrealized_pnl_with_live_prices", live_prices)
+        logger.info("Portfolio status retrieved with live prices for %d symbols", len(live_prices))
+    else:
+        pnl = await handle.query("get_pnl")
+        unrealized_pnl = await handle.query("get_unrealized_pnl")
+        logger.info("Portfolio status retrieved with last fill prices")
+    
     return {
         "cash": cash,
         "positions": positions,
@@ -407,6 +432,7 @@ async def get_portfolio_status() -> Dict[str, Any]:
         "total_pnl": pnl,
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,
+        "live_prices_used": live_prices,
     }
 
 
@@ -519,8 +545,31 @@ async def get_risk_metrics() -> Dict[str, Any]:
         else:
             raise
     
-    metrics = await handle.query("get_risk_metrics")
-    logger.info("Retrieved risk metrics")
+    # Get positions to fetch live prices  
+    positions = await handle.query("get_positions")
+    
+    # Get live market prices for all positions
+    live_prices = {}
+    if positions:
+        symbols = list(positions.keys())
+        try:
+            # Fetch latest market prices for all positions
+            historical_data = await get_historical_ticks(symbols, since_ts=int(datetime.now(timezone.utc).timestamp()) - 60)
+            for symbol, ticks in historical_data.items():
+                if ticks:
+                    # Get the most recent price
+                    latest_tick = max(ticks, key=lambda t: t["ts"])
+                    live_prices[symbol] = latest_tick["price"]
+        except Exception as e:
+            logger.warning("Failed to fetch live prices for risk metrics: %s", e)
+    
+    # Calculate risk metrics with live prices if available
+    if live_prices:
+        metrics = await handle.query("get_risk_metrics_with_live_prices", live_prices)
+        logger.info("Retrieved risk metrics with live prices for %d symbols", len(live_prices))
+    else:
+        metrics = await handle.query("get_risk_metrics")
+        logger.info("Retrieved risk metrics with last fill prices")
     
     return metrics
 

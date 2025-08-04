@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Dict, List
 from datetime import datetime, timezone
 from temporalio import workflow
+from temporalio.client import Client
 
 
 @workflow.defn
@@ -77,13 +78,23 @@ class ExecutionLedgerWorkflow:
         """Calculate total PnL as the sum of realized + unrealized PnL."""
         return float(self.realized_pnl + self.get_unrealized_pnl_decimal())
     
-    def get_unrealized_pnl_decimal(self) -> Decimal:
-        """Calculate unrealized PnL from current open positions (internal helper)."""
+    def get_unrealized_pnl_decimal(self, live_prices: Dict[str, float] = None) -> Decimal:
+        """Calculate unrealized PnL from current open positions.
+        
+        Args:
+            live_prices: Optional dict of live market prices {symbol: price}.
+                        If provided, uses these instead of last fill prices.
+        """
         unrealized_pnl = Decimal("0")
         
         for symbol, quantity in self.positions.items():
             if quantity > 0:  # Only calculate for positions we actually hold
-                current_price = self.last_price.get(symbol, Decimal("0"))
+                # Use live price if available, otherwise fall back to last fill price
+                if live_prices and symbol in live_prices:
+                    current_price = Decimal(str(live_prices[symbol]))
+                else:
+                    current_price = self.last_price.get(symbol, Decimal("0"))
+                
                 entry_price = self.entry_price.get(symbol, Decimal("0"))
                 
                 if current_price > 0 and entry_price > 0:
@@ -102,6 +113,16 @@ class ExecutionLedgerWorkflow:
     def get_unrealized_pnl(self) -> float:
         """Calculate unrealized PnL from current open positions."""
         return float(self.get_unrealized_pnl_decimal())
+    
+    @workflow.query 
+    def get_unrealized_pnl_with_live_prices(self, live_prices: Dict[str, float]) -> float:
+        """Calculate unrealized PnL using live market prices."""
+        return float(self.get_unrealized_pnl_decimal(live_prices))
+    
+    @workflow.query
+    def get_pnl_with_live_prices(self, live_prices: Dict[str, float]) -> float:
+        """Calculate total PnL using live market prices.""" 
+        return float(self.realized_pnl + self.get_unrealized_pnl_decimal(live_prices))
 
     @workflow.query
     def get_cash(self) -> float:
@@ -231,6 +252,41 @@ class ExecutionLedgerWorkflow:
         position_concentrations = {}
         for symbol, qty in self.positions.items():
             price = float(self.last_price.get(symbol, Decimal("0")))
+            position_value = float(qty) * price
+            concentration = position_value / total_portfolio_value if total_portfolio_value > 0 else 0
+            position_concentrations[symbol] = concentration
+        
+        max_position_concentration = max(position_concentrations.values()) if position_concentrations else 0.0
+        cash_ratio = float(self.cash) / total_portfolio_value if total_portfolio_value > 0 else 1.0
+        
+        return {
+            "total_portfolio_value": total_portfolio_value,
+            "cash_ratio": cash_ratio,
+            "max_position_concentration": max_position_concentration,
+            "num_positions": len(self.positions),
+            "leverage": 1.0  # Assuming no leverage for now
+        }
+    
+    @workflow.query
+    def get_risk_metrics_with_live_prices(self, live_prices: Dict[str, float]) -> Dict[str, float]:
+        """Calculate current risk metrics using live market prices."""
+        total_portfolio_value = float(self.cash)
+        
+        # Add position values using live prices
+        for symbol, qty in self.positions.items():
+            if live_prices and symbol in live_prices:
+                price = live_prices[symbol]
+            else:
+                price = float(self.last_price.get(symbol, Decimal("0")))
+            total_portfolio_value += float(qty) * price
+        
+        # Calculate position concentration
+        position_concentrations = {}
+        for symbol, qty in self.positions.items():
+            if live_prices and symbol in live_prices:
+                price = live_prices[symbol]
+            else:
+                price = float(self.last_price.get(symbol, Decimal("0")))
             position_value = float(qty) * price
             concentration = position_value / total_portfolio_value if total_portfolio_value > 0 else 0
             position_concentrations[symbol] = concentration

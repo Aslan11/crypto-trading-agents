@@ -172,9 +172,12 @@ class PromptManager:
                     "• Current position size and portfolio balance\n"
                     "• Risk-reward ratio for potential trades - accept 1.5:1 ratios\n"
                     "• Market correlation and strategic concentration\n"
-                    "• High-conviction opportunities for outsized returns\n\n"
+                    "• High-conviction opportunities for outsized returns\n"
+                    "• Use up to 50% position sizes when conviction is high\n"
+                    "• Deploy 80-90% of capital when market opportunities present\n\n"
                     "Make one of three decisions: BUY, SELL, or HOLD\n"
-                    "Favor action over inaction when opportunity is present.\n"
+                    "Strongly favor action over inaction when any opportunity is present.\n"
+                    "Prioritize capital deployment over cash hoarding.\n"
                     "Always provide clear rationale for each decision."
                 ),
                 priority=800,
@@ -217,8 +220,9 @@ class PromptManager:
                     "Before executing any trade:\n"
                     "• BUY orders: Ensure available cash ≥ (quantity × price × 1.02) for slippage\n"
                     "• SELL orders: Ensure current position ≥ desired sell quantity\n"
-                    "• Allow position sizes up to 25% of portfolio for high-conviction trades\n"
-                    "• Maintain minimum 5% cash reserves\n"
+                    "• Allow position sizes up to 50% of portfolio for high-conviction trades\n"
+                    "• Maintain minimum 10% cash reserves\n"
+                    "• Deploy 80-90% of total capital when opportunities are present\n"
                     "• If safety checks fail, default to HOLD decision"
                 ),
                 priority=700,
@@ -417,12 +421,7 @@ class PromptManager:
         # Aggressive variant for overly conservative performance
         if max_drawdown < 0.05 and win_rate < 0.4:  # Low drawdown but poor performance
             context["risk_mode"] = "aggressive"
-            aggressive_prompt = self.templates["execution_agent_conservative"].render(context)
-            # Modify to be more aggressive
-            aggressive_prompt = aggressive_prompt.replace(
-                "Limit individual position sizes to maximum 15% of portfolio",
-                "Allow position sizes up to 25% of portfolio for high-conviction trades"
-            )
+            aggressive_prompt = self.templates["execution_agent_standard"].render(context)
             variants.append((
                 "increased_risk",
                 "Increased position sizing for better returns",

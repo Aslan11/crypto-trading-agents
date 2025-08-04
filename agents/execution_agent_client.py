@@ -7,6 +7,7 @@ import logging
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
+from agents.context_manager import create_context_manager
 from mcp.types import CallToolResult, TextContent
 from datetime import timedelta
 from temporalio.client import (
@@ -221,6 +222,10 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
             all_tools = tools_resp.tools
             tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
             conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+            context_manager = create_context_manager(
+                model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+                openai_client=openai_client
+            )
             print(
                 "[ExecutionAgent] Connected to MCP server with tools:",
                 [t.name for t in tools],
@@ -330,10 +335,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     )
                     break
 
-                if len(conversation) > MAX_CONVERSATION_LENGTH:
-                    conversation = [conversation[0]] + conversation[
-                        -(MAX_CONVERSATION_LENGTH - 1) :
-                    ]
+                conversation = await context_manager.manage_context(conversation)
 
 
 if __name__ == "__main__":

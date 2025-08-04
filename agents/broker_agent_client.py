@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover - optional dependency
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
+from agents.context_manager import create_context_manager
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
@@ -76,6 +77,10 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
             all_tools = (await session.list_tools()).tools
             tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
             conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+            context_manager = create_context_manager(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                openai_client=_openai_client
+            )
             print(
                 f"[BrokerAgent] Connected to MCP server with tools: {[t.name for t in tools]}"
             )
@@ -213,8 +218,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     assistant_msg = msg_dict.get("content", "")
                     conversation.append({"role": "assistant", "content": assistant_msg})
 
-                if len(conversation) > 20:
-                    conversation = [conversation[0]] + conversation[-19:]
+                conversation = await context_manager.manage_context(conversation)
 
 if __name__ == "__main__":
     asyncio.run(run_broker_agent(os.environ.get("MCP_SERVER", "http://localhost:8080")))

@@ -325,8 +325,8 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     since_ts = latest_processed_ts
                     print(f"[ExecutionAgent] Using latest processed timestamp: {since_ts}")
                 else:
-                    since_ts = ts - 60  # Initial fallback: 60 seconds ago
-                    print(f"[ExecutionAgent] No previous timestamp, using fallback: {since_ts}")
+                    since_ts = 0  # Get all historical data on first run
+                    print(f"[ExecutionAgent] First run - fetching all available historical data (since_ts=0)")
                 
                 # Start all data collection tasks in parallel
                 tasks = [

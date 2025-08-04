@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 from typing import Any, List
@@ -12,7 +12,7 @@ import aiohttp
 
 from pydantic import BaseModel
 from temporalio import activity, workflow
-from tools.feature_engineering import signal_compute_vector
+from tools.feature_engineering import signal_compute_vector, load_historical_data
 
 
 class MarketTick(BaseModel):
@@ -30,6 +30,8 @@ MCP_PORT = os.environ.get("MCP_PORT", "8080")
 # Automatically continue the workflow periodically to avoid unbounded history
 STREAM_CONTINUE_EVERY = int(os.environ.get("STREAM_CONTINUE_EVERY", "3600"))
 STREAM_HISTORY_LIMIT = int(os.environ.get("STREAM_HISTORY_LIMIT", "9000"))
+# Historical data to load on startup (in minutes)
+HISTORICAL_MINUTES = int(os.environ.get("HISTORICAL_MINUTES", "60"))  # Default 1 hour
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
@@ -56,6 +58,59 @@ async def fetch_ticker(symbol: str) -> dict[str, Any]:
 
 
 @activity.defn
+async def fetch_historical_ohlcv(symbol: str, timeframe: str = '1m', limit: int = 60) -> List[dict]:
+    """Fetch historical OHLCV data for a symbol.
+    
+    Parameters
+    ----------
+    symbol:
+        Trading pair (e.g., 'BTC/USD')
+    timeframe:
+        Candle timeframe ('1m', '5m', '15m', '1h', etc.)
+    limit:
+        Number of candles to fetch (default 60 = 1 hour of 1m candles)
+        
+    Returns
+    -------
+    List[dict]
+        List of ticks with timestamp and price
+    """
+    import ccxt.async_support as ccxt
+    client = ccxt.coinbaseexchange()
+    
+    try:
+        # Fetch OHLCV data
+        ohlcv_data = await client.fetch_ohlcv(symbol, timeframe, limit=limit)
+        
+        # Convert OHLCV to tick format
+        ticks = []
+        for candle in ohlcv_data:
+            # OHLCV format: [timestamp, open, high, low, close, volume]
+            timestamp_ms = candle[0]
+            close_price = candle[4]
+            
+            # Create tick in the same format as real-time ticks
+            tick = {
+                "timestamp": timestamp_ms,
+                "last": close_price,
+                "bid": close_price - 0.01,  # Approximate bid/ask
+                "ask": close_price + 0.01,
+                "datetime": datetime.fromtimestamp(timestamp_ms/1000, tz=timezone.utc).isoformat()
+            }
+            ticks.append(tick)
+            
+        logger.info("Fetched %d historical candles for %s", len(ticks), symbol)
+        return ticks
+        
+    except Exception as exc:
+        logger.error("Failed to fetch historical data for %s: %s", symbol, exc)
+        # Return empty list on error to allow system to continue
+        return []
+    finally:
+        await client.close()
+
+
+@activity.defn
 async def record_tick(tick: dict) -> None:
     """Send tick payload to the MCP server signal log."""
     url = f"http://{MCP_HOST}:{MCP_PORT}/signal/market_tick"
@@ -65,6 +120,47 @@ async def record_tick(tick: dict) -> None:
             await session.post(url, json=tick)
         except Exception as exc:
             logger.error("Failed to record tick: %s", exc)
+
+
+@workflow.defn
+class HistoricalDataLoaderWorkflow:
+    """Workflow to load historical data for multiple symbols."""
+    
+    @workflow.run
+    async def run(self, symbols: List[str]) -> None:
+        """Load historical data for each symbol."""
+        workflow.logger.info(f"Loading {HISTORICAL_MINUTES} minutes of historical data for {len(symbols)} symbols")
+        
+        # Process symbols concurrently
+        tasks = []
+        for symbol in symbols:
+            tasks.append(
+                workflow.execute_activity(
+                    fetch_historical_ohlcv,
+                    args=[symbol, '1m', HISTORICAL_MINUTES],
+                    schedule_to_close_timeout=timedelta(seconds=60),
+                )
+            )
+        
+        # Fetch all historical data
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Load historical data into feature workflows
+        for symbol, result in zip(symbols, results):
+            if isinstance(result, Exception):
+                workflow.logger.error("Failed to fetch historical data for %s: %s", symbol, result)
+                continue
+                
+            if result:  # If we got historical ticks
+                workflow.logger.info("Loading %d historical ticks for %s", len(result), symbol)
+                
+                await workflow.execute_activity(
+                    load_historical_data,
+                    args=[symbol, result],
+                    schedule_to_close_timeout=timedelta(seconds=120),
+                )
+        
+        workflow.logger.info("Historical data loading completed for %d symbols", len(symbols))
 
 
 @workflow.defn

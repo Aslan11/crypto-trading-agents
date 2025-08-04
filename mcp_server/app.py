@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.requests import Request
 
 # Import workflow classes
-from tools.market_data import SubscribeCEXStream
+from tools.market_data import SubscribeCEXStream, HistoricalDataLoaderWorkflow
 from tools.strategy_signal import EvaluateStrategyMomentum
 from tools.execution import PlaceMockOrder, OrderIntent
 from agents.workflows import (
@@ -109,11 +109,11 @@ async def subscribe_cex_stream(
 
 @app.tool(annotations={"title": "Start Market Stream", "readOnlyHint": True})
 async def start_market_stream(
-    symbols: List[str], interval_sec: int = 1
+    symbols: List[str], interval_sec: int = 1, load_historical: bool = True
 ) -> Dict[str, str]:
     """Convenience wrapper around ``subscribe_cex_stream``.
 
-    Also records the selected symbols for the execution agent.
+    Also records the selected symbols for the execution agent and optionally loads historical data.
 
     Parameters
     ----------
@@ -121,12 +121,15 @@ async def start_market_stream(
         Trading pairs to stream.
     interval_sec:
         Seconds between ticker fetches.
+    load_historical:
+        Whether to load 24 hours of historical data on startup.
 
     Returns
     -------
     Dict[str, str]
         ``workflow_id`` and ``run_id`` of the started workflow.
     """
+    # Start the real-time stream first
     result = await subscribe_cex_stream(symbols, interval_sec)
     client = await get_temporal_client()
     wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
@@ -143,6 +146,24 @@ async def start_market_stream(
             await handle.signal("set_symbols", symbols)
         else:
             raise
+    
+    # Load historical data if requested
+    if load_historical:
+        logger.info("Loading historical data for %d symbols", len(symbols))
+        
+        # Create a temporary workflow to handle historical data loading
+        hist_wf_id = f"historical-loader-{secrets.token_hex(4)}"
+        
+        # Start a workflow that will handle the historical data loading
+        await client.start_workflow(
+            HistoricalDataLoaderWorkflow.run,
+            args=[symbols],
+            id=hist_wf_id,
+            task_queue="mcp-tools"
+        )
+        
+        logger.info("Historical data loading initiated")
+                
     return result
 
 

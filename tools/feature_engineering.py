@@ -51,6 +51,51 @@ async def signal_compute_vector(symbol: str, tick: dict) -> None:
     )
 
 
+@activity.defn
+async def load_historical_data(symbol: str, historical_ticks: List[dict]) -> None:
+    """Load historical ticks into the feature workflow.
+    
+    Parameters
+    ----------
+    symbol:
+        Trading pair (e.g., 'BTC/USD')
+    historical_ticks:
+        List of historical tick data to preload
+    """
+    if not historical_ticks:
+        logger.info("No historical data to load for %s", symbol)
+        return
+        
+    client = await _get_client()
+    wf_id = f"feature-{symbol.replace('/', '-')}"
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        
+        # Send historical ticks as signals to populate the workflow's history
+        batch_size = 100  # Send in batches to avoid overwhelming the workflow
+        for i in range(0, len(historical_ticks), batch_size):
+            batch = historical_ticks[i:i + batch_size]
+            for tick in batch:
+                # Create tick in the format expected by the workflow
+                market_tick = {
+                    "exchange": "coinbaseexchange",
+                    "symbol": symbol,
+                    "data": tick
+                }
+                await handle.signal("market_tick", market_tick)
+            
+            # Small delay between batches
+            if i + batch_size < len(historical_ticks):
+                await asyncio.sleep(0.1)
+        
+        logger.info("Loaded %d historical ticks for %s into feature workflow", 
+                   len(historical_ticks), symbol)
+                   
+    except Exception as exc:
+        logger.error("Failed to load historical data for %s: %s", symbol, exc)
+
+
 @workflow.defn
 class ComputeFeatureVector:
     """Continuously compute feature vectors from ``market_tick`` signals."""

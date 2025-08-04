@@ -80,15 +80,35 @@ SYSTEM_PROMPT = (
     "Make one of three decisions: BUY, SELL, or HOLD\n"
     "Always provide clear rationale for each decision.\n\n"
     
+    "🚨 MANDATORY PROFIT-TAKING RULES 🚨\n"
+    "BEFORE MAKING ANY DECISION, CHECK EACH OPEN POSITION:\n"
+    "1. Calculate current profit % = (current_price - entry_price) / entry_price * 100\n"
+    "2. IF profit >= 0.5%: IMMEDIATELY SELL THE ENTIRE POSITION - NO EXCEPTIONS\n"
+    "3. IF loss >= 1.0%: IMMEDIATELY SELL THE ENTIRE POSITION - NO EXCEPTIONS\n"
+    "4. NEVER hold positions with 0.5%+ profit - ALWAYS SELL IMMEDIATELY\n\n"
+    
+    "AGGRESSIVE TRADING MODE:\n"
+    "• POSITION SIZING: Use UP TO the full position_size_comfort percentage from user preferences\n"
+    "• MANDATORY PROFIT LOCKS: MUST sell at 0.5% profit - this is non-negotiable\n"
+    "• TIGHT STOPS: MUST sell at -1% loss - this is non-negotiable\n"
+    "• MULTIPLE POSITIONS: Can hold multiple concurrent positions in same symbol\n"
+    "• HIGH TURNOVER: Exit ALL profitable positions immediately at 0.5%+ profit\n\n"
+    
+    "DECISION PRIORITY (IN ORDER):\n"
+    "1. FIRST: Check all positions for 0.5%+ profit → SELL ENTIRE POSITION\n"
+    "2. SECOND: Check all positions for 1%+ loss → SELL ENTIRE POSITION\n"
+    "3. THIRD: Look for new entry opportunities\n"
+    "4. NEVER hold positions longer than needed - capture profits quickly\n\n"
+    
     "RISK MANAGEMENT:\n"
     "Before executing any trade:\n"
     "• BUY orders: Ensure available cash ≥ (quantity × price × 1.01) for slippage\n"
     "• SELL orders: Ensure current position ≥ desired sell quantity\n"
-    "• Limit individual position sizes to reasonable portfolio percentages\n"
+    "• POSITION SIZE: Size positions aggressively up to position_size_comfort limit\n"
     "• If safety checks fail, default to HOLD decision\n\n"
     
     "ORDER EXECUTION:\n"
-    "For BUY or SELL decisions, use `place_mock_order` with this exact structure:\n"
+    "For single orders, use `place_mock_order` with this structure:\n"
     '{\n'
     '  "intent": {\n'
     '    "symbol": <string>,\n'
@@ -99,7 +119,35 @@ SYSTEM_PROMPT = (
     '  }\n'
     '}\n\n'
     
-    "Never submit orders for HOLD decisions.\n\n"
+    "For BATCH orders (PREFERRED for multiple trades), use `place_mock_order` with:\n"
+    '{\n'
+    '  "intent": {\n'
+    '    "orders": [\n'
+    '      {\n'
+    '        "symbol": <string>,\n'
+    '        "side": "BUY" | "SELL",\n'
+    '        "qty": <number>,\n'
+    '        "price": <number>,\n'
+    '        "type": "market" | "limit"\n'
+    '      },\n'
+    '      {\n'
+    '        "symbol": <string>,\n'
+    '        "side": "BUY" | "SELL",\n'
+    '        "qty": <number>,\n'
+    '        "price": <number>,\n'
+    '        "type": "market" | "limit"\n'
+    '      }\n'
+    '    ]\n'
+    '  }\n'
+    '}\n\n'
+    
+    "BATCH EXECUTION OPTIMIZATION:\n"
+    "• BATCH ORDERS: ALWAYS use batch format when executing 2+ orders - much faster!\n"
+    "• PROFIT-TAKING: If multiple positions need selling, use single batch call\n"
+    "• PORTFOLIO REBALANCING: Execute all trades in one batch for atomic execution\n"
+    "• HIGH-FREQUENCY APPROACH: Batch execution eliminates network round-trips\n\n"
+    
+    "Never submit orders for HOLD decisions. ALWAYS use batch format for multiple orders.\n\n"
     
     "REPORTING:\n"
     "Provide a structured summary containing:\n"
@@ -205,6 +253,28 @@ async def _update_system_prompt(client: Client, user_preferences: dict, conversa
         # Update the conversation
         conversation[0]["content"] = updated_prompt
         print(f"[ExecutionAgent] 🔄 System prompt updated with {user_preferences.get('risk_tolerance', 'moderate')} risk tolerance")
+        
+        # Log the full updated prompt to the execution agent workflow for transparency
+        try:
+            agent_logger = AgentLogger("execution_agent", client)
+            await agent_logger.log_action(
+                action_type="system_prompt_update",
+                details={
+                    "trigger": "user_preferences_change",
+                    "risk_tolerance": user_preferences.get("risk_tolerance", "moderate"),
+                    "trading_style": user_preferences.get("trading_style", "unknown"),
+                    "context": context,
+                    "prompt_length": len(updated_prompt),
+                    "prompt_lines": len(updated_prompt.split('\n'))
+                },
+                result={
+                    "success": True,
+                    "full_prompt": updated_prompt
+                }
+            )
+        except Exception as log_exc:
+            print(f"[ExecutionAgent] Failed to log prompt update: {log_exc}")
+            
     except Exception as exc:
         print(f"[ExecutionAgent] Failed to update system prompt: {exc}")
 
@@ -256,7 +326,7 @@ async def _ensure_schedule(client: Client) -> None:
             id="ensemble-nudge-wf",
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         ),
-        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(minutes=1))]),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(seconds=25))]),
     )
     await client.create_schedule(NUDGE_SCHEDULE_ID, schedule)
     await client.get_schedule_handle(NUDGE_SCHEDULE_ID).trigger()
@@ -432,6 +502,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                                 "tool_calls": msg["tool_calls"],
                             }
                         )
+                        # Process each tool call (batch orders are handled by MCP server)
                         for tool_call in msg["tool_calls"]:
                             func_name = tool_call["function"]["name"]
                             func_args = json.loads(
@@ -441,9 +512,18 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                             if func_name != "place_mock_order":
                                 print(f"[ExecutionAgent] Tool not allowed in analysis phase: {func_name}")
                                 continue
+                            
+                            # Check if this is a batch order
+                            intent = func_args.get("intent", {})
+                            is_batch = "orders" in intent
+                            order_count = len(intent["orders"]) if is_batch else 1
+                            
                             print(
-                                f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} {func_args}{RESET}"
+                                f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} "
+                                f"({'batch: ' + str(order_count) + ' orders' if is_batch else 'single order'}) "
+                                f"{RESET}"
                             )
+                            
                             result = await session.call_tool(func_name, func_args)
                             conversation.append(
                                 {

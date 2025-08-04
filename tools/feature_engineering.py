@@ -221,7 +221,24 @@ class ComputeFeatureVector:
         logger.info(
             "ComputeFeatureVector starting for %s window=%s", symbol, window_sec
         )
-        if history is not None:
+        
+        # Load historical data if this is a fresh start (no history from continue-as-new)
+        if history is None:
+            from tools.market_data import fetch_historical_ohlcv, HISTORICAL_MINUTES
+            try:
+                historical_data = await workflow.execute_activity(
+                    fetch_historical_ohlcv,
+                    args=[symbol, '1m', HISTORICAL_MINUTES],
+                    schedule_to_close_timeout=timedelta(seconds=60),
+                )
+                if historical_data:
+                    self._history = list(historical_data)
+                    logger.info("Loaded %d historical ticks for %s on workflow startup", 
+                               len(historical_data), symbol)
+            except Exception as exc:
+                logger.warning("Failed to load historical data for %s on startup: %s", symbol, exc)
+                self._history = []
+        else:
             self._history = list(history)
         cycles = 0
         while True:

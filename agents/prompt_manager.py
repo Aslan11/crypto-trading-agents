@@ -192,6 +192,39 @@ class PromptManager:
                 ),
                 priority=550,
                 conditions={"performance_trend": ["declining", "poor"]}
+            ),
+            
+            "aggressive_trading": PromptComponent(
+                name="aggressive_trading", 
+                content=(
+                    "🚨 MANDATORY PROFIT-TAKING RULES 🚨\n"
+                    "BEFORE MAKING ANY DECISION, CHECK EACH OPEN POSITION:\n"
+                    "1. Calculate current profit % = (current_price - entry_price) / entry_price * 100\n"
+                    "2. IF profit >= 0.5%: IMMEDIATELY SELL THE ENTIRE POSITION - NO EXCEPTIONS\n"
+                    "3. IF loss >= 1.0%: IMMEDIATELY SELL THE ENTIRE POSITION - NO EXCEPTIONS\n"
+                    "4. NEVER hold positions with 0.5%+ profit - ALWAYS SELL IMMEDIATELY\n\n"
+                    
+                    "AGGRESSIVE TRADING MODE:\n"
+                    "• POSITION SIZING: Use UP TO the full position_size_comfort percentage from user preferences\n"
+                    "• MANDATORY PROFIT LOCKS: MUST sell at 0.5% profit - this is non-negotiable\n"
+                    "• TIGHT STOPS: MUST sell at -1% loss - this is non-negotiable\n"
+                    "• MULTIPLE POSITIONS: Can hold multiple concurrent positions in same symbol\n"
+                    "• HIGH TURNOVER: Exit ALL profitable positions immediately at 0.5%+ profit\n\n"
+                    
+                    "DECISION PRIORITY (IN ORDER):\n"
+                    "1. FIRST: Check all positions for 0.5%+ profit → SELL ENTIRE POSITION\n"
+                    "2. SECOND: Check all positions for 1%+ loss → SELL ENTIRE POSITION\n"
+                    "3. THIRD: Look for new entry opportunities\n"
+                    "4. NEVER hold positions longer than needed - capture profits quickly\n\n"
+                    
+                    "BATCH ORDER EXECUTION:\n"
+                    "• ALWAYS use batch orders when executing 2+ trades simultaneously\n"
+                    "• For profit-taking multiple positions: use single batch sell order\n"
+                    "• For portfolio rebalancing: execute all trades in one batch call\n"
+                    "• Batch format eliminates network delays and ensures atomic execution"
+                ),
+                priority=600,
+                conditions={"risk_mode": "aggressive"}
             )
         }
     

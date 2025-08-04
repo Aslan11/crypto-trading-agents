@@ -300,7 +300,7 @@ class PerformanceAnalyzer:
         # Calculate return metrics
         returns = self.calculate_returns(transactions)
         
-        total_return = performance_metrics.get("total_pnl", 0.0) / 250000.0  # Assuming 250k initial
+        total_return = performance_metrics.get("total_pnl", 0.0) / 1000.0  # Assuming 1k initial
         days = max(1, (end_date - start_date).days)
         annualized_return = (1 + total_return) ** (365.25 / days) - 1 if days > 0 else 0.0
         

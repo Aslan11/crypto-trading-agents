@@ -3,7 +3,8 @@
 # run_stack.sh  –  spin up local Temporal + worker + MCP server in tmux
 #
 # Usage:
-#   ./run_stack.sh           # launches or attaches to the "crypto" session
+#   ./run_stack.sh                              # launches with default $1000 balance
+#   ./run_stack.sh --initial-balance 250000    # launches with $250,000 balance
 #
 # Prereqs:
 #   • tmux installed
@@ -11,6 +12,22 @@
 #   • temporal CLI on PATH  (brew install temporal)
 
 SESSION="crypto"
+INITIAL_BALANCE="1000"  # Default balance
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --initial-balance)
+      INITIAL_BALANCE="$2"
+      shift 2
+      ;;
+    *)
+      echo "Unknown option $1"
+      echo "Usage: $0 [--initial-balance AMOUNT]"
+      exit 1
+      ;;
+  esac
+done
 
 # If the session already exists, just attach
 tmux has-session -t $SESSION 2>/dev/null
@@ -27,6 +44,10 @@ if [ -d "logs" ]; then
 else
   echo "No logs directory found (will be created by agents)"
 fi
+
+# Export the initial balance as environment variable for all agents
+export INITIAL_PORTFOLIO_BALANCE="$INITIAL_BALANCE"
+echo "Setting initial portfolio balance to: \$${INITIAL_BALANCE}"
 
 ###############################################################################
 # Pane layout

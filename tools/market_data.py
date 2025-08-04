@@ -145,20 +145,15 @@ class HistoricalDataLoaderWorkflow:
         # Fetch all historical data
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Load historical data into feature workflows
+        # Historical data loading is now handled by each ComputeFeatureVector workflow
+        # when it starts up, so we just log the results here
         for symbol, result in zip(symbols, results):
             if isinstance(result, Exception):
                 workflow.logger.error("Failed to fetch historical data for %s: %s", symbol, result)
                 continue
                 
             if result:  # If we got historical ticks
-                workflow.logger.info("Loading %d historical ticks for %s", len(result), symbol)
-                
-                await workflow.execute_activity(
-                    load_historical_data,
-                    args=[symbol, result],
-                    schedule_to_close_timeout=timedelta(seconds=120),
-                )
+                workflow.logger.info("Historical data available for %s: %d ticks", symbol, len(result))
         
         workflow.logger.info("Historical data loading completed for %d symbols", len(symbols))
 

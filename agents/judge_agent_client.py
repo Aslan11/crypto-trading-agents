@@ -128,7 +128,7 @@ class JudgeAgent:
                     logger.info("Ledger workflow not found - no trading data available yet")
                     return {
                         "performance_metrics": {"total_trades": 0, "total_pnl": 0.0, "max_drawdown": 0.0, "win_rate": 0.0},
-                        "risk_metrics": {"total_portfolio_value": 250000.0, "cash_ratio": 1.0, "max_position_concentration": 0.0, "num_positions": 0},
+                        "risk_metrics": {"total_portfolio_value": 1000.0, "cash_ratio": 1.0, "max_position_concentration": 0.0, "num_positions": 0},
                         "transaction_history": [],
                         "evaluation_period_days": window_days,
                         "status": "no_data"
@@ -155,7 +155,7 @@ class JudgeAgent:
             logger.error("Failed to collect performance data: %s", exc)
             return {
                 "performance_metrics": {"total_trades": 0, "total_pnl": 0.0, "max_drawdown": 0.0, "win_rate": 0.0},
-                "risk_metrics": {"total_portfolio_value": 250000.0, "cash_ratio": 1.0, "max_position_concentration": 0.0, "num_positions": 0},
+                "risk_metrics": {"total_portfolio_value": 1000.0, "cash_ratio": 1.0, "max_position_concentration": 0.0, "num_positions": 0},
                 "transaction_history": [],
                 "evaluation_period_days": window_days,
                 "status": "error",
@@ -276,6 +276,29 @@ Respond in JSON format:
             consistency_score * self.criteria_weights["consistency"]
         )
         
+        # Convert performance_report to JSON-serializable dict using only actual attributes
+        performance_report_dict = {
+            "start_date": performance_report.start_date.isoformat(),
+            "end_date": performance_report.end_date.isoformat(),
+            "total_return": performance_report.total_return,
+            "annualized_return": performance_report.annualized_return,
+            "volatility": performance_report.volatility,
+            "sharpe_ratio": performance_report.sharpe_ratio,
+            "max_drawdown": performance_report.max_drawdown,
+            "total_trades": performance_report.total_trades,
+            "win_rate": performance_report.win_rate,
+            "avg_win": performance_report.avg_win,
+            "avg_loss": performance_report.avg_loss,
+            "profit_factor": performance_report.profit_factor,
+            "var_95": performance_report.var_95,
+            "max_position_size": performance_report.max_position_size,
+            "avg_position_size": performance_report.avg_position_size,
+            "decision_quality_score": performance_report.decision_quality_score,
+            "risk_management_score": performance_report.risk_management_score,
+            "consistency_score": performance_report.consistency_score,
+            "overall_grade": performance_report.overall_grade
+        }
+        
         return {
             "timestamp": int(datetime.now(timezone.utc).timestamp()),
             "evaluation_period_days": performance_data.get("evaluation_period_days", 7),
@@ -286,7 +309,7 @@ Respond in JSON format:
                 "decision_quality": decision_score,
                 "consistency": consistency_score
             },
-            "performance_report": performance_report,
+            "performance_report": performance_report_dict,
             "decision_analysis": decision_analysis,
             "metrics": {
                 "total_trades": len(transaction_history),
@@ -374,13 +397,13 @@ Respond in JSON format:
         
         # Check for high drawdown using user's tolerance as baseline
         drawdown_trigger = baseline["drawdown_tolerance"] * 1.5  # Trigger when 1.5x user's tolerance
-        if performance_report.max_drawdown > drawdown_trigger:
+        if performance_report.get("max_drawdown", 0.0) > drawdown_trigger:
             conservative_position = baseline["max_position_size"] * 0.7  # 70% of user's comfort level
             conservative_cash = min(baseline["cash_reserve"] * 1.3, 0.25)  # 1.3x user's preference
             
             return {
                 "update_type": "risk_reduction",
-                "reason": f"High drawdown ({performance_report.max_drawdown:.1%}) exceeds {drawdown_trigger:.1%} trigger (1.5x your {baseline['drawdown_tolerance']:.1%} tolerance)",
+                "reason": f"High drawdown ({performance_report.get('max_drawdown', 0.0):.1%}) exceeds {drawdown_trigger:.1%} trigger (1.5x your {baseline['drawdown_tolerance']:.1%} tolerance)",
                 "context": {
                     "risk_mode": "conservative",
                     "performance_trend": ["declining"]
@@ -413,8 +436,8 @@ Respond in JSON format:
         conservative_drawdown_threshold = baseline["drawdown_tolerance"] * 0.3  # Much less than user's tolerance
         low_return_threshold = 0.02  # Still use 2% as low return threshold
         
-        if (performance_report.max_drawdown < conservative_drawdown_threshold and 
-            performance_report.total_return < low_return_threshold and 
+        if (performance_report.get("max_drawdown", 0.0) < conservative_drawdown_threshold and 
+            performance_report.get("total_return", 0.0) < low_return_threshold and 
             overall_score > 60):
             
             # Only increase if user has higher risk tolerance
@@ -424,7 +447,7 @@ Respond in JSON format:
                 
                 return {
                     "update_type": "increase_aggressiveness",
-                    "reason": f"Very low drawdown ({performance_report.max_drawdown:.1%} vs your {baseline['drawdown_tolerance']:.1%} tolerance) suggests room for more risk",
+                    "reason": f"Very low drawdown ({performance_report.get('max_drawdown', 0.0):.1%} vs your {baseline['drawdown_tolerance']:.1%} tolerance) suggests room for more risk",
                     "context": {
                         "risk_mode": "aggressive",
                         "performance_trend": ["stable"]

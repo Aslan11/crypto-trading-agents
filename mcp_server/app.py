@@ -18,7 +18,7 @@ from starlette.requests import Request
 # Import workflow classes
 from tools.market_data import SubscribeCEXStream, HistoricalDataLoaderWorkflow
 from tools.strategy_signal import EvaluateStrategyMomentum
-from tools.execution import PlaceMockOrder, OrderIntent
+from tools.execution import PlaceMockOrder, PlaceMockBatchOrder, OrderIntent, BatchOrderIntent
 from agents.workflows import (
     ExecutionLedgerWorkflow,
     BrokerAgentWorkflow,
@@ -301,53 +301,170 @@ async def evaluate_strategy_momentum(
         "destructiveHint": False,
     }
 )
-async def place_mock_order(intent: OrderIntent) -> Dict[str, Any]:
-    """Simulate executing an order intent.
+async def place_mock_order(intent: OrderIntent | BatchOrderIntent) -> Dict[str, Any]:
+    """Simulate executing single or batch order intents.
 
     Parameters
     ----------
     intent:
-        Order details with keys ``symbol``, ``side``, ``qty``, ``price`` and ``type``.
+        Single OrderIntent with keys ``symbol``, ``side``, ``qty``, ``price`` and ``type``,
+        OR BatchOrderIntent with ``orders`` list containing multiple OrderIntent objects.
 
     Returns
     -------
     Dict[str, Any]
-        Fill information including ``fill_price`` and ``cost``.
+        For single orders: Fill information including ``fill_price`` and ``cost``.
+        For batch orders: List of fill results under ``fills`` key with batch metadata.
     """
     client = await get_temporal_client()
-    workflow_id = f"order-{secrets.token_hex(4)}"
-    logger.info("Placing mock order via workflow %s", workflow_id)
-    handle = await client.start_workflow(
-        PlaceMockOrder.run,
-        intent,
-        id=workflow_id,
-        task_queue="mcp-tools",
-    )
-    fill = await handle.result()
-    logger.info("Order workflow %s completed", workflow_id)
-    try:
-        ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
-        ledger = client.get_workflow_handle(ledger_wf_id)
+    
+    # Determine if this is a single order or batch order
+    if hasattr(intent, 'orders'):
+        # Batch order handling
+        batch_intent = intent
+        logger.info("Processing batch order with %d orders", len(batch_intent.orders))
         
-        # Ensure ledger workflow exists
+        # PRE-FLIGHT VALIDATION: Check cash for all BUY orders in batch
+        total_buy_cost = 0.0
+        buy_orders = []
+        
+        for order in batch_intent.orders:
+            if order.side == "BUY":
+                estimated_cost = float(order.qty) * float(order.price) * 1.01  # Add 1% slippage buffer
+                total_buy_cost += estimated_cost
+                buy_orders.append((order, estimated_cost))
+        
+        if buy_orders:
+            try:
+                ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+                ledger = client.get_workflow_handle(ledger_wf_id)
+                
+                # Check available cash
+                available_cash = await ledger.query("get_cash")
+                
+                if available_cash < total_buy_cost:
+                    logger.warning(f"INSUFFICIENT CASH FOR BATCH: Need ${total_buy_cost:.2f}, have ${available_cash:.2f}")
+                    return {
+                        "error": "INSUFFICIENT_CASH_BATCH",
+                        "message": f"Cannot execute batch BUY orders: need ${total_buy_cost:.2f}, available ${available_cash:.2f}",
+                        "required": total_buy_cost,
+                        "available": available_cash,
+                        "buy_order_count": len(buy_orders),
+                        "total_order_count": len(batch_intent.orders)
+                    }
+            except Exception as exc:
+                logger.warning(f"Could not validate cash for batch BUY orders: {exc}")
+                # Continue with batch if we can't check (fail open for now)
+        
+        # Execute batch order via workflow
+        workflow_id = f"batch-order-{secrets.token_hex(4)}"
+        logger.info("Placing batch mock order via workflow %s", workflow_id)
+        
+        handle = await client.start_workflow(
+            PlaceMockBatchOrder.run,
+            batch_intent,
+            id=workflow_id,
+            task_queue="mcp-tools",
+        )
+        fills = await handle.result()
+        logger.info("Batch order workflow %s completed with %d fills", workflow_id, len(fills))
+        
+        # Record all fills in ledger
         try:
-            await ledger.describe()
-        except RPCError as err:
-            if err.status == RPCStatusCode.NOT_FOUND:
-                ledger = await client.start_workflow(
-                    ExecutionLedgerWorkflow.run,
-                    id=ledger_wf_id,
-                    task_queue="mcp-tools",
-                )
-                logger.info("Started ledger workflow %s", ledger_wf_id)
-            else:
-                raise
+            ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+            ledger = client.get_workflow_handle(ledger_wf_id)
+            
+            # Ensure ledger workflow exists
+            try:
+                await ledger.describe()
+            except RPCError as err:
+                if err.status == RPCStatusCode.NOT_FOUND:
+                    ledger = await client.start_workflow(
+                        ExecutionLedgerWorkflow.run,
+                        id=ledger_wf_id,
+                        task_queue="mcp-tools",
+                    )
+                    logger.info("Started ledger workflow %s", ledger_wf_id)
+                else:
+                    raise
+            
+            # Record each fill
+            for fill in fills:
+                await ledger.signal("record_fill", fill)
+                logger.info("Recorded batch fill in ledger: %s %s %s", fill["side"], fill["qty"], fill["symbol"])
+                
+        except Exception as exc:
+            logger.error("Failed to record batch fills in ledger: %s", exc)
         
-        await ledger.signal("record_fill", fill)
-        logger.info("Recorded fill in ledger: %s %s %s", fill["side"], fill["qty"], fill["symbol"])
-    except Exception as exc:
-        logger.error("Failed to record fill in ledger: %s", exc)
-    return fill
+        return {
+            "batch": True,
+            "order_count": len(batch_intent.orders),
+            "fills": fills,
+            "total_cost": sum(fill["cost"] for fill in fills if fill.get("side") == "BUY"),
+            "total_proceeds": sum(fill["cost"] for fill in fills if fill.get("side") == "SELL")
+        }
+    
+    else:
+        # Single order handling (existing logic)
+        single_intent = intent
+        
+        # PRE-FLIGHT VALIDATION: Check cash for BUY orders
+        if single_intent.side == "BUY":
+            try:
+                ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+                ledger = client.get_workflow_handle(ledger_wf_id)
+                
+                # Check available cash
+                available_cash = await ledger.query("get_cash")
+                estimated_cost = float(single_intent.qty) * float(single_intent.price) * 1.01  # Add 1% slippage buffer
+                
+                if available_cash < estimated_cost:
+                    logger.warning(f"INSUFFICIENT CASH: Need ${estimated_cost:.2f}, have ${available_cash:.2f}")
+                    return {
+                        "error": "INSUFFICIENT_CASH",
+                        "message": f"Cannot execute BUY order: need ${estimated_cost:.2f}, available ${available_cash:.2f}",
+                        "required": estimated_cost,
+                        "available": available_cash
+                    }
+            except Exception as exc:
+                logger.warning(f"Could not validate cash for BUY order: {exc}")
+                # Continue with order if we can't check (fail open for now)
+        
+        workflow_id = f"order-{secrets.token_hex(4)}"
+        logger.info("Placing mock order via workflow %s", workflow_id)
+        handle = await client.start_workflow(
+            PlaceMockOrder.run,
+            single_intent,
+            id=workflow_id,
+            task_queue="mcp-tools",
+        )
+        fill = await handle.result()
+        logger.info("Order workflow %s completed", workflow_id)
+        
+        try:
+            ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+            ledger = client.get_workflow_handle(ledger_wf_id)
+            
+            # Ensure ledger workflow exists
+            try:
+                await ledger.describe()
+            except RPCError as err:
+                if err.status == RPCStatusCode.NOT_FOUND:
+                    ledger = await client.start_workflow(
+                        ExecutionLedgerWorkflow.run,
+                        id=ledger_wf_id,
+                        task_queue="mcp-tools",
+                    )
+                    logger.info("Started ledger workflow %s", ledger_wf_id)
+                else:
+                    raise
+            
+            await ledger.signal("record_fill", fill)
+            logger.info("Recorded fill in ledger: %s %s %s", fill["side"], fill["qty"], fill["symbol"])
+        except Exception as exc:
+            logger.error("Failed to record fill in ledger: %s", exc)
+        
+        return fill
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
 async def get_historical_ticks(
@@ -481,10 +598,43 @@ async def get_portfolio_status() -> Dict[str, Any]:
         unrealized_pnl = await handle.query("get_unrealized_pnl")
         logger.info("Portfolio status retrieved with last fill prices")
     
+    # Calculate detailed position information
+    position_details = {}
+    total_position_value = 0.0
+    
+    for symbol, quantity in positions.items():
+        entry_price = entry_prices.get(symbol, 0.0)
+        current_price = live_prices.get(symbol, entry_price)  # Fallback to entry price if no live price
+        
+        # Calculate position values
+        entry_value = quantity * entry_price
+        current_value = quantity * current_price
+        position_pnl = current_value - entry_value
+        position_pnl_pct = (position_pnl / entry_value * 100) if entry_value > 0 else 0.0
+        
+        total_position_value += current_value
+        
+        position_details[symbol] = {
+            "quantity": quantity,
+            "entry_price": entry_price,
+            "current_price": current_price,
+            "entry_value": entry_value,
+            "current_value": current_value,
+            "position_pnl": position_pnl,
+            "position_pnl_pct": position_pnl_pct,
+            "price_is_live": symbol in live_prices
+        }
+    
+    # Calculate total portfolio value
+    total_portfolio_value = cash + total_position_value + scraped_profits
+
     return {
         "cash": cash,
-        "positions": positions,
-        "entry_prices": entry_prices,
+        "positions": positions,  # Legacy format for compatibility
+        "entry_prices": entry_prices,  # Legacy format for compatibility
+        "position_details": position_details,  # New detailed format
+        "total_position_value": total_position_value,
+        "total_portfolio_value": total_portfolio_value,
         "total_pnl": pnl,
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,

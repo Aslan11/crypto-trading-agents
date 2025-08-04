@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from decimal import Decimal
 from typing import Dict, List, Any
 from datetime import datetime, timezone
@@ -14,8 +15,10 @@ class ExecutionLedgerWorkflow:
     """Maintain mock execution ledger state."""
 
     def __init__(self) -> None:
-        self.initial_cash = Decimal("250000")
-        self.cash = Decimal("250000")
+        # Get initial balance from environment variable, default to 1000
+        initial_balance = os.environ.get("INITIAL_PORTFOLIO_BALANCE", "1000")
+        self.initial_cash = Decimal(initial_balance)
+        self.cash = Decimal(initial_balance)
         self.positions: Dict[str, Decimal] = {}
         self.last_price: Dict[str, Decimal] = {}
         self.last_price_timestamp: Dict[str, int] = {}  # Track when prices were last updated

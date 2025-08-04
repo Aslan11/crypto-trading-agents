@@ -9,6 +9,9 @@ A 24×7 multi-agent crypto trading stack built on Temporal and Model Context Pro
 - **🔄 Dynamic Prompt Management**: Adaptive system prompts based on trading performance
 - **📈 Comprehensive Analytics**: Real-time performance metrics, risk analysis, and transaction history
 - **🛡️ Risk Management**: Intelligent position sizing, drawdown protection, and portfolio monitoring
+- **💰 Profit Scraping**: Configurable profit-taking to secure gains while allowing reinvestment
+- **📚 Historical Data Loading**: Automatic 1-hour historical data initialization for informed startup
+- **📋 Distributed Logging**: Individual agent workflow logging for better separation of concerns
 - **⚡ Durable Execution**: Built on Temporal workflows for fault tolerance and auditability
 
 ## Table of Contents
@@ -91,7 +94,7 @@ The **Broker Agent** serves as the sole user interface, providing access to all 
 ### 🔄 LLM as Judge Workflow
 The judge agent continuously monitors performance and automatically optimizes the execution agent:
 
-1. **Performance Monitoring**: Evaluates trading performance every 30 minutes
+1. **Performance Monitoring**: Evaluates trading performance dynamically (10-minute startup delay, then adaptive timing)
 2. **Decision Analysis**: Uses GPT-4o to analyze decision quality and timing
 3. **Prompt Optimization**: Automatically updates execution agent prompts based on performance
 4. **Risk Management**: Switches to conservative mode during poor performance periods
@@ -106,9 +109,10 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 |----------------------------|--------------------------------------------------------|-------------------------|
 | `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
 | `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
+| `HistoricalDataLoaderWorkflow` | Load 1-hour historical data for informed startup | System initialization |
 | `ComputeFeatureVector`   | Store tick history for queries                | Market tick           |
 | `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
-| `ExecutionLedgerWorkflow`| Track fills, positions, and transaction history | Fill events           |
+| `ExecutionLedgerWorkflow`| Track fills, positions, transaction history, and profit scraping | Fill events           |
 
 ### Performance & Analytics Tools
 
@@ -128,6 +132,14 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 | `get_prompt_history`       | View prompt evolution and version history           | System monitoring       |
 | `JudgeAgentWorkflow`       | Manage evaluation state and prompt versions        | Judge agent lifecycle   |
 
+### Agent Logging Tools
+
+| Tool (Workflow)            | Purpose                                                | Typical Triggers        |
+|----------------------------|--------------------------------------------------------|-------------------------|
+| `ExecutionAgentWorkflow`   | Individual execution agent logging and state          | Agent decisions         |
+| `JudgeAgentWorkflow`       | Individual judge agent logging and evaluations        | Performance analysis    |
+| `BrokerAgentWorkflow`      | Broker agent state and user interaction logging       | User interactions       |
+
 
 ## Getting Started
 
@@ -145,6 +157,7 @@ Required environment variables:
 - `COINBASEEXCHANGE_API_KEY` and `COINBASEEXCHANGE_SECRET` – API credentials for Coinbase Exchange.
 - `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` and `TASK_QUEUE` – Temporal connection settings (defaults are shown in `.env`).
 - `MCP_PORT` – port for the MCP server (defaults to `8080`).
+- `HISTORICAL_MINUTES` – minutes of historical data to load on startup (defaults to `60` for 1 hour).
 
 ### Quick Setup (local dev)
 ```bash
@@ -173,14 +186,11 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 
 ### Walking through the demo
 1. With the tmux session running, open a new terminal window.
-2. When prompted for trading pairs, tell the broker agent **"all of them"**.
-   This instructs it to begin streaming data for every supported pair.
-3. `start_market_stream` spawns a `subscribe_cex_stream` workflow that
-   broadcasts each ticker to its `ComputeFeatureVector` child.
-4. The execution agent wakes up periodically via a scheduled workflow and
-   analyzes market data to decide whether to trade using `place_mock_order`.
-5. Filled orders are recorded in the `ExecutionLedgerWorkflow`.
-6. The judge agent monitors performance autonomously and can be queried through the broker:
+2. When prompted for trading pairs, tell the broker agent **"BTC/USD, ETH/USD, SOL/USD"** (recommended 3-5 pairs for optimal performance).
+3. `start_market_stream` automatically loads 1 hour of historical data, then spawns a `subscribe_cex_stream` workflow that broadcasts each ticker to its `ComputeFeatureVector` child.
+4. The execution agent wakes up periodically via a scheduled workflow and analyzes market data to decide whether to trade using `place_mock_order`.
+5. Filled orders are recorded in the `ExecutionLedgerWorkflow` with automatic profit scraping if configured.
+6. The judge agent monitors performance autonomously (10-minute startup delay) and can be queried through the broker:
    - **"How is the system performing?"** - Triggers evaluation and shows metrics
    - **"What's the transaction history?"** - Shows recent trades and fills
    - **"Evaluate performance"** - Forces immediate performance analysis
@@ -189,8 +199,8 @@ This starts the Temporal dev server, Python worker, MCP server and several sampl
 The broker agent serves as your single interface. Try these commands:
 
 **Trading Commands:**
-- `"Start trading BTC/USD and ETH/USD"`
-- `"What's my portfolio status?"`
+- `"Start trading BTC/USD and ETH/USD"` (or choose from expanded DeFi/Layer 2 options)
+- `"What's my portfolio status?"` (includes profit scraping details)
 - `"Show me recent transactions"`
 
 **Performance Analysis:**
@@ -243,6 +253,8 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 - **`context_manager.py`**: Token-based conversation management with summarization
 - **`prompt_manager.py`**: Modular prompt templates with versioning and A/B testing
 - **`performance_analysis.py`**: Comprehensive trading performance analysis tools
+- **`market_data.py`**: Historical data loading and streaming with configurable windows
+- **`agent_logger.py`**: Distributed logging system routing to individual agent workflows
 
 ## 🧠 LLM as Judge System
 
@@ -265,13 +277,30 @@ The system implements a sophisticated "LLM as Judge" pattern for continuous self
 
 ### Example Evaluation Cycle
 ```python
-# Triggered every 30 minutes or on-demand via broker agent
+# Triggered dynamically based on performance or on-demand via broker agent
 1. Collect transaction history and portfolio metrics
 2. Calculate quantitative performance (Sharpe, drawdown, win rate)
 3. Use GPT-4o to analyze decision quality and timing
 4. Generate weighted overall score across four dimensions
 5. Determine if prompt updates are needed
 6. Implement changes and track effectiveness
+```
+
+## 💰 Profit Scraping System
+
+The system includes intelligent profit-taking to secure gains while maintaining trading capital:
+
+### User-Configurable Profit Taking
+- **Scraping Percentage**: Users set percentage of profits to secure (e.g., 20%)
+- **Automatic Execution**: Applied to all profitable trades automatically
+- **Separation of Concerns**: Scraped profits kept separate from trading capital
+- **Portfolio Tracking**: Displays both available cash and total cash value
+
+### Example Flow
+```python
+# User sets 20% profit scraping preference
+# Trade: Buy BTC at $50,000, Sell at $55,000 = $5,000 profit
+# Result: $4,000 reinvested, $1,000 scraped and secured
 ```
 
 ## Contributing

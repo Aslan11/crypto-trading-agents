@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Dict, List
+from typing import Dict, List, Any
 from datetime import datetime, timezone
 from temporalio import workflow
 from temporalio.client import Client
@@ -18,10 +18,12 @@ class ExecutionLedgerWorkflow:
         self.cash = Decimal("250000")
         self.positions: Dict[str, Decimal] = {}
         self.last_price: Dict[str, Decimal] = {}
+        self.last_price_timestamp: Dict[str, int] = {}  # Track when prices were last updated
         self.entry_price: Dict[str, Decimal] = {}
         self.fill_count = 0
         self.transaction_history: List[Dict] = []
         self.realized_pnl = Decimal("0")  # Track actual realized gains/losses from closed positions
+        self.price_staleness_threshold = 300  # 5 minutes in seconds
 
     @workflow.signal
     def record_fill(self, fill: Dict) -> None:
@@ -44,16 +46,26 @@ class ExecutionLedgerWorkflow:
         }
         self.transaction_history.append(transaction)
         
+        # Update price and timestamp
+        current_timestamp = int(datetime.now(timezone.utc).timestamp())
         self.last_price[symbol] = price
+        self.last_price_timestamp[symbol] = current_timestamp
         current_qty = self.positions.get(symbol, Decimal("0"))
         if side == "BUY":
             self.cash -= cost
             new_qty = current_qty + qty
-            avg_price = self.entry_price.get(symbol, Decimal("0"))
-            if new_qty > 0:
+            
+            # Calculate weighted average entry price
+            if current_qty == 0:
+                # First purchase - entry price is the fill price
+                self.entry_price[symbol] = price
+            else:
+                # Subsequent purchases - weighted average
+                avg_price = self.entry_price.get(symbol, price)
                 self.entry_price[symbol] = (
                     (avg_price * current_qty + price * qty) / new_qty
                 )
+            
             self.positions[symbol] = new_qty
         else:  # SELL
             self.cash += cost
@@ -72,6 +84,47 @@ class ExecutionLedgerWorkflow:
             else:
                 self.positions[symbol] = new_qty
         self.fill_count += 1
+    
+    def _validate_price(self, price: Decimal, symbol: str) -> bool:
+        """Validate that a price is reasonable."""
+        # Basic sanity checks
+        if price <= 0:
+            return False
+        
+        # Price should be reasonable (not astronomical)
+        if price > Decimal("10000000"):  # $10M per unit seems unreasonable
+            return False
+        
+        # Check for extreme price movements vs last known price
+        if symbol in self.last_price:
+            last_price = self.last_price[symbol]
+            if last_price > 0:
+                price_change_ratio = abs(price - last_price) / last_price
+                # Reject prices that moved more than 90% in either direction
+                # This catches obvious data errors while allowing for crypto volatility
+                if price_change_ratio > Decimal("0.9"):
+                    return False
+        
+        return True
+    
+    def _is_price_stale(self, symbol: str, max_age_seconds: int = None) -> bool:
+        """Check if the last price for a symbol is stale."""
+        if symbol not in self.last_price_timestamp:
+            return True
+        
+        threshold = max_age_seconds or self.price_staleness_threshold
+        current_time = int(datetime.now(timezone.utc).timestamp())
+        price_age = current_time - self.last_price_timestamp[symbol]
+        
+        return price_age > threshold
+    
+    def _get_price_age(self, symbol: str) -> int:
+        """Get the age of the last price in seconds."""
+        if symbol not in self.last_price_timestamp:
+            return float('inf')
+        
+        current_time = int(datetime.now(timezone.utc).timestamp())
+        return current_time - self.last_price_timestamp[symbol]
 
     @workflow.query
     def get_pnl(self) -> float:
@@ -92,12 +145,21 @@ class ExecutionLedgerWorkflow:
                 # Use live price if available, otherwise fall back to last fill price
                 if live_prices and symbol in live_prices:
                     current_price = Decimal(str(live_prices[symbol]))
+                    # Validate live price
+                    if not self._validate_price(current_price, symbol):
+                        current_price = self.last_price.get(symbol, Decimal("0"))
                 else:
                     current_price = self.last_price.get(symbol, Decimal("0"))
                 
                 entry_price = self.entry_price.get(symbol, Decimal("0"))
                 
                 if current_price > 0 and entry_price > 0:
+                    # Validate price is not stale (this affects accuracy but doesn't stop calculation)
+                    if live_prices is None and self._is_price_stale(symbol):
+                        # Price is stale - continue with calculation but log warning
+                        # Note: In a real system, we'd want to log this via workflow logging
+                        pass
+                    
                     # Unrealized PnL = (current_price - entry_price) * quantity
                     position_pnl = (current_price - entry_price) * quantity
                     unrealized_pnl += position_pnl
@@ -266,6 +328,27 @@ class ExecutionLedgerWorkflow:
             "num_positions": len(self.positions),
             "leverage": 1.0  # Assuming no leverage for now
         }
+    
+    @workflow.query
+    def get_price_staleness_info(self) -> Dict[str, Any]:
+        """Get information about price staleness for all positions."""
+        staleness_info = {
+            "stale_symbols": [],
+            "fresh_symbols": [],
+            "price_ages": {},
+            "staleness_threshold_seconds": self.price_staleness_threshold
+        }
+        
+        for symbol in self.positions.keys():
+            age = self._get_price_age(symbol)
+            staleness_info["price_ages"][symbol] = age
+            
+            if age == float('inf') or self._is_price_stale(symbol):
+                staleness_info["stale_symbols"].append(symbol)
+            else:
+                staleness_info["fresh_symbols"].append(symbol)
+        
+        return staleness_info
     
     @workflow.query
     def get_risk_metrics_with_live_prices(self, live_prices: Dict[str, float]) -> Dict[str, float]:

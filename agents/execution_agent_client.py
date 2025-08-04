@@ -43,6 +43,8 @@ ALLOWED_TOOLS = {
 
 NUDGE_SCHEDULE_ID = "ensemble-nudge"
 
+
+
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 
@@ -144,6 +146,7 @@ async def _watch_symbols(client: Client, symbols: Set[str]) -> None:
                 symbols.clear()
                 symbols.update(new_set)
                 print(f"[ExecutionAgent] Active symbols updated: {sorted(symbols)}")
+                
         except RPCError as err:
             if err.status == RPCStatusCode.NOT_FOUND:
                 try:
@@ -160,6 +163,50 @@ async def _watch_symbols(client: Client, symbols: Set[str]) -> None:
         except Exception as exc:
             print(f"[ExecutionAgent] Error watching symbols: {exc}")
         await asyncio.sleep(1)
+
+
+async def _watch_user_preferences(client: Client, current_preferences: dict, conversation: list) -> None:
+    """Poll execution agent workflow for user preference updates."""
+    wf_id = "execution-agent"
+    while True:
+        try:
+            handle = client.get_workflow_handle(wf_id)
+            prefs = await handle.query("get_user_preferences")
+            
+            # Check if preferences have changed
+            if prefs != current_preferences:
+                current_preferences.clear()
+                current_preferences.update(prefs)
+                print(f"[ExecutionAgent] ✅ User preferences updated: risk_tolerance={prefs.get('risk_tolerance', 'moderate')}, style={prefs.get('trading_style', 'unknown')}")
+                
+                # Update system prompt with new preferences
+                await _update_system_prompt(client, prefs, conversation)
+        except Exception as exc:
+            # Silently continue if execution agent workflow not found or other issues
+            pass
+        
+        await asyncio.sleep(2)  # Check every 2 seconds
+
+
+async def _update_system_prompt(client: Client, user_preferences: dict, conversation: list) -> None:
+    """Update the system prompt with new user preferences."""
+    if not conversation or conversation[0]["role"] != "system":
+        return
+        
+    try:
+        prompt_manager = await create_prompt_manager(temporal_client=client)
+        
+        context = {
+            "risk_mode": user_preferences.get("risk_tolerance", "moderate"),
+            "performance_trend": ["stable"]  # Default to stable, judge can update this
+        }
+        updated_prompt = await prompt_manager.get_current_prompt("execution_agent", context)
+        
+        # Update the conversation
+        conversation[0]["content"] = updated_prompt
+        print(f"[ExecutionAgent] 🔄 System prompt updated with {user_preferences.get('risk_tolerance', 'moderate')} risk tolerance")
+    except Exception as exc:
+        print(f"[ExecutionAgent] Failed to update system prompt: {exc}")
 
 
 async def _stream_nudges(client: Client) -> AsyncIterator[int]:
@@ -230,6 +277,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
     context_manager = create_context_manager(model=model, openai_client=openai_client)
     prompt_manager = await create_prompt_manager(temporal_client=temporal)
     symbols: Set[str] = set()
+    current_preferences: dict = {}
     _symbol_task = asyncio.create_task(_watch_symbols(temporal, symbols))
     await _ensure_schedule(temporal)
 
@@ -244,38 +292,8 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
             all_tools = tools_resp.tools
             tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
             
-            # Get user preferences to incorporate into prompt
-            user_preferences = {}
-            try:
-                broker_handle = temporal.get_workflow_handle(os.environ.get("BROKER_WF_ID", "broker-agent"))
-                await broker_handle.describe()
-                user_preferences = await broker_handle.query("get_user_preferences")
-                print(f"[ExecutionAgent] Retrieved user preferences: risk_tolerance={user_preferences.get('risk_tolerance', 'moderate')}")
-            except Exception as exc:
-                print(f"[ExecutionAgent] Could not retrieve user preferences, using defaults: {exc}")
-                user_preferences = {"risk_tolerance": "moderate", "experience_level": "intermediate"}
-
-            # Get current prompt dynamically with user preferences context
-            current_prompt = SYSTEM_PROMPT  # Default fallback
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    # Pass user preferences as context to the prompt manager
-                    context = {
-                        "risk_mode": user_preferences.get("risk_tolerance", "moderate"),
-                        "experience_level": user_preferences.get("experience_level", "intermediate"),
-                        "user_preferences": user_preferences
-                    }
-                    current_prompt = await prompt_manager.get_current_prompt("execution_agent", context)
-                    print(f"[ExecutionAgent] Using dynamic prompt with {user_preferences.get('risk_tolerance', 'moderate')} risk tolerance (length: {len(current_prompt)} chars)")
-                    break
-                except Exception as exc:
-                    if attempt < max_retries - 1:
-                        print(f"[ExecutionAgent] Attempt {attempt + 1}/{max_retries} failed to get dynamic prompt, retrying in 2s: {exc}")
-                        await asyncio.sleep(2)
-                    else:
-                        print(f"[ExecutionAgent] All attempts failed to get dynamic prompt, using default: {exc}")
-                        current_prompt = SYSTEM_PROMPT
+            # Initialize with default prompt - will be updated after user preferences are retrieved
+            current_prompt = SYSTEM_PROMPT
             
             conversation = [{"role": "system", "content": current_prompt}]
             print(
@@ -283,11 +301,14 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 [t.name for t in tools],
             )
 
+            # Start watching for user preference updates
+            _preferences_task = asyncio.create_task(_watch_user_preferences(temporal, current_preferences, conversation))
+
             # Track latest processed timestamp for data continuity
             latest_processed_ts = None
             
             # Initialize agent logger
-            agent_logger = AgentLogger("execution_agent")
+            agent_logger = AgentLogger("execution_agent", temporal)
             
             async for ts in _stream_nudges(temporal):
                 if not symbols:
@@ -482,7 +503,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                                     })
                         
                         # Log the comprehensive decision
-                        agent_logger.log_decision(
+                        await agent_logger.log_decision(
                             nudge_timestamp=ts,
                             symbols=sorted(symbols),
                             market_data={"historical_ticks": _tool_result_data(historical_data)},

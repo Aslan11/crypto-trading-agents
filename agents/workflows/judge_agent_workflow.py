@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Dict, List
 from datetime import datetime, timezone
 from temporalio import workflow
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @workflow.defn
@@ -13,19 +16,14 @@ class JudgeAgentWorkflow:
 
     def __init__(self) -> None:
         self.evaluations: List[Dict] = []
-        self.prompt_versions: List[Dict] = []
-        self.current_prompt_version: int = 1
+        self.context_history: List[Dict] = []
+        # Initialize with defaults - will be updated from user preferences in run()
+        self.current_context: Dict = {
+            "risk_mode": "moderate",
+            "performance_trend": ["stable"]
+        }
         self.last_evaluation_ts: int = 0
-        
-        # Initialize with base prompt version
-        self.prompt_versions.append({
-            "version": 1,
-            "timestamp": int(datetime.now(timezone.utc).timestamp()),
-            "prompt_type": "execution_agent",
-            "description": "Initial system prompt",
-            "performance_score": 0.0,
-            "is_active": True
-        })
+        self.user_preferences: Dict = {}  # Store user preferences for risk baseline
 
     @workflow.signal
     def record_evaluation(self, evaluation: Dict) -> None:
@@ -35,42 +33,39 @@ class JudgeAgentWorkflow:
         self.evaluations.append(evaluation)
         self.last_evaluation_ts = evaluation["timestamp"]
 
-    @workflow.signal
-    def update_prompt_version(self, prompt_data: Dict) -> None:
-        """Record a new prompt version."""
-        # Deactivate current active version
-        for version in self.prompt_versions:
-            if version["is_active"]:
-                version["is_active"] = False
-        
-        # Add new version
-        new_version = {
-            "version": len(self.prompt_versions) + 1,
-            "timestamp": int(datetime.now(timezone.utc).timestamp()),
-            "prompt_type": prompt_data.get("prompt_type", "execution_agent"),
-            "prompt_content": prompt_data.get("prompt_content", ""),
-            "description": prompt_data.get("description", ""),
-            "changes": prompt_data.get("changes", []),
-            "reason": prompt_data.get("reason", ""),
-            "performance_score": 0.0,
-            "is_active": True
-        }
-        
-        self.prompt_versions.append(new_version)
-        self.current_prompt_version = new_version["version"]
+    @workflow.signal  
+    def set_user_preferences(self, preferences: Dict) -> None:
+        """Update user trading preferences."""
+        self.user_preferences.update(preferences)
+        # Note: workflow.logger() should be used instead of regular logger in workflows
+        workflow.logger.info("Judge agent received user preferences: risk_tolerance=%s, position_comfort=%s, cash_reserve=%s", 
+                           preferences.get('risk_tolerance', 'unknown'),
+                           preferences.get('position_size_comfort', 'unknown'), 
+                           preferences.get('cash_reserve_level', 'unknown'))
 
     @workflow.signal
-    def rollback_prompt(self, target_version: int) -> None:
-        """Rollback to a previous prompt version."""
-        target_prompt = None
-        for version in self.prompt_versions:
-            version["is_active"] = False
-            if version["version"] == target_version:
-                target_prompt = version
+    def update_agent_context(self, context_data: Dict) -> None:
+        """Update the agent's context."""
+        # Update current context
+        self.current_context.update(context_data.get("context", {}))
         
-        if target_prompt:
-            target_prompt["is_active"] = True
-            self.current_prompt_version = target_version
+        # Record the context change
+        context_record = {
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+            "context": self.current_context.copy(),
+            "description": context_data.get("description", "Context update"),
+            "reason": context_data.get("reason", "Performance-based adjustment"),
+            "changes": context_data.get("changes", [])
+        }
+        
+        self.context_history.append(context_record)
+
+    @workflow.signal
+    def rollback_context(self, target_index: int) -> None:
+        """Rollback to a previous context."""
+        if 0 <= target_index < len(self.context_history):
+            target_context = self.context_history[target_index]
+            self.current_context = target_context["context"].copy()
 
     @workflow.signal
     def trigger_immediate_evaluation(self, trigger_data: Dict) -> None:
@@ -111,20 +106,16 @@ class JudgeAgentWorkflow:
         return filtered[:limit]
 
     @workflow.query
-    def get_prompt_versions(self, limit: int = 20) -> List[Dict]:
-        """Get prompt version history."""
+    def get_context_history(self, limit: int = 20) -> List[Dict]:
+        """Get context change history."""
         # Return most recent first
-        versions = sorted(self.prompt_versions, key=lambda x: x["timestamp"], reverse=True)
-        return versions[:limit]
+        history = sorted(self.context_history, key=lambda x: x["timestamp"], reverse=True)
+        return history[:limit]
 
     @workflow.query
-    def get_current_prompt_version(self) -> Dict:
-        """Get the currently active prompt version."""
-        for version in self.prompt_versions:
-            if version["is_active"]:
-                return version
-        # Fallback to latest version
-        return self.prompt_versions[-1] if self.prompt_versions else {}
+    def get_current_context(self) -> Dict:
+        """Get the current agent context."""
+        return self.current_context.copy()
 
     @workflow.query
     def get_performance_trend(self, days: int = 30) -> Dict:
@@ -184,6 +175,11 @@ class JudgeAgentWorkflow:
         cooldown_seconds = cooldown_hours * 60 * 60
         
         return time_since_last >= cooldown_seconds
+
+    @workflow.query
+    def get_user_preferences(self) -> Dict:
+        """Get current user preferences."""
+        return dict(self.user_preferences)
 
     @workflow.run
     async def run(self) -> None:

@@ -16,6 +16,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from agents.prompt_manager import create_prompt_manager
 from agents.workflows import JudgeAgentWorkflow, ExecutionLedgerWorkflow
+from agents.workflows.agent_logging_workflow import AgentLoggingWorkflow
 from tools.performance_analysis import PerformanceAnalyzer, format_performance_report
 from tools.agent_logger import AgentLogger
 
@@ -40,7 +41,8 @@ class JudgeAgent:
         self.mcp_session = mcp_session
         self.performance_analyzer = PerformanceAnalyzer()
         self.prompt_manager = None
-        self.agent_logger = AgentLogger("judge_agent")
+        self.agent_logger = AgentLogger("judge_agent", temporal_client)
+        self.user_preferences = {}  # Cache user preferences
         
         # Evaluation criteria weights
         self.criteria_weights = {
@@ -61,6 +63,19 @@ class JudgeAgent:
     async def initialize(self) -> None:
         """Initialize the judge agent."""
         self.prompt_manager = await create_prompt_manager(self.temporal_client)
+        
+        # Ensure agent logging workflow exists
+        try:
+            handle = self.temporal_client.get_workflow_handle("agent-logging")
+            await handle.describe()
+        except RPCError as err:
+            if err.status == RPCStatusCode.NOT_FOUND:
+                await self.temporal_client.start_workflow(
+                    AgentLoggingWorkflow.run,
+                    id="agent-logging",
+                    task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
+                )
+                logger.info("Started agent logging workflow")
         
         # Ensure judge workflow exists
         try:
@@ -106,7 +121,7 @@ class JudgeAgent:
                 return False
             
             # Check cooldown timing
-            return await handle.query("should_trigger_evaluation", 4)  # 4 hour cooldown
+            return await handle.query("should_trigger_evaluation", 0.167)  # 10 minute cooldown (0.167 hours)
         except Exception as exc:
             logger.debug("Failed to check evaluation timing: %s", exc)
             return False
@@ -297,36 +312,98 @@ Respond in JSON format:
             "recommendations": decision_analysis.get("recommendations", [])
         }
     
-    async def determine_prompt_updates(self, evaluation: Dict) -> Optional[Dict]:
-        """Determine if prompt updates are needed based on evaluation."""
+    async def get_user_preferences(self) -> Dict:
+        """Retrieve user preferences from judge workflow."""
+        try:
+            handle = self.temporal_client.get_workflow_handle("judge-agent")
+            prefs = await handle.query("get_user_preferences")
+            self.user_preferences = prefs
+            return prefs
+        except Exception as exc:
+            logger.warning("Failed to get user preferences from judge workflow: %s", exc)
+            return {}
+    
+    def parse_percentage(self, value: str, default: float) -> float:
+        """Parse percentage string to float (e.g., '50%' -> 0.5)."""
+        try:
+            if isinstance(value, str) and value.endswith('%'):
+                return float(value.rstrip('%')) / 100.0
+            elif isinstance(value, (int, float)):
+                return float(value) if value <= 1.0 else float(value) / 100.0
+            else:
+                return default
+        except (ValueError, TypeError):
+            return default
+    
+    def get_user_baseline_limits(self) -> Dict[str, float]:
+        """Get user's baseline risk limits from preferences."""
+        prefs = self.user_preferences
+        
+        # Parse user preferences with fallback defaults
+        baseline = {
+            "max_position_size": self.parse_percentage(prefs.get('position_size_comfort', '20%'), 0.20),
+            "cash_reserve": self.parse_percentage(prefs.get('cash_reserve_level', '15%'), 0.15),
+            "drawdown_tolerance": self.parse_percentage(prefs.get('drawdown_tolerance', '15%'), 0.15),
+            "risk_tolerance": prefs.get('risk_tolerance', 'moderate')
+        }
+        
+        logger.info("User baseline limits: position=%.1f%%, cash=%.1f%%, drawdown=%.1f%%, risk=%s",
+                   baseline["max_position_size"] * 100,
+                   baseline["cash_reserve"] * 100, 
+                   baseline["drawdown_tolerance"] * 100,
+                   baseline["risk_tolerance"])
+        
+        return baseline
+    
+    async def determine_context_updates(self, evaluation: Dict) -> Optional[Dict]:
+        """Determine if context updates are needed based on evaluation."""
         overall_score = evaluation["overall_score"]
         performance_report = evaluation["performance_report"]
         component_scores = evaluation["component_scores"]
         
+        # Get user preferences and baseline limits
+        await self.get_user_preferences()
+        baseline = self.get_user_baseline_limits()
+        
         # Check if performance is poor enough to warrant intervention
         if overall_score < self.update_thresholds["poor_performance_trigger"]:
-            # Emergency intervention - switch to conservative mode
+            # Emergency intervention - reduce risk from user's baseline
+            conservative_position = baseline["max_position_size"] * 0.5  # 50% of user's comfort level
+            conservative_cash = min(baseline["cash_reserve"] * 1.5, 0.30)  # 1.5x user's preference, capped at 30%
+            
             return {
                 "update_type": "emergency_conservative",
                 "reason": f"Poor performance (score: {overall_score:.1f}) requires immediate risk reduction",
-                "target_template": "execution_agent_conservative",
+                "context": {
+                    "risk_mode": "conservative",
+                    "performance_trend": ["declining", "poor"]
+                },
                 "changes": [
-                    "Reduced maximum position size to 15%",
-                    "Increased cash reserves to 20%",
+                    "Switched to conservative risk mode",
+                    f"Reduced maximum position size to {conservative_position:.0%} (50% of your {baseline['max_position_size']:.0%} comfort level)",
+                    f"Increased cash reserves to {conservative_cash:.0%} (from your {baseline['cash_reserve']:.0%} preference)",
                     "Enhanced risk controls for trade sizing"
                 ]
             }
         
-        # Check for high drawdown
-        if performance_report.max_drawdown > self.update_thresholds["max_drawdown_trigger"]:
+        # Check for high drawdown using user's tolerance as baseline
+        drawdown_trigger = baseline["drawdown_tolerance"] * 1.5  # Trigger when 1.5x user's tolerance
+        if performance_report.max_drawdown > drawdown_trigger:
+            conservative_position = baseline["max_position_size"] * 0.7  # 70% of user's comfort level
+            conservative_cash = min(baseline["cash_reserve"] * 1.3, 0.25)  # 1.3x user's preference
+            
             return {
                 "update_type": "risk_reduction",
-                "reason": f"High drawdown ({performance_report.max_drawdown:.1%}) requires enhanced risk management",
-                "target_template": "execution_agent_conservative",
+                "reason": f"High drawdown ({performance_report.max_drawdown:.1%}) exceeds {drawdown_trigger:.1%} trigger (1.5x your {baseline['drawdown_tolerance']:.1%} tolerance)",
+                "context": {
+                    "risk_mode": "conservative",
+                    "performance_trend": ["declining"]
+                },
                 "changes": [
+                    "Switched to conservative risk mode",
                     "Enhanced drawdown protection",
-                    "More conservative position sizing",
-                    "Stricter risk management rules"
+                    f"Reduced position sizing to {conservative_position:.0%} (70% of your {baseline['max_position_size']:.0%} comfort level)",
+                    f"Increased cash reserves to {conservative_cash:.0%}"
                 ]
             }
         
@@ -335,7 +412,10 @@ Respond in JSON format:
             return {
                 "update_type": "decision_improvement",
                 "reason": "Poor decision quality requires enhanced decision framework",
-                "target_template": "execution_agent_performance",
+                "context": {
+                    "risk_mode": "moderate",
+                    "performance_trend": ["declining", "poor"]
+                },
                 "changes": [
                     "Added performance monitoring guidelines",
                     "Enhanced decision analysis requirements",
@@ -343,71 +423,70 @@ Respond in JSON format:
                 ]
             }
         
-        # Check for overly conservative performance
-        if (performance_report.max_drawdown < 0.05 and 
-            performance_report.total_return < 0.02 and 
+        # Check for overly conservative performance (relative to user's risk tolerance)
+        conservative_drawdown_threshold = baseline["drawdown_tolerance"] * 0.3  # Much less than user's tolerance
+        low_return_threshold = 0.02  # Still use 2% as low return threshold
+        
+        if (performance_report.max_drawdown < conservative_drawdown_threshold and 
+            performance_report.total_return < low_return_threshold and 
             overall_score > 60):
-            return {
-                "update_type": "increase_aggressiveness",
-                "reason": "Overly conservative performance - can afford more risk",
-                "target_template": "execution_agent_standard",
-                "changes": [
-                    "Increased position sizing limits",
-                    "Reduced cash reserve requirements",
-                    "More aggressive risk parameters"
-                ]
-            }
+            
+            # Only increase if user has higher risk tolerance
+            if baseline["risk_tolerance"] in ["high", "aggressive"]:
+                aggressive_position = min(baseline["max_position_size"] * 1.2, 0.80)  # Up to 120% of user comfort, capped at 80%
+                aggressive_cash = max(baseline["cash_reserve"] * 0.8, 0.05)  # 80% of user preference, minimum 5%
+                
+                return {
+                    "update_type": "increase_aggressiveness",
+                    "reason": f"Very low drawdown ({performance_report.max_drawdown:.1%} vs your {baseline['drawdown_tolerance']:.1%} tolerance) suggests room for more risk",
+                    "context": {
+                        "risk_mode": "aggressive",
+                        "performance_trend": ["stable"]
+                    },
+                    "changes": [
+                        "Switched to aggressive risk mode",
+                        f"Increased position sizing to {aggressive_position:.0%} (up to 120% of your {baseline['max_position_size']:.0%} comfort level)",
+                        f"Reduced cash reserves to {aggressive_cash:.0%} (80% of your {baseline['cash_reserve']:.0%} preference)",
+                        "More aggressive risk parameters aligned with your risk tolerance"
+                    ]
+                }
+            else:
+                # User prefers conservative/moderate - don't increase aggressiveness
+                return None
         
         # No updates needed
         return None
     
-    async def implement_prompt_update(self, update_spec: Dict) -> bool:
-        """Implement the specified prompt update."""
+    async def implement_context_update(self, update_spec: Dict) -> bool:
+        """Implement the specified context update."""
         try:
             update_type = update_spec["update_type"]
-            target_template = update_spec["target_template"]
+            new_context = update_spec["context"]
             reason = update_spec["reason"]
             changes = update_spec["changes"]
             
-            # Generate context for prompt rendering
-            if "conservative" in target_template:
-                risk_mode = "conservative"
-            elif update_type == "increase_aggressiveness":
-                risk_mode = "aggressive"
-            else:
-                risk_mode = "standard"
-                
-            context = {
-                "risk_mode": risk_mode,
-                "performance_trend": ["declining"] if "poor" in reason.lower() else ["stable"]
-            }
-            
-            # Get the target prompt
-            new_prompt = await self.prompt_manager.get_current_prompt(
+            # Update the context
+            success = await self.prompt_manager.update_agent_context(
                 agent_type="execution_agent",
-                context=context
-            )
-            
-            # If it's a template-based update, get from template
-            if target_template in self.prompt_manager.templates:
-                new_prompt = self.prompt_manager.templates[target_template].render(context)
-            
-            # Update the prompt
-            success = await self.prompt_manager.update_agent_prompt(
-                agent_type="execution_agent",
-                new_prompt=new_prompt,
+                new_context=new_context,
                 description=f"{update_type.replace('_', ' ').title()} update",
                 reason=reason,
                 changes=changes
             )
             
             if success:
-                print(f"{GREEN}[JudgeAgent] Implemented prompt update: {update_type}{RESET}")
+                print(f"{GREEN}[JudgeAgent] Implemented context update: {update_type}{RESET}")
                 print(f"{CYAN}[JudgeAgent] Reason: {reason}{RESET}")
+                print(f"{CYAN}[JudgeAgent] New context: {new_context}{RESET}")
                 for change in changes:
                     print(f"{CYAN}[JudgeAgent] - {change}{RESET}")
                 
-                # Display the full new prompt
+                # Display the rendered prompt with new context
+                new_prompt = await self.prompt_manager.get_current_prompt(
+                    agent_type="execution_agent",
+                    context=new_context
+                )
+                
                 print(f"{GREEN}[JudgeAgent] New Execution Agent Prompt:{RESET}")
                 print(f"{CYAN}{'='*80}{RESET}")
                 
@@ -416,12 +495,12 @@ Respond in JSON format:
                     print(f"{CYAN}{line}{RESET}")
                 
                 print(f"{CYAN}{'='*80}{RESET}")
-                print(f"{GREEN}[JudgeAgent] Prompt update complete (length: {len(new_prompt)} chars, {len(prompt_lines)} lines){RESET}")
+                print(f"{GREEN}[JudgeAgent] Context update complete (length: {len(new_prompt)} chars, {len(prompt_lines)} lines){RESET}")
             
             return success
             
         except Exception as exc:
-            logger.error("Failed to implement prompt update: %s", exc)
+            logger.error("Failed to implement context update: %s", exc)
             return False
     
     async def record_evaluation(self, evaluation: Dict) -> None:
@@ -475,25 +554,25 @@ Respond in JSON format:
             for component, score in evaluation["component_scores"].items():
                 print(f"{CYAN}[JudgeAgent]   {component}: {score:.1f}{RESET}")
             
-            # Check for prompt updates
-            update_spec = await self.determine_prompt_updates(evaluation)
+            # Check for context updates
+            update_spec = await self.determine_context_updates(evaluation)
             if update_spec:
-                print(f"{ORANGE}[JudgeAgent] Prompt update recommended: {update_spec['update_type']}{RESET}")
-                success = await self.implement_prompt_update(update_spec)
-                evaluation["prompt_update"] = {
+                print(f"{ORANGE}[JudgeAgent] Context update recommended: {update_spec['update_type']}{RESET}")
+                success = await self.implement_context_update(update_spec)
+                evaluation["context_update"] = {
                     "implemented": success,
                     "update_spec": update_spec
                 }
             else:
-                print(f"{GREEN}[JudgeAgent] No prompt updates needed{RESET}")
-                evaluation["prompt_update"] = {"implemented": False}
+                print(f"{GREEN}[JudgeAgent] No context updates needed{RESET}")
+                evaluation["context_update"] = {"implemented": False}
             
             # Record evaluation
             await self.record_evaluation(evaluation)
             
-            # Log comprehensive evaluation to file
+            # Log comprehensive evaluation to workflow
             try:
-                self.agent_logger.log_summary(
+                await self.agent_logger.log_summary(
                     summary_type="performance_evaluation",
                     data={
                         "evaluation_period_days": evaluation.get("evaluation_period_days", 7),
@@ -507,18 +586,18 @@ Respond in JSON format:
                             "win_rate": evaluation["metrics"]["win_rate"]
                         },
                         "decision_analysis": evaluation["decision_analysis"],
-                        "prompt_update": evaluation.get("prompt_update", {"implemented": False}),
+                        "context_update": evaluation.get("context_update", {"implemented": False}),
                         "recommendations": evaluation.get("recommendations", [])
                     },
                     performance_data=performance_data,
                     trigger_type=performance_data.get("trigger_type", "scheduled")
                 )
                 
-                # Log prompt update action if one was implemented
-                if evaluation.get("prompt_update", {}).get("implemented"):
-                    self.agent_logger.log_action(
-                        action_type="prompt_update",
-                        details=evaluation["prompt_update"]["update_spec"],
+                # Log context update action if one was implemented
+                if evaluation.get("context_update", {}).get("implemented"):
+                    await self.agent_logger.log_action(
+                        action_type="context_update",
+                        details=evaluation["context_update"]["update_spec"],
                         result={"success": True}
                     )
                     
@@ -537,6 +616,42 @@ Respond in JSON format:
         except Exception as exc:
             logger.error("Evaluation cycle failed: %s", exc)
             print(f"{RED}[JudgeAgent] Evaluation cycle failed: {exc}{RESET}")
+
+
+async def _watch_judge_preferences(client: Client, current_preferences: dict) -> None:
+    """Poll judge agent workflow for user preference updates."""
+    wf_id = "judge-agent"
+    while True:
+        try:
+            handle = client.get_workflow_handle(wf_id)
+            prefs = await handle.query("get_user_preferences")
+            
+            # Check if preferences have changed
+            if prefs != current_preferences:
+                current_preferences.clear()
+                current_preferences.update(prefs)
+                
+                if prefs:
+                    print(f"{GREEN}[JudgeAgent] ✅ User preferences updated: risk_tolerance={prefs.get('risk_tolerance', 'unknown')}, position_comfort={prefs.get('position_size_comfort', 'unknown')}, cash_reserve={prefs.get('cash_reserve_level', 'unknown')}{RESET}")
+                    
+                    # Show calculated baseline limits
+                    try:
+                        # Parse baseline limits like the judge agent does
+                        max_position = float(prefs.get('position_size_comfort', '20%').rstrip('%')) / 100.0 if isinstance(prefs.get('position_size_comfort'), str) else prefs.get('position_size_comfort', 0.20)
+                        cash_reserve = float(prefs.get('cash_reserve_level', '15%').rstrip('%')) / 100.0 if isinstance(prefs.get('cash_reserve_level'), str) else prefs.get('cash_reserve_level', 0.15)
+                        drawdown_tolerance = float(prefs.get('drawdown_tolerance', '15%').rstrip('%')) / 100.0 if isinstance(prefs.get('drawdown_tolerance'), str) else prefs.get('drawdown_tolerance', 0.15)
+                        
+                        print(f"{GREEN}[JudgeAgent] Baseline limits: position={max_position:.0%}, cash={cash_reserve:.0%}, drawdown_tolerance={drawdown_tolerance:.0%}{RESET}")
+                    except Exception as e:
+                        logger.warning("Failed to parse baseline limits: %s", e)
+                else:
+                    print(f"{CYAN}[JudgeAgent] No user preferences set - using defaults{RESET}")
+                    
+        except Exception as exc:
+            # Silently continue if judge agent workflow not found or other issues
+            pass
+        
+        await asyncio.sleep(3)  # Check every 3 seconds
 
 
 async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
@@ -559,6 +674,11 @@ async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
             await judge.initialize()
             
             print(f"{GREEN}[JudgeAgent] Judge agent started{RESET}")
+            
+            # Start watching for user preference updates (similar to execution agent)
+            current_preferences = {}
+            _preferences_task = asyncio.create_task(_watch_judge_preferences(temporal, current_preferences))
+            
             print(f"{CYAN}[JudgeAgent] Waiting for trading activity before starting evaluations...{RESET}")
             
             # Main evaluation loop
@@ -567,8 +687,8 @@ async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
                 try:
                     # On startup, wait longer to let system stabilize
                     if startup_delay:
-                        print(f"{CYAN}[JudgeAgent] Initial startup delay - waiting 10 minutes for system to stabilize{RESET}")
-                        await asyncio.sleep(10 * 60)  # 10 minute initial delay
+                        print(f"{CYAN}[JudgeAgent] Initial startup delay - waiting 5 minutes for system to stabilize{RESET}")
+                        await asyncio.sleep(5 * 60)  # 5 minute initial delay
                         startup_delay = False
                     
                     # Check if evaluation is needed
@@ -576,10 +696,10 @@ async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
                         await judge.run_evaluation_cycle()
                     else:
                         # Log why we're not evaluating (but less frequently)
-                        print(f"{CYAN}[JudgeAgent] Evaluation not needed - checking again in 30 minutes{RESET}")
+                        print(f"{CYAN}[JudgeAgent] Evaluation not needed - checking again in 5 minutes{RESET}")
                     
-                    # Sleep for 10 minutes before checking again
-                    await asyncio.sleep(10 * 60)
+                    # Sleep for 5 minutes before checking again
+                    await asyncio.sleep(5 * 60)
                     
                 except KeyboardInterrupt:
                     print(f"{ORANGE}[JudgeAgent] Shutting down...{RESET}")

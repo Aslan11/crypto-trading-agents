@@ -1,4 +1,4 @@
-"""File-based logging system for agent decisions and actions."""
+"""Workflow-based logging system for agent decisions and actions."""
 
 import json
 import os
@@ -7,23 +7,25 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
 import glob
+from temporalio.client import Client
 
 
 class AgentLogger:
-    """Enhanced logging system for tracking agent decisions and performance."""
+    """Workflow-based logging system for tracking agent decisions and performance."""
     
-    def __init__(self, agent_name: str, log_dir: str = "logs", days_to_keep: int = 30):
+    def __init__(self, agent_name: str, temporal_client: Client = None, log_dir: str = "logs", days_to_keep: int = 30):
         self.agent_name = agent_name
+        self.temporal_client = temporal_client
         self.log_dir = Path(log_dir)
         self.days_to_keep = days_to_keep
         
-        # Create logs directory if it doesn't exist
+        # Create logs directory if it doesn't exist (for debug logs only)
         self.log_dir.mkdir(exist_ok=True)
         
-        # Clean up old logs on initialization
+        # Clean up old logs on initialization (debug logs only)
         self.cleanup_old_logs()
         
-        # Set up Python logger for debug/error messages
+        # Set up Python logger for debug/error messages (still file-based)
         self.logger = logging.getLogger(f"AgentLogger.{agent_name}")
         handler = logging.FileHandler(self.log_dir / f"{agent_name}_debug.log")
         formatter = logging.Formatter(
@@ -80,7 +82,7 @@ class AgentLogger:
             "time": now.strftime("%H:%M:%S.%f")[:-3]  # Include milliseconds
         }
     
-    def log_decision(
+    async def log_decision(
         self, 
         nudge_timestamp: int,
         symbols: list[str],
@@ -92,6 +94,61 @@ class AgentLogger:
         **kwargs
     ) -> None:
         """Log a comprehensive trading decision with all context."""
+        if self.temporal_client:
+            try:
+                # Signal the logging workflow
+                handle = self.temporal_client.get_workflow_handle("agent-logging")
+                
+                # Prepare market data summary
+                market_data_summary = {
+                    "symbols_count": len(market_data.get("historical_ticks", {})),
+                    "latest_prices": self._extract_latest_prices(market_data),
+                    "data_timespan": self._calculate_data_timespan(market_data)
+                }
+                
+                # Prepare portfolio data
+                portfolio_summary = {
+                    "cash": portfolio_data.get("cash"),
+                    "total_pnl": portfolio_data.get("total_pnl"),
+                    "realized_pnl": portfolio_data.get("realized_pnl"),
+                    "unrealized_pnl": portfolio_data.get("unrealized_pnl"),
+                    "positions_count": len(portfolio_data.get("positions", {})),
+                    "positions": portfolio_data.get("positions", {})
+                }
+                
+                await handle.signal(
+                    "log_decision",
+                    self.agent_name,
+                    nudge_timestamp,
+                    symbols,
+                    market_data_summary,
+                    portfolio_summary,
+                    user_preferences,
+                    decisions,
+                    reasoning,
+                    kwargs  # Pass kwargs as a single dictionary
+                )
+                self.logger.info(f"Decision logged to workflow for nudge {nudge_timestamp}")
+            except Exception as exc:
+                self.logger.error(f"Failed to log decision to workflow: {exc}")
+                # Fallback to file logging
+                self._log_decision_to_file(nudge_timestamp, symbols, market_data, portfolio_data, user_preferences, decisions, reasoning, **kwargs)
+        else:
+            # Fallback to file logging
+            self._log_decision_to_file(nudge_timestamp, symbols, market_data, portfolio_data, user_preferences, decisions, reasoning, **kwargs)
+    
+    def _log_decision_to_file(
+        self, 
+        nudge_timestamp: int,
+        symbols: list[str],
+        market_data: Dict[str, Any],
+        portfolio_data: Dict[str, Any],
+        user_preferences: Dict[str, Any],
+        decisions: Dict[str, Any],
+        reasoning: str,
+        **kwargs
+    ) -> None:
+        """Fallback file-based decision logging."""
         log_entry = {
             **self._get_timestamp(),
             "agent": self.agent_name,
@@ -118,9 +175,9 @@ class AgentLogger:
         }
         
         self._write_jsonl(self._get_daily_log_path("decisions"), log_entry)
-        self.logger.info(f"Decision logged for nudge {nudge_timestamp}")
+        self.logger.info(f"Decision logged to file for nudge {nudge_timestamp}")
     
-    def log_action(
+    async def log_action(
         self,
         action_type: str,
         details: Dict[str, Any],
@@ -128,6 +185,35 @@ class AgentLogger:
         **kwargs
     ) -> None:
         """Log a specific action taken by the agent."""
+        if self.temporal_client:
+            try:
+                # Signal the logging workflow
+                handle = self.temporal_client.get_workflow_handle("agent-logging")
+                await handle.signal(
+                    "log_action",
+                    self.agent_name,
+                    action_type,
+                    details,
+                    result,
+                    kwargs  # Pass kwargs as a single dictionary
+                )
+                self.logger.info(f"Action logged to workflow: {action_type}")
+            except Exception as exc:
+                self.logger.error(f"Failed to log action to workflow: {exc}")
+                # Fallback to file logging
+                self._log_action_to_file(action_type, details, result, **kwargs)
+        else:
+            # Fallback to file logging
+            self._log_action_to_file(action_type, details, result, **kwargs)
+    
+    def _log_action_to_file(
+        self,
+        action_type: str,
+        details: Dict[str, Any],
+        result: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> None:
+        """Fallback file-based action logging."""
         log_entry = {
             **self._get_timestamp(),
             "agent": self.agent_name,
@@ -139,15 +225,42 @@ class AgentLogger:
         }
         
         self._write_jsonl(self._get_daily_log_path("actions"), log_entry)
-        self.logger.info(f"Action logged: {action_type}")
+        self.logger.info(f"Action logged to file: {action_type}")
     
-    def log_summary(
+    async def log_summary(
         self,
         summary_type: str,
         data: Dict[str, Any],
         **kwargs
     ) -> None:
         """Log summary information (evaluations, performance reports, etc.)."""
+        if self.temporal_client:
+            try:
+                # Signal the logging workflow
+                handle = self.temporal_client.get_workflow_handle("agent-logging")
+                await handle.signal(
+                    "log_summary",
+                    self.agent_name,
+                    summary_type,
+                    data,
+                    kwargs  # Pass kwargs as a single dictionary
+                )
+                self.logger.info(f"Summary logged to workflow: {summary_type}")
+            except Exception as exc:
+                self.logger.error(f"Failed to log summary to workflow: {exc}")
+                # Fallback to file logging
+                self._log_summary_to_file(summary_type, data, **kwargs)
+        else:
+            # Fallback to file logging
+            self._log_summary_to_file(summary_type, data, **kwargs)
+    
+    def _log_summary_to_file(
+        self,
+        summary_type: str,
+        data: Dict[str, Any],
+        **kwargs
+    ) -> None:
+        """Fallback file-based summary logging."""
         log_entry = {
             **self._get_timestamp(),
             "agent": self.agent_name,
@@ -158,7 +271,7 @@ class AgentLogger:
         }
         
         self._write_jsonl(self._get_daily_log_path("summary"), log_entry)
-        self.logger.info(f"Summary logged: {summary_type}")
+        self.logger.info(f"Summary logged to file: {summary_type}")
     
     def _extract_latest_prices(self, market_data: Dict[str, Any]) -> Dict[str, float]:
         """Extract the latest price for each symbol from market data."""
@@ -214,17 +327,44 @@ class AgentLogger:
         except Exception as e:
             self.logger.error(f"Failed to write to {file_path}: {e}")
     
-    def get_recent_decisions(self, limit: int = 10, days: int = 7) -> list[Dict[str, Any]]:
-        """Get recent decisions from the log files."""
-        return self._read_recent_from_daily_logs("decisions", limit, days)
+    async def get_recent_decisions(self, limit: int = 10, days: int = 7) -> list[Dict[str, Any]]:
+        """Get recent decisions from the workflow or fallback to log files."""
+        if self.temporal_client:
+            try:
+                handle = self.temporal_client.get_workflow_handle("agent-logging")
+                return await handle.query("get_recent_decisions", self.agent_name, limit)
+            except Exception as exc:
+                self.logger.error(f"Failed to get decisions from workflow: {exc}")
+                # Fallback to file-based
+                return self._read_recent_from_daily_logs("decisions", limit, days)
+        else:
+            return self._read_recent_from_daily_logs("decisions", limit, days)
     
-    def get_recent_actions(self, limit: int = 10, days: int = 7) -> list[Dict[str, Any]]:
-        """Get recent actions from the log files.""" 
-        return self._read_recent_from_daily_logs("actions", limit, days)
+    async def get_recent_actions(self, limit: int = 10, days: int = 7) -> list[Dict[str, Any]]:
+        """Get recent actions from the workflow or fallback to log files.""" 
+        if self.temporal_client:
+            try:
+                handle = self.temporal_client.get_workflow_handle("agent-logging")
+                return await handle.query("get_recent_actions", self.agent_name, limit)
+            except Exception as exc:
+                self.logger.error(f"Failed to get actions from workflow: {exc}")
+                # Fallback to file-based
+                return self._read_recent_from_daily_logs("actions", limit, days)
+        else:
+            return self._read_recent_from_daily_logs("actions", limit, days)
     
-    def get_recent_summaries(self, limit: int = 10, days: int = 7) -> list[Dict[str, Any]]:
-        """Get recent summaries from the log files."""
-        return self._read_recent_from_daily_logs("summary", limit, days)
+    async def get_recent_summaries(self, limit: int = 10, days: int = 7) -> list[Dict[str, Any]]:
+        """Get recent summaries from the workflow or fallback to log files."""
+        if self.temporal_client:
+            try:
+                handle = self.temporal_client.get_workflow_handle("agent-logging")
+                return await handle.query("get_logs", {"agent": self.agent_name, "event_type": "summary", "limit": limit})
+            except Exception as exc:
+                self.logger.error(f"Failed to get summaries from workflow: {exc}")
+                # Fallback to file-based
+                return self._read_recent_from_daily_logs("summary", limit, days)
+        else:
+            return self._read_recent_from_daily_logs("summary", limit, days)
     
     def _read_recent_from_daily_logs(self, log_type: str, limit: int, days: int) -> list[Dict[str, Any]]:
         """Read recent entries from multiple daily log files."""

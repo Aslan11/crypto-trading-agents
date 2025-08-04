@@ -19,6 +19,15 @@ if [ $? -eq 0 ]; then
   exec tmux attach -t $SESSION
 fi
 
+# Clear all log files for a fresh start (tabula rasa)
+echo "Clearing log files for fresh start..."
+if [ -d "logs" ]; then
+  rm -f logs/*.log logs/*.jsonl
+  echo "Cleared all log files in logs/ directory"
+else
+  echo "No logs directory found (will be created by agents)"
+fi
+
 ###############################################################################
 # Pane layout
 # ┌───────────────┬────────────────────────┐

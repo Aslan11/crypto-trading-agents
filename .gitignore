@@ -14,3 +14,4 @@ uv.lock
 # Agent logs and history
 logs/
 *.log
+.DS_Store

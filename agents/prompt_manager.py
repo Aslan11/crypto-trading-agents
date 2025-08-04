@@ -41,8 +41,16 @@ class PromptTemplate:
             if self._should_include_component(component, context):
                 active_components.append(component)
         
-        # Combine components into final prompt
-        return "\n\n".join(comp.content for comp in active_components)
+        # Combine components and format with context
+        combined_content = "\n\n".join(comp.content for comp in active_components)
+        
+        # Format the content with context variables
+        try:
+            return combined_content.format(**context)
+        except KeyError as e:
+            # If formatting fails, return unformatted content
+            logger.warning("Failed to format prompt with context %s: %s", context, e)
+            return combined_content
     
     def _should_include_component(self, component: PromptComponent, context: Dict) -> bool:
         """Check if a component should be included based on conditions."""
@@ -77,33 +85,13 @@ class PromptManager:
             "role_definition": PromptComponent(
                 name="role_definition",
                 content=(
-                    "You are an autonomous portfolio management agent with moderate risk tolerance. "
-                    "You operate on scheduled nudges and make data-driven trading decisions for cryptocurrency pairs."
+                    "You are an autonomous portfolio management agent with {risk_mode} risk tolerance. "
+                    "You operate on scheduled nudges and make data-driven trading decisions for cryptocurrency pairs. "
+                    "Conservative mode: prioritize capital preservation with careful, strict risk controls. "
+                    "Moderate mode: balance growth and risk management. "
+                    "Aggressive mode: make bold decisions to maximize returns while managing downside risk."
                 ),
-                priority=1000,
-                conditions={"risk_mode": ["moderate"]}
-            ),
-            
-            "role_definition_conservative": PromptComponent(
-                name="role_definition_conservative",
-                content=(
-                    "You are an autonomous portfolio management agent with conservative risk tolerance. "
-                    "You prioritize capital preservation and operate on scheduled nudges to make careful, "
-                    "data-driven trading decisions for cryptocurrency pairs with strict risk controls."
-                ),
-                priority=1000,
-                conditions={"risk_mode": ["conservative"]}
-            ),
-            
-            "role_definition_aggressive": PromptComponent(
-                name="role_definition_aggressive",
-                content=(
-                    "You are an autonomous portfolio management agent with aggressive risk tolerance. "
-                    "You operate on scheduled nudges and make bold, data-driven trading decisions for "
-                    "cryptocurrency pairs to maximize returns while managing downside risk."
-                ),
-                priority=1000,
-                conditions={"risk_mode": ["aggressive"]}
+                priority=1000
             ),
             
             "operational_workflow": PromptComponent(
@@ -127,106 +115,36 @@ class PromptManager:
             "decision_framework": PromptComponent(
                 name="decision_framework",
                 content=(
-                    "DECISION FRAMEWORK:\n"
+                    "DECISION FRAMEWORK ({risk_mode} mode):\n"
                     "For each symbol, analyze:\n"
                     "• Price momentum and trend direction from recent ticks\n"
-                    "• Current position size and portfolio balance\n"
-                    "• User risk tolerance and trading preferences\n"
-                    "• Recent performance metrics and trading success rates\n"
-                    "• Current portfolio risk exposure and concentration\n"
-                    "• Risk-reward ratio for potential trades\n"
-                    "• Market correlation and portfolio diversification\n\n"
-                    "Make one of three decisions: BUY, SELL, or HOLD\n"
-                    "Always provide clear rationale for each decision."
-                ),
-                priority=800,
-                conditions={"risk_mode": ["moderate"]}
-            ),
-            
-            "decision_framework_conservative": PromptComponent(
-                name="decision_framework_conservative",
-                content=(
-                    "CONSERVATIVE DECISION FRAMEWORK:\n"
-                    "For each symbol, analyze with extra caution:\n"
-                    "• Price momentum and trend direction - favor established trends\n"
-                    "• Volume patterns and market liquidity - require high liquidity\n"
-                    "• Current position size and strict portfolio balance limits\n"
-                    "• Risk-reward ratio - minimum 2:1 ratio required\n"
-                    "• Market correlation and maximum diversification\n"
-                    "• Market sentiment and volatility levels\n\n"
-                    "Make one of three decisions: BUY, SELL, or HOLD\n"
-                    "Default to HOLD unless strong conviction with low risk.\n"
-                    "Always provide detailed rationale for each decision."
-                ),
-                priority=800,
-                conditions={"risk_mode": ["conservative"]}
-            ),
-            
-            "decision_framework_aggressive": PromptComponent(
-                name="decision_framework_aggressive",
-                content=(
-                    "AGGRESSIVE DECISION FRAMEWORK:\n"
-                    "For each symbol, analyze for maximum opportunity:\n"
-                    "• Price momentum and trend direction - act on emerging trends\n"
                     "• Volume patterns and market liquidity\n"
                     "• Current position size and portfolio balance\n"
-                    "• Risk-reward ratio for potential trades - accept 1.5:1 ratios\n"
-                    "• Market correlation and strategic concentration\n"
-                    "• High-conviction opportunities for outsized returns\n"
-                    "• Use up to 50% position sizes when conviction is high\n"
-                    "• Deploy 80-90% of capital when market opportunities present\n\n"
+                    "• Risk-reward ratio for potential trades\n"
+                    "• Market correlation and portfolio diversification\n"
+                    "• Recent performance metrics and trading success rates\n\n"
+                    "Conservative mode: Favor established trends, require high liquidity, minimum 2:1 risk-reward ratio, default to HOLD unless strong conviction with low risk.\n"
+                    "Moderate mode: Balance growth and risk, standard risk-reward analysis.\n"
+                    "Aggressive mode: Act on emerging trends, accept 1.5:1 ratios, favor action over inaction, prioritize capital deployment.\n\n"
                     "Make one of three decisions: BUY, SELL, or HOLD\n"
-                    "Strongly favor action over inaction when any opportunity is present.\n"
-                    "Prioritize capital deployment over cash hoarding.\n"
                     "Always provide clear rationale for each decision."
                 ),
-                priority=800,
-                conditions={"risk_mode": ["aggressive"]}
+                priority=800
             ),
             
             "risk_management": PromptComponent(
                 name="risk_management",
                 content=(
-                    "RISK MANAGEMENT:\n"
+                    "RISK MANAGEMENT ({risk_mode} mode):\n"
                     "Before executing any trade:\n"
-                    "• BUY orders: Ensure available cash ≥ (quantity × price × 1.01) for slippage\n"
+                    "• BUY orders: Ensure available cash ≥ (quantity × price × slippage buffer)\n"
                     "• SELL orders: Ensure current position ≥ desired sell quantity\n"
-                    "• Limit individual position sizes to reasonable portfolio percentages\n"
-                    "• If safety checks fail, default to HOLD decision"
+                    "• If safety checks fail, default to HOLD decision\n\n"
+                    "Conservative mode: 1.05× slippage buffer, max 15% position size, maintain 20% cash reserves\n"
+                    "Moderate mode: 1.01× slippage buffer, reasonable position sizes, standard cash management\n"
+                    "Aggressive mode: 1.02× slippage buffer, up to 50% position sizes for high conviction, 10% minimum cash, deploy 80-90% capital when opportunities present"
                 ),
-                priority=700,
-                conditions={"risk_mode": ["moderate"]}
-            ),
-            
-            "risk_management_conservative": PromptComponent(
-                name="risk_management_conservative",
-                content=(
-                    "RISK MANAGEMENT:\n"
-                    "Before executing any trade:\n"
-                    "• BUY orders: Ensure available cash ≥ (quantity × price × 1.05) for slippage\n"
-                    "• SELL orders: Ensure current position ≥ desired sell quantity\n"
-                    "• Limit individual position sizes to maximum 15% of portfolio\n"
-                    "• Maintain minimum 20% cash reserves at all times\n"
-                    "• If safety checks fail, default to HOLD decision"
-                ),
-                priority=700,
-                conditions={"risk_mode": "conservative"}
-            ),
-            
-            "risk_management_aggressive": PromptComponent(
-                name="risk_management_aggressive",
-                content=(
-                    "RISK MANAGEMENT:\n"
-                    "Before executing any trade:\n"
-                    "• BUY orders: Ensure available cash ≥ (quantity × price × 1.02) for slippage\n"
-                    "• SELL orders: Ensure current position ≥ desired sell quantity\n"
-                    "• Allow position sizes up to 50% of portfolio for high-conviction trades\n"
-                    "• Maintain minimum 10% cash reserves\n"
-                    "• Deploy 80-90% of total capital when opportunities are present\n"
-                    "• If safety checks fail, default to HOLD decision"
-                ),
-                priority=700,
-                conditions={"risk_mode": "aggressive"}
+                priority=700
             ),
             
             "order_execution": PromptComponent(
@@ -279,71 +197,21 @@ class PromptManager:
     
     def _initialize_default_templates(self) -> None:
         """Initialize default prompt templates."""
-        # Standard execution agent template with all risk-specific components
-        standard_components = [
+        # Single unified execution agent template
+        execution_components = [
             self.default_components["role_definition"],
-            self.default_components["role_definition_conservative"],
-            self.default_components["role_definition_aggressive"],
             self.default_components["operational_workflow"],
             self.default_components["decision_framework"],
-            self.default_components["decision_framework_conservative"],
-            self.default_components["decision_framework_aggressive"],
             self.default_components["risk_management"],
-            self.default_components["risk_management_conservative"],
-            self.default_components["risk_management_aggressive"],
-            self.default_components["order_execution"],
-            self.default_components["reporting"]
-        ]
-        
-        self.templates["execution_agent_standard"] = PromptTemplate(
-            name="execution_agent_standard",
-            description="Adaptive execution agent prompt that adjusts to user risk tolerance",
-            components=standard_components
-        )
-        
-        # Conservative version (with all components available for conditional inclusion)
-        conservative_components = [
-            self.default_components["role_definition"],
-            self.default_components["role_definition_conservative"],
-            self.default_components["role_definition_aggressive"],
-            self.default_components["operational_workflow"],
-            self.default_components["decision_framework"],
-            self.default_components["decision_framework_conservative"],
-            self.default_components["decision_framework_aggressive"],
-            self.default_components["risk_management"],
-            self.default_components["risk_management_conservative"],
-            self.default_components["risk_management_aggressive"],
-            self.default_components["order_execution"],
-            self.default_components["reporting"]
-        ]
-        
-        self.templates["execution_agent_conservative"] = PromptTemplate(
-            name="execution_agent_conservative",
-            description="Conservative execution agent prompt with enhanced risk controls",
-            components=conservative_components
-        )
-        
-        # Performance-focused version (with all components available)
-        performance_components = [
-            self.default_components["role_definition"],
-            self.default_components["role_definition_conservative"],
-            self.default_components["role_definition_aggressive"],
-            self.default_components["operational_workflow"],
-            self.default_components["decision_framework"],
-            self.default_components["decision_framework_conservative"],
-            self.default_components["decision_framework_aggressive"],
-            self.default_components["risk_management"],
-            self.default_components["risk_management_conservative"],
-            self.default_components["risk_management_aggressive"],
             self.default_components["performance_focus"],
             self.default_components["order_execution"],
             self.default_components["reporting"]
         ]
         
-        self.templates["execution_agent_performance"] = PromptTemplate(
-            name="execution_agent_performance",
-            description="Performance-optimized execution agent prompt",
-            components=performance_components
+        self.templates["execution_agent"] = PromptTemplate(
+            name="execution_agent",
+            description="Unified execution agent prompt that adapts based on context",
+            components=execution_components
         )
     
     async def get_current_prompt(
@@ -352,126 +220,108 @@ class PromptManager:
         context: Optional[Dict] = None
     ) -> str:
         """Get the current prompt for the specified agent type."""
+        # Set default context values
+        context = context or {}
+        context.setdefault("risk_mode", "moderate")
+        context.setdefault("performance_trend", ["stable"])
+        
         try:
             if self.temporal_client:
-                # Get current prompt version from judge workflow
+                # Get current context from judge workflow
                 handle = self.temporal_client.get_workflow_handle("judge-agent")
                 
                 # Check if workflow exists first
                 try:
                     await handle.describe()
+                    # Get current context instead of prompt content
+                    current_context = await handle.query("get_current_context")
+                    if current_context:
+                        # Preserve user preferences for core settings, only update judge-specific context
+                        user_risk_mode = context.get("risk_mode")
+                        context.update(current_context)
+                        # Restore user's risk_mode if it was explicitly provided (not default)
+                        if user_risk_mode and user_risk_mode != "moderate":
+                            context["risk_mode"] = user_risk_mode
+                            logger.info("Preserving user risk_mode '%s' over judge context", user_risk_mode)
+                        logger.info("Using dynamic context from judge workflow: %s", current_context)
                 except Exception as desc_exc:
                     if "not found" in str(desc_exc).lower():
-                        logger.info("Judge workflow not yet started, using default template")
-                        # Fallback to default template
-                        template_name = f"{agent_type}_standard"
-                        if template_name in self.templates:
-                            return self.templates[template_name].render(context)
-                        return self.templates["execution_agent_standard"].render(context)
+                        logger.info("Judge workflow not yet started, using default context")
                     else:
-                        raise desc_exc
-                
-                current_version = await handle.query("get_current_prompt_version")
-                
-                if current_version and "prompt_content" in current_version:
-                    logger.info("Using dynamic prompt from judge workflow (version %s)", 
-                               current_version.get("version", "unknown"))
-                    return current_version["prompt_content"]
+                        logger.warning("Failed to get context from judge workflow: %s", desc_exc)
         except Exception as exc:
-            logger.warning("Failed to get current prompt from judge workflow: %s", exc)
+            logger.warning("Failed to connect to judge workflow: %s", exc)
         
-        # Fallback to default template
-        logger.info("Using default template for %s", agent_type)
-        template_name = f"{agent_type}_standard"
+        # Use the unified template with context
+        template_name = agent_type
         if template_name in self.templates:
             return self.templates[template_name].render(context)
         
         # Ultimate fallback
-        return self.templates["execution_agent_standard"].render(context)
+        logger.info("Using default execution_agent template")
+        return self.templates["execution_agent"].render(context)
     
-    def generate_prompt_variants(
-        self, 
-        base_template: str,
+    def update_context(
+        self,
         performance_data: Dict,
-        context: Optional[Dict] = None
-    ) -> List[Tuple[str, str, str]]:
-        """Generate prompt variants based on performance analysis.
+        current_context: Optional[Dict] = None
+    ) -> Dict:
+        """Update context based on performance analysis.
         
         Returns:
-            List of (variant_name, description, prompt_content) tuples
+            Updated context dictionary
         """
-        variants = []
-        context = context or {}
+        context = current_context or {}
         
-        # Analyze performance to determine needed improvements
+        # Analyze performance to determine needed adjustments
         max_drawdown = performance_data.get("max_drawdown", 0.0)
         win_rate = performance_data.get("win_rate", 0.5)
-        risk_score = performance_data.get("risk_management_score", 75.0)
+        overall_score = performance_data.get("overall_score", 70.0)
         
-        # Conservative variant for high drawdown
-        if max_drawdown > 0.15:  # More than 15% drawdown
+        # Adjust risk mode based on performance
+        if max_drawdown > 0.15 or overall_score < 40.0:  # High drawdown or poor performance
             context["risk_mode"] = "conservative"
-            conservative_prompt = self.templates["execution_agent_conservative"].render(context)
-            variants.append((
-                "conservative_risk",
-                "Enhanced risk controls to reduce drawdown",
-                conservative_prompt
-            ))
-        
-        # Aggressive variant for overly conservative performance
-        if max_drawdown < 0.05 and win_rate < 0.4:  # Low drawdown but poor performance
-            context["risk_mode"] = "aggressive"
-            aggressive_prompt = self.templates["execution_agent_standard"].render(context)
-            variants.append((
-                "increased_risk",
-                "Increased position sizing for better returns",
-                aggressive_prompt
-            ))
-        
-        # Performance-focused variant for declining performance
-        performance_trend = context.get("performance_trend", "stable")
-        if performance_trend in ["declining", "poor"]:
             context["performance_trend"] = ["declining", "poor"]
-            performance_prompt = self.templates["execution_agent_performance"].render(context)
-            variants.append((
-                "performance_focus",
-                "Enhanced performance monitoring and optimization",
-                performance_prompt
-            ))
+        elif max_drawdown < 0.05 and win_rate < 0.4:  # Overly conservative
+            context["risk_mode"] = "aggressive"
+            context["performance_trend"] = ["stable"]
+        else:
+            context["risk_mode"] = context.get("risk_mode", "moderate")
+            context["performance_trend"] = ["stable"]
         
-        return variants
+        return context
     
-    async def update_agent_prompt(
+    async def update_agent_context(
         self,
         agent_type: str,
-        new_prompt: str,
+        new_context: Dict,
         description: str,
         reason: str,
         changes: List[str]
     ) -> bool:
-        """Update the agent's prompt through the judge workflow."""
+        """Update the agent's context through the judge workflow."""
         try:
             if not self.temporal_client:
-                logger.error("No Temporal client available for prompt update")
+                logger.error("No Temporal client available for context update")
                 return False
             
-            # Update prompt version in judge workflow
-            prompt_data = {
-                "prompt_type": agent_type,
-                "prompt_content": new_prompt,
+            # Update context in judge workflow
+            context_data = {
+                "agent_type": agent_type,
+                "context": new_context,
                 "description": description,
                 "reason": reason,
                 "changes": changes
             }
             
             handle = self.temporal_client.get_workflow_handle("judge-agent")
-            await handle.signal("update_prompt_version", prompt_data)
+            await handle.signal("update_agent_context", context_data)
             
-            logger.info("Updated %s prompt: %s", agent_type, description)
+            logger.info("Updated %s context: %s", agent_type, description)
             return True
             
         except Exception as exc:
-            logger.error("Failed to update agent prompt: %s", exc)
+            logger.error("Failed to update agent context: %s", exc)
             return False
     
     async def rollback_prompt(self, target_version: int) -> bool:

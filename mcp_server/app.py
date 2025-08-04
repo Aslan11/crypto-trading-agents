@@ -180,6 +180,21 @@ async def set_user_preferences(preferences: Dict[str, Any]) -> Dict[str, str]:
     await handle.signal("set_user_preferences", preferences)
     logger.info("User preferences updated successfully")
     
+    # Also signal the execution agent and judge agent with the new preferences
+    try:
+        execution_handle = client.get_workflow_handle("execution-agent")
+        await execution_handle.signal("set_user_preferences", preferences)
+        logger.info("User preferences sent to execution agent")
+    except Exception as exc:
+        logger.warning("Failed to signal execution agent with preferences: %s", exc)
+    
+    try:
+        judge_handle = client.get_workflow_handle("judge-agent")
+        await judge_handle.signal("set_user_preferences", preferences)
+        logger.info("User preferences sent to judge agent")
+    except Exception as exc:
+        logger.warning("Failed to signal judge agent with preferences: %s", exc)
+    
     return {
         "status": "success",
         "message": f"Updated user preferences: {', '.join(preferences.keys())}",
@@ -400,20 +415,32 @@ async def get_portfolio_status() -> Dict[str, Any]:
     entry_prices = await handle.query("get_entry_prices")
     realized_pnl = await handle.query("get_realized_pnl")
     
-    # Get live market prices for all positions
+    # Get live market prices for all positions using efficient get_latest_price query
     live_prices = {}
+    price_fetch_errors = []
     if positions:
         symbols = list(positions.keys())
-        try:
-            # Fetch latest market prices for all positions
-            historical_data = await get_historical_ticks(symbols, since_ts=int(datetime.now(timezone.utc).timestamp()) - 60)
-            for symbol, ticks in historical_data.items():
-                if ticks:
-                    # Get the most recent price
-                    latest_tick = max(ticks, key=lambda t: t["ts"])
-                    live_prices[symbol] = latest_tick["price"]
-        except Exception as e:
-            logger.warning("Failed to fetch live prices: %s", e)
+        client = await get_temporal_client()
+        
+        for symbol in symbols:
+            wf_id = f"feature-{symbol.replace('/', '-')}"
+            try:
+                feature_handle = client.get_workflow_handle(wf_id)
+                price_info = await feature_handle.query("get_latest_price")
+                
+                if price_info["price"] is not None and price_info["age_seconds"] <= 60:
+                    # Fresh price available
+                    live_prices[symbol] = price_info["price"]
+                elif price_info["price"] is not None:
+                    # Stale price - note the issue but don't use it
+                    price_fetch_errors.append(f"{symbol}: price is {price_info['age_seconds']:.1f}s stale")
+                else:
+                    # No price data available
+                    price_fetch_errors.append(f"{symbol}: no price data from feature workflow")
+                    
+            except Exception as e:
+                price_fetch_errors.append(f"{symbol}: failed to query feature workflow - {str(e)}")
+                logger.warning("Failed to get latest price for %s: %s", symbol, e)
     
     # Calculate P&L with live prices if available, otherwise fall back
     if live_prices:
@@ -432,6 +459,12 @@ async def get_portfolio_status() -> Dict[str, Any]:
         "total_pnl": pnl,
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,
+        "price_data_quality": {
+            "live_prices_used": len(live_prices),
+            "total_positions": len(positions),
+            "using_stale_fallback": len(live_prices) < len(positions),
+            "price_fetch_errors": price_fetch_errors
+        },
         "live_prices_used": live_prices,
     }
 
@@ -548,20 +581,35 @@ async def get_risk_metrics() -> Dict[str, Any]:
     # Get positions to fetch live prices  
     positions = await handle.query("get_positions")
     
-    # Get live market prices for all positions
+    # Get live market prices for all positions using efficient get_latest_price query
     live_prices = {}
+    price_fetch_status = {"success": True, "errors": [], "stale_count": 0}
+    
     if positions:
         symbols = list(positions.keys())
-        try:
-            # Fetch latest market prices for all positions
-            historical_data = await get_historical_ticks(symbols, since_ts=int(datetime.now(timezone.utc).timestamp()) - 60)
-            for symbol, ticks in historical_data.items():
-                if ticks:
-                    # Get the most recent price
-                    latest_tick = max(ticks, key=lambda t: t["ts"])
-                    live_prices[symbol] = latest_tick["price"]
-        except Exception as e:
-            logger.warning("Failed to fetch live prices for risk metrics: %s", e)
+        client = await get_temporal_client()
+        
+        for symbol in symbols:
+            wf_id = f"feature-{symbol.replace('/', '-')}"
+            try:
+                feature_handle = client.get_workflow_handle(wf_id)
+                price_info = await feature_handle.query("get_latest_price")
+                
+                if price_info["price"] is not None and price_info["age_seconds"] <= 60:
+                    # Fresh price available
+                    live_prices[symbol] = price_info["price"]
+                elif price_info["price"] is not None:
+                    # Stale price
+                    price_fetch_status["stale_count"] += 1
+                    price_fetch_status["errors"].append(f"{symbol}: price is {price_info['age_seconds']:.1f}s old")
+                else:
+                    # No price data available
+                    price_fetch_status["errors"].append(f"{symbol}: no price data from feature workflow")
+                    
+            except Exception as e:
+                price_fetch_status["success"] = False
+                price_fetch_status["errors"].append(f"{symbol}: failed to query feature workflow - {str(e)}")
+                logger.warning("Failed to get latest price for risk metrics %s: %s", symbol, e)
     
     # Calculate risk metrics with live prices if available
     if live_prices:
@@ -571,7 +619,110 @@ async def get_risk_metrics() -> Dict[str, Any]:
         metrics = await handle.query("get_risk_metrics")
         logger.info("Retrieved risk metrics with last fill prices")
     
+    # Add price data quality information to the response
+    metrics["price_data_quality"] = {
+        "live_prices_used": len(live_prices),
+        "total_positions": len(positions),
+        "price_fetch_status": price_fetch_status,
+        "using_stale_fallback": len(live_prices) < len(positions)
+    }
+    
     return metrics
+
+
+@app.tool(annotations={"title": "Get PnL Status with Data Quality", "readOnlyHint": True})
+async def get_pnl_status_with_quality() -> Dict[str, Any]:
+    """Get PnL status with detailed information about price data quality.
+    
+    Returns
+    -------
+    Dict[str, Any]
+        PnL information including data quality metrics and staleness warnings.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            return {
+                "error": "No trading data available - ledger workflow not started",
+                "total_pnl": 0.0,
+                "realized_pnl": 0.0,
+                "unrealized_pnl": 0.0,
+                "price_staleness_info": {"stale_symbols": [], "fresh_symbols": []}
+            }
+        else:
+            raise
+    
+    # Get PnL data
+    total_pnl = await handle.query("get_pnl")
+    realized_pnl = await handle.query("get_realized_pnl")
+    unrealized_pnl = await handle.query("get_unrealized_pnl")
+    
+    # Get price staleness information
+    staleness_info = await handle.query("get_price_staleness_info")
+    
+    # Get positions to fetch live prices
+    positions = await handle.query("get_positions")
+    
+    # Attempt to get live prices for comparison using efficient get_latest_price query
+    live_prices = {}
+    live_price_errors = []
+    
+    if positions:
+        symbols = list(positions.keys())
+        client = await get_temporal_client()
+        
+        for symbol in symbols:
+            wf_id = f"feature-{symbol.replace('/', '-')}"
+            try:
+                feature_handle = client.get_workflow_handle(wf_id)
+                price_info = await feature_handle.query("get_latest_price")
+                
+                if price_info["price"] is not None and price_info["age_seconds"] <= 60:
+                    # Fresh price available
+                    live_prices[symbol] = price_info["price"]
+                elif price_info["price"] is not None:
+                    # Stale price
+                    live_price_errors.append(f"{symbol}: live price is {price_info['age_seconds']:.1f}s stale")
+                else:
+                    # No price data available
+                    live_price_errors.append(f"{symbol}: no live price data from feature workflow")
+                    
+            except Exception as e:
+                live_price_errors.append(f"{symbol}: failed to query feature workflow - {str(e)}")
+                logger.warning("Failed to get latest price for PnL quality check %s: %s", symbol, e)
+    
+    # Calculate PnL with live prices if available
+    live_pnl_data = None
+    if live_prices:
+        try:
+            live_total_pnl = await handle.query("get_pnl_with_live_prices", live_prices)
+            live_unrealized_pnl = await handle.query("get_unrealized_pnl_with_live_prices", live_prices)
+            live_pnl_data = {
+                "total_pnl": live_total_pnl,
+                "unrealized_pnl": live_unrealized_pnl,
+                "symbols_with_live_prices": list(live_prices.keys())
+            }
+        except Exception as e:
+            live_price_errors.append(f"Live PnL calculation failed: {str(e)}")
+    
+    return {
+        "total_pnl": total_pnl,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "live_pnl_data": live_pnl_data,
+        "price_staleness_info": staleness_info,
+        "live_price_status": {
+            "available_symbols": len(live_prices),
+            "total_symbols": len(positions),
+            "errors": live_price_errors
+        },
+        "accuracy_warning": len(staleness_info.get("stale_symbols", [])) > 0 or len(live_price_errors) > 0
+    }
 
 
 @app.tool(annotations={"title": "Trigger Performance Evaluation", "readOnlyHint": False})

@@ -96,6 +96,46 @@ class ComputeFeatureVector:
         logger.info("historical_ticks returning %d items for %s", len(ticks), self.symbol)
         return ticks
 
+    @workflow.query
+    def get_latest_price(self) -> dict:
+        """Return the most recent price with timestamp and age information.
+        
+        Returns
+        -------
+        dict
+            Dictionary with keys:
+            - price: float or None if no valid price available
+            - timestamp: int Unix timestamp in seconds or None
+            - age_seconds: float seconds since price was recorded, inf if no price
+        """
+        if not self._history:
+            return {"price": None, "timestamp": None, "age_seconds": float('inf')}
+        
+        # Get most recent tick by timestamp
+        latest_tick = max(self._history, key=lambda t: t.get("timestamp", 0))
+        
+        # Extract price using same logic as historical_ticks
+        if "last" in latest_tick:
+            price = float(latest_tick["last"])
+        elif {"bid", "ask"}.issubset(latest_tick):
+            price = (float(latest_tick["bid"]) + float(latest_tick["ask"])) / 2
+        else:
+            return {"price": None, "timestamp": None, "age_seconds": float('inf')}
+        
+        ts_ms = latest_tick.get("timestamp")
+        if ts_ms is None:
+            return {"price": None, "timestamp": None, "age_seconds": float('inf')}
+        
+        ts = int(ts_ms / 1000)
+        current_time = int(datetime.now(timezone.utc).timestamp())
+        age_seconds = current_time - ts
+        
+        return {
+            "price": price,
+            "timestamp": ts,
+            "age_seconds": age_seconds
+        }
+
     @workflow.signal
     def market_tick(self, tick: dict) -> None:
         if tick.get("symbol") != self.symbol:

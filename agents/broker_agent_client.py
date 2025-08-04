@@ -69,8 +69,13 @@ SYSTEM_PROMPT = (
     
     "AVAILABLE TRADING PAIRS:\n"
     "• Major pairs (recommended for beginners): BTC/USD, ETH/USD\n"
-    "• Mid-cap pairs: SOL/USD, ADA/USD, DOT/USD\n"
-    "• Higher volatility pairs: DOGE/USD, LTC/USD\n\n"
+    "• Large-cap altcoins: SOL/USD, ADA/USD, AVAX/USD, MATIC/USD, DOT/USD\n"
+    "• DeFi tokens: UNI/USD, AAVE/USD, COMP/USD, MKR/USD, SUSHI/USD\n"
+    "• Layer 2 & Scaling: MATIC/USD, LRC/USD, IMX/USD\n"
+    "• Stablecoins & Yield: USDC/USD, DAI/USD (for comparison)\n"
+    "• Meme/High volatility: DOGE/USD, SHIB/USD\n"
+    "• Established altcoins: LTC/USD, BCH/USD, XLM/USD, ALGO/USD\n"
+    "• Newer projects: APT/USD, ARB/USD, OP/USD, NEAR/USD\n\n"
     
     "RESPONSIBILITIES:\n"
     "• Assess user experience level and risk tolerance before recommending pairs\n"

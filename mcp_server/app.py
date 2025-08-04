@@ -180,7 +180,7 @@ async def set_user_preferences(preferences: Dict[str, Any]) -> Dict[str, str]:
     await handle.signal("set_user_preferences", preferences)
     logger.info("User preferences updated successfully")
     
-    # Also signal the execution agent and judge agent with the new preferences
+    # Also signal the execution agent, judge agent, and ledger with the new preferences
     try:
         execution_handle = client.get_workflow_handle("execution-agent")
         await execution_handle.signal("set_user_preferences", preferences)
@@ -194,6 +194,13 @@ async def set_user_preferences(preferences: Dict[str, Any]) -> Dict[str, str]:
         logger.info("User preferences sent to judge agent")
     except Exception as exc:
         logger.warning("Failed to signal judge agent with preferences: %s", exc)
+    
+    try:
+        ledger_handle = client.get_workflow_handle(os.environ.get("LEDGER_WF_ID", "mock-ledger"))
+        await ledger_handle.signal("set_user_preferences", preferences)
+        logger.info("User preferences sent to ledger (including profit scraping)")
+    except Exception as exc:
+        logger.warning("Failed to signal ledger with preferences: %s", exc)
     
     return {
         "status": "success",
@@ -414,6 +421,7 @@ async def get_portfolio_status() -> Dict[str, Any]:
     positions = await handle.query("get_positions")
     entry_prices = await handle.query("get_entry_prices")
     realized_pnl = await handle.query("get_realized_pnl")
+    scraped_profits = await handle.query("get_scraped_profits")
     
     # Get live market prices for all positions using efficient get_latest_price query
     live_prices = {}
@@ -459,6 +467,9 @@ async def get_portfolio_status() -> Dict[str, Any]:
         "total_pnl": pnl,
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,
+        "scraped_profits": scraped_profits,
+        "available_cash": cash,  # Cash available for trading
+        "total_cash_value": cash + scraped_profits,  # Total cash including scraped profits
         "price_data_quality": {
             "live_prices_used": len(live_prices),
             "total_positions": len(positions),

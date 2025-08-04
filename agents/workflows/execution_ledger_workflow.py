@@ -24,6 +24,24 @@ class ExecutionLedgerWorkflow:
         self.transaction_history: List[Dict] = []
         self.realized_pnl = Decimal("0")  # Track actual realized gains/losses from closed positions
         self.price_staleness_threshold = 300  # 5 minutes in seconds
+        self.profit_scraping_percentage = Decimal("0.20")  # Default 20% profit scraping
+        self.scraped_profits = Decimal("0")  # Total profits set aside
+        self.user_preferences: Dict[str, Any] = {}  # Store user preferences
+
+    @workflow.signal
+    def set_user_preferences(self, preferences: Dict[str, Any]) -> None:
+        """Update user preferences including profit scraping percentage."""
+        self.user_preferences = preferences
+        # Parse profit scraping percentage
+        profit_scraping = preferences.get('profit_scraping_percentage', '20%')
+        if isinstance(profit_scraping, str) and profit_scraping.endswith('%'):
+            self.profit_scraping_percentage = Decimal(profit_scraping.rstrip('%')) / 100
+        elif profit_scraping:
+            self.profit_scraping_percentage = Decimal(str(profit_scraping))
+        else:
+            self.profit_scraping_percentage = Decimal("0.20")  # Default 20%
+        
+        workflow.logger.info(f"Profit scraping set to {self.profit_scraping_percentage * 100}%")
 
     @workflow.signal
     def record_fill(self, fill: Dict) -> None:
@@ -77,6 +95,14 @@ class ExecutionLedgerWorkflow:
                 # Realized PnL = (sell_price - entry_price) * quantity_sold
                 position_realized_pnl = (price - entry_price) * qty
                 self.realized_pnl += position_realized_pnl
+                
+                # Apply profit scraping if this was a profitable trade
+                if position_realized_pnl > 0:
+                    scraped_amount = position_realized_pnl * self.profit_scraping_percentage
+                    self.scraped_profits += scraped_amount
+                    # Remove scraped profits from available cash
+                    self.cash -= scraped_amount
+                    workflow.logger.info(f"Scraped {scraped_amount:.2f} ({self.profit_scraping_percentage * 100}%) from {position_realized_pnl:.2f} profit")
             
             if new_qty <= 0:
                 self.positions.pop(symbol, None)
@@ -189,6 +215,11 @@ class ExecutionLedgerWorkflow:
     @workflow.query
     def get_cash(self) -> float:
         return float(self.cash)
+    
+    @workflow.query
+    def get_scraped_profits(self) -> float:
+        """Return total profits that have been scraped/set aside."""
+        return float(self.scraped_profits)
 
     @workflow.query
     def get_positions(self) -> Dict[str, float]:

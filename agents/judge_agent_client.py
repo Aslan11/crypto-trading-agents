@@ -16,7 +16,6 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from agents.prompt_manager import create_prompt_manager
 from agents.workflows import JudgeAgentWorkflow, ExecutionLedgerWorkflow
-from agents.workflows.agent_logging_workflow import AgentLoggingWorkflow
 from tools.performance_analysis import PerformanceAnalyzer, format_performance_report
 from tools.agent_logger import AgentLogger
 
@@ -63,19 +62,6 @@ class JudgeAgent:
     async def initialize(self) -> None:
         """Initialize the judge agent."""
         self.prompt_manager = await create_prompt_manager(self.temporal_client)
-        
-        # Ensure agent logging workflow exists
-        try:
-            handle = self.temporal_client.get_workflow_handle("agent-logging")
-            await handle.describe()
-        except RPCError as err:
-            if err.status == RPCStatusCode.NOT_FOUND:
-                await self.temporal_client.start_workflow(
-                    AgentLoggingWorkflow.run,
-                    id="agent-logging",
-                    task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
-                )
-                logger.info("Started agent logging workflow")
         
         # Ensure judge workflow exists
         try:
@@ -687,8 +673,8 @@ async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
                 try:
                     # On startup, wait longer to let system stabilize
                     if startup_delay:
-                        print(f"{CYAN}[JudgeAgent] Initial startup delay - waiting 5 minutes for system to stabilize{RESET}")
-                        await asyncio.sleep(5 * 60)  # 5 minute initial delay
+                        print(f"{CYAN}[JudgeAgent] Initial startup delay - waiting 10 minutes for system to stabilize{RESET}")
+                        await asyncio.sleep(10 * 60)  # 10 minute initial delay
                         startup_delay = False
                     
                     # Check if evaluation is needed

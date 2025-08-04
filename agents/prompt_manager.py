@@ -152,15 +152,15 @@ class PromptManager:
                 content=(
                     "ORDER EXECUTION:\n"
                     "For BUY or SELL decisions, use `place_mock_order` with this exact structure:\n"
-                    "{\n"
-                    '  "intent": {\n'
+                    "{{\n"
+                    '  "intent": {{\n'
                     '    "symbol": <string>,\n'
                     '    "side": "BUY" | "SELL",\n'
                     '    "qty": <number>,\n'
                     '    "price": <number>,\n'
                     '    "type": "market" | "limit"\n'
-                    "  }\n"
-                    "}\n\n"
+                    "  }}\n"
+                    "}}\n\n"
                     "Never submit orders for HOLD decisions."
                 ),
                 priority=600

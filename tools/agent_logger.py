@@ -82,6 +82,15 @@ class AgentLogger:
             "time": now.strftime("%H:%M:%S.%f")[:-3]  # Include milliseconds
         }
     
+    def _get_workflow_id(self) -> str:
+        """Get the appropriate workflow ID for this agent."""
+        agent_workflow_map = {
+            "execution_agent": "execution-agent",
+            "judge_agent": "judge-agent",
+            "broker_agent": "broker-agent"  # If we add logging to broker later
+        }
+        return agent_workflow_map.get(self.agent_name, "execution-agent")  # Default fallback
+
     async def log_decision(
         self, 
         nudge_timestamp: int,
@@ -96,8 +105,17 @@ class AgentLogger:
         """Log a comprehensive trading decision with all context."""
         if self.temporal_client:
             try:
-                # Signal the logging workflow
-                handle = self.temporal_client.get_workflow_handle("agent-logging")
+                # Signal the appropriate agent workflow
+                workflow_id = self._get_workflow_id()
+                handle = self.temporal_client.get_workflow_handle(workflow_id)
+                
+                # Ensure data is dict type
+                if not isinstance(market_data, dict):
+                    market_data = {}
+                if not isinstance(portfolio_data, dict):
+                    portfolio_data = {}
+                if not isinstance(user_preferences, dict):
+                    user_preferences = {}
                 
                 # Prepare market data summary
                 market_data_summary = {
@@ -116,18 +134,20 @@ class AgentLogger:
                     "positions": portfolio_data.get("positions", {})
                 }
                 
-                await handle.signal(
-                    "log_decision",
-                    self.agent_name,
-                    nudge_timestamp,
-                    symbols,
-                    market_data_summary,
-                    portfolio_summary,
-                    user_preferences,
-                    decisions,
-                    reasoning,
-                    kwargs  # Pass kwargs as a single dictionary
-                )
+                # Pack all data into a single dictionary
+                log_data = {
+                    "agent": self.agent_name,
+                    "nudge_timestamp": nudge_timestamp,
+                    "symbols": symbols,
+                    "market_data_summary": market_data_summary,
+                    "portfolio_data": portfolio_summary,
+                    "user_preferences": user_preferences,
+                    "decisions": decisions,
+                    "reasoning": reasoning,
+                    **kwargs
+                }
+                
+                await handle.signal("log_decision", log_data)
                 self.logger.info(f"Decision logged to workflow for nudge {nudge_timestamp}")
             except Exception as exc:
                 self.logger.error(f"Failed to log decision to workflow: {exc}")
@@ -149,6 +169,14 @@ class AgentLogger:
         **kwargs
     ) -> None:
         """Fallback file-based decision logging."""
+        # Ensure data is dict type
+        if not isinstance(market_data, dict):
+            market_data = {}
+        if not isinstance(portfolio_data, dict):
+            portfolio_data = {}
+        if not isinstance(user_preferences, dict):
+            user_preferences = {}
+            
         log_entry = {
             **self._get_timestamp(),
             "agent": self.agent_name,
@@ -187,16 +215,19 @@ class AgentLogger:
         """Log a specific action taken by the agent."""
         if self.temporal_client:
             try:
-                # Signal the logging workflow
-                handle = self.temporal_client.get_workflow_handle("agent-logging")
-                await handle.signal(
-                    "log_action",
-                    self.agent_name,
-                    action_type,
-                    details,
-                    result,
-                    kwargs  # Pass kwargs as a single dictionary
-                )
+                # Signal the appropriate agent workflow
+                workflow_id = self._get_workflow_id()
+                handle = self.temporal_client.get_workflow_handle(workflow_id)
+                # Pack all data into a single dictionary
+                log_data = {
+                    "agent": self.agent_name,
+                    "action_type": action_type,
+                    "details": details,
+                    "result": result or {},
+                    **kwargs
+                }
+                
+                await handle.signal("log_action", log_data)
                 self.logger.info(f"Action logged to workflow: {action_type}")
             except Exception as exc:
                 self.logger.error(f"Failed to log action to workflow: {exc}")
@@ -236,15 +267,18 @@ class AgentLogger:
         """Log summary information (evaluations, performance reports, etc.)."""
         if self.temporal_client:
             try:
-                # Signal the logging workflow
-                handle = self.temporal_client.get_workflow_handle("agent-logging")
-                await handle.signal(
-                    "log_summary",
-                    self.agent_name,
-                    summary_type,
-                    data,
-                    kwargs  # Pass kwargs as a single dictionary
-                )
+                # Signal the appropriate agent workflow
+                workflow_id = self._get_workflow_id()
+                handle = self.temporal_client.get_workflow_handle(workflow_id)
+                # Pack all data into a single dictionary
+                log_data = {
+                    "agent": self.agent_name,
+                    "summary_type": summary_type,
+                    "data": data,
+                    **kwargs
+                }
+                
+                await handle.signal("log_summary", log_data)
                 self.logger.info(f"Summary logged to workflow: {summary_type}")
             except Exception as exc:
                 self.logger.error(f"Failed to log summary to workflow: {exc}")
@@ -331,8 +365,9 @@ class AgentLogger:
         """Get recent decisions from the workflow or fallback to log files."""
         if self.temporal_client:
             try:
-                handle = self.temporal_client.get_workflow_handle("agent-logging")
-                return await handle.query("get_recent_decisions", self.agent_name, limit)
+                workflow_id = self._get_workflow_id()
+                handle = self.temporal_client.get_workflow_handle(workflow_id)
+                return await handle.query("get_recent_decisions", limit)
             except Exception as exc:
                 self.logger.error(f"Failed to get decisions from workflow: {exc}")
                 # Fallback to file-based
@@ -344,8 +379,9 @@ class AgentLogger:
         """Get recent actions from the workflow or fallback to log files.""" 
         if self.temporal_client:
             try:
-                handle = self.temporal_client.get_workflow_handle("agent-logging")
-                return await handle.query("get_recent_actions", self.agent_name, limit)
+                workflow_id = self._get_workflow_id()
+                handle = self.temporal_client.get_workflow_handle(workflow_id)
+                return await handle.query("get_recent_actions", limit)
             except Exception as exc:
                 self.logger.error(f"Failed to get actions from workflow: {exc}")
                 # Fallback to file-based
@@ -357,8 +393,9 @@ class AgentLogger:
         """Get recent summaries from the workflow or fallback to log files."""
         if self.temporal_client:
             try:
-                handle = self.temporal_client.get_workflow_handle("agent-logging")
-                return await handle.query("get_logs", {"agent": self.agent_name, "event_type": "summary", "limit": limit})
+                workflow_id = self._get_workflow_id()
+                handle = self.temporal_client.get_workflow_handle(workflow_id)
+                return await handle.query("get_logs", {"event_type": "summary", "limit": limit})
             except Exception as exc:
                 self.logger.error(f"Failed to get summaries from workflow: {exc}")
                 # Fallback to file-based

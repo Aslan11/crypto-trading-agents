@@ -16,12 +16,8 @@ This system implements an "LLM as Judge" pattern that evaluates execution agent 
    - Analyzes trading decisions using LLM
    - Implements prompt updates based on performance
 
-3. **PromptManager** (`agents/prompt_manager.py`)
-   - Manages modular prompt templates
-   - Supports dynamic prompt generation
-   - Tracks prompt versions and performance correlation
 
-4. **PerformanceAnalyzer** (`tools/performance_analysis.py`)
+3. **PerformanceAnalyzer** (`tools/performance_analysis.py`)
    - Calculates comprehensive trading metrics
    - Generates performance reports and grades
    - Analyzes risk and consistency patterns
@@ -167,7 +163,6 @@ The system automatically updates prompts based on:
 ```
 agents/
 ├── judge_agent_client.py          # Main judge agent implementation
-├── prompt_manager.py              # Dynamic prompt management
 ├── workflows.py                   # JudgeAgentWorkflow + enhancements
 └── context_manager.py             # Context management (existing)
 

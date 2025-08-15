@@ -231,7 +231,6 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 │   ├── judge_agent_client.py     # LLM as Judge performance optimizer
 │   ├── workflows.py               # Temporal workflow definitions
 │   ├── context_manager.py         # Intelligent conversation management
-│   └── prompt_manager.py          # Dynamic prompt system
 ├── tools/                     # Durable workflows used as MCP tools
 │   ├── performance_analysis.py   # Performance metrics and analysis
 │   ├── market_data.py            # Market data streaming
@@ -251,7 +250,6 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 - **`judge_agent_client.py`**: Performance evaluator using LLM as Judge pattern
 - **`workflows.py`**: Temporal workflows for state management and coordination
 - **`context_manager.py`**: Token-based conversation management with summarization
-- **`prompt_manager.py`**: Modular prompt templates with versioning and A/B testing
 - **`performance_analysis.py`**: Comprehensive trading performance analysis tools
 - **`market_data.py`**: Historical data loading and streaming with configurable windows
 - **`agent_logger.py`**: Distributed logging system routing to individual agent workflows

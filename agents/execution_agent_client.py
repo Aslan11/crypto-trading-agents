@@ -9,7 +9,6 @@ from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
 from agents.context_manager import create_context_manager
-from agents.prompt_manager import create_prompt_manager
 from datetime import timedelta
 from temporalio.client import (
     Client,
@@ -21,7 +20,8 @@ from temporalio.client import (
     RPCStatusCode,
 )
 from tools.ensemble_nudge import EnsembleNudgeWorkflow
-from agents.workflows import BrokerAgentWorkflow, ExecutionAgentWorkflow
+from agents.workflows.broker_agent_workflow import BrokerAgentWorkflow
+from agents.workflows.execution_agent_workflow import ExecutionAgentWorkflow
 from tools.agent_logger import AgentLogger
 
 ORANGE = "\033[33m"
@@ -51,54 +51,64 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are an autonomous portfolio management agent with adaptive risk tolerance. "
-    "You analyze comprehensive market data and make data-driven trading decisions for cryptocurrency pairs "
+    "You are a fully autonomous portfolio management agent with adaptive risk tolerance. "
+    "You independently analyze market data and execute trading decisions without requiring confirmation "
     "based on user preferences and risk profile.\n\n"
     
-    "DATA-DRIVEN ANALYSIS WORKFLOW:\n"
-    "You will receive complete market data including:\n"
-    "• Historical price ticks with volume and timestamps\n"
+    "AUTONOMOUS DATA-DRIVEN WORKFLOW:\n"
+    "INCREMENTAL DATA WITH MEMORY REQUIREMENT:\n"
+    "• Each nudge provides ONLY NEW ticks since last update (to avoid context bloat)\n"
+    "• YOU MUST REMEMBER all previous ticks from your conversation history\n"
+    "• Your memory contains the complete picture - USE IT ALL\n"
     "• Current portfolio positions, cash, and P&L\n"
     "• User risk preferences and trading style\n"
-    "• Recent performance metrics and trading success rates\n"
+    "• Performance metrics across entire trading session\n"
     "• Current risk exposure and portfolio concentration\n\n"
     
-    "YOUR ROLE:\n"
-    "Analyze the provided data and make trading decisions. You do NOT need to call data collection tools - "
-    "all necessary data is provided in the input. Focus on analysis and decision-making.\n\n"
+    "CRITICAL: Combine NEW ticks with your MEMORY of all previous ticks.\n"
+    "Your conversation history IS your database - analyze the FULL picture.\n\n"
     
-    "DECISION FRAMEWORK:\n"
-    "For each symbol, analyze:\n"
-    "• Price momentum and trend direction from recent ticks\n"
-    "• Current position size and portfolio balance\n"
-    "• User risk tolerance and trading preferences\n"
-    "• Recent performance metrics and trading success rates\n"
-    "• Current portfolio risk exposure and concentration\n"
-    "• Risk-reward ratio for potential trades\n"
-    "• Market correlation and portfolio diversification\n\n"
+    "YOUR AUTONOMOUS AUTHORITY:\n"
+    "You have full authority to analyze data and execute trades. You do NOT need to wait for confirmation - "
+    "all necessary data is provided. Act decisively on your analysis.\n\n"
     
-    "Make one of three decisions: BUY, SELL, or HOLD\n"
-    "Always provide clear rationale for each decision.\n\n"
+    "AUTONOMOUS DECISION FRAMEWORK:\n"
+    "For each symbol, use YOUR COMPLETE MEMORY:\n"
+    "• Price momentum from ALL ticks you've seen (across all nudges)\n"
+    "• Trends from FIRST tick in your memory to LATEST tick received\n"
+    "• Support/resistance from your ACCUMULATED tick knowledge\n"
+    "• Volume patterns from your ENTIRE conversation history\n"
+    "• Moving averages mentally calculated from ALL remembered ticks\n"
+    "• Assess current position size and portfolio balance\n"
+    "• Apply user risk tolerance and trading preferences\n"
+    "• Evaluate performance across entire trading session\n"
+    "• Calculate risk-reward using your FULL historical memory\n\n"
     
-    "🚨 MANDATORY PROFIT-TAKING RULES 🚨\n"
-    "BEFORE MAKING ANY DECISION, CHECK EACH OPEN POSITION:\n"
+    "Execute your decisions autonomously: BUY, SELL, or HOLD\n"
+    "Act immediately on your analysis without seeking confirmation.\n\n"
+    
+    "🚨 AUTONOMOUS PROFIT-TAKING EXECUTION 🚨\n"
+    "YOU WILL AUTONOMOUSLY EXECUTE THESE RULES:\n"
     "1. Calculate current profit % = (current_price - entry_price) / entry_price * 100\n"
-    "2. IF profit >= 0.5%: IMMEDIATELY SELL THE ENTIRE POSITION - NO EXCEPTIONS\n"
-    "3. IF loss >= 1.0%: IMMEDIATELY SELL THE ENTIRE POSITION - NO EXCEPTIONS\n"
-    "4. NEVER hold positions with 0.5%+ profit - ALWAYS SELL IMMEDIATELY\n\n"
+    "2. IF profit >= 0.5%: EXECUTE SELL ORDER IMMEDIATELY - NO WAITING\n"
+    "3. IF loss >= 1.0%: EXECUTE STOP-LOSS IMMEDIATELY - NO WAITING\n"
+    "4. Implement micro trailing stops automatically (BTC −0.8%, ETH −0.9%, DOGE −1.5%)\n"
+    "5. Execute periodic profit-scraping (sell 5-10% on significant moves)\n\n"
     
-    "AGGRESSIVE TRADING MODE:\n"
-    "• POSITION SIZING: Use UP TO the full position_size_comfort percentage from user preferences\n"
-    "• MANDATORY PROFIT LOCKS: MUST sell at 0.5% profit - this is non-negotiable\n"
-    "• TIGHT STOPS: MUST sell at -1% loss - this is non-negotiable\n"
-    "• MULTIPLE POSITIONS: Can hold multiple concurrent positions in same symbol\n"
-    "• HIGH TURNOVER: Exit ALL profitable positions immediately at 0.5%+ profit\n\n"
+    "AUTONOMOUS AGGRESSIVE TRADING:\n"
+    "• POSITION SIZING: Autonomously size up to full position_size_comfort\n"
+    "• AUTOMATIC PROFIT LOCKS: Execute sells at 0.5% profit immediately\n"
+    "• AUTOMATIC STOPS: Execute stop-losses at -1% immediately\n"
+    "• MULTIPLE POSITIONS: Open multiple positions as opportunities arise\n"
+    "• HIGH TURNOVER: Exit profitable positions without hesitation\n"
+    "• REDEPLOYMENT: Automatically redeploy cash on breakout signals\n"
+    "• DCA AUTOMATION: Execute DCA buys on dips without confirmation\n\n"
     
-    "DECISION PRIORITY (IN ORDER):\n"
-    "1. FIRST: Check all positions for 0.5%+ profit → SELL ENTIRE POSITION\n"
-    "2. SECOND: Check all positions for 1%+ loss → SELL ENTIRE POSITION\n"
-    "3. THIRD: Look for new entry opportunities\n"
-    "4. NEVER hold positions longer than needed - capture profits quickly\n\n"
+    "AUTONOMOUS EXECUTION PRIORITY:\n"
+    "1. Execute all profit-taking sells (0.5%+ profit)\n"
+    "2. Execute all stop-loss sells (1%+ loss)\n"
+    "3. Deploy available capital into new opportunities\n"
+    "4. Rebalance portfolio based on market conditions\n\n"
     
     "RISK MANAGEMENT:\n"
     "Before executing any trade:\n"
@@ -149,14 +159,16 @@ SYSTEM_PROMPT = (
     
     "Never submit orders for HOLD decisions. ALWAYS use batch format for multiple orders.\n\n"
     
-    "REPORTING:\n"
-    "Provide a structured summary containing:\n"
-    "• Analysis and decision for each symbol with rationale\n"
-    "• List of orders submitted (if any)\n"
-    "• Portfolio impact and risk assessment\n"
-    "• Key market observations\n\n"
+    "AUTONOMOUS ACTION REPORT:\n"
+    "After executing your autonomous decisions, report:\n"
+    "• Actions executed for each symbol (not suggestions)\n"
+    "• Rationale based on your COMPLETE MEMORY of all ticks seen\n"
+    "• Portfolio changes from executed orders\n"
+    "• Next autonomous actions planned\n"
+    "• Automated rules now in effect (trailing stops, profit targets, DCA schedules)\n\n"
     
-    "NOTE: Data continuity is handled automatically by the system. Focus on analysis and decision-making."
+    "You are reporting completed actions, not requesting approval.\n"
+    "Your decisions use your ENTIRE MEMORY across all nudges, not just new ticks."
 )
 
 
@@ -227,8 +239,8 @@ async def _watch_user_preferences(client: Client, current_preferences: dict, con
                 current_preferences.update(prefs)
                 print(f"[ExecutionAgent] ✅ User preferences updated: risk_tolerance={prefs.get('risk_tolerance', 'moderate')}, style={prefs.get('trading_style', 'unknown')}")
                 
-                # Update system prompt with new preferences
-                await _update_system_prompt(client, prefs, conversation)
+                # The judge agent will handle system prompt updates directly
+                
         except Exception as exc:
             # Silently continue if execution agent workflow not found or other issues
             pass
@@ -236,47 +248,28 @@ async def _watch_user_preferences(client: Client, current_preferences: dict, con
         await asyncio.sleep(2)  # Check every 2 seconds
 
 
-async def _update_system_prompt(client: Client, user_preferences: dict, conversation: list) -> None:
-    """Update the system prompt with new user preferences."""
-    if not conversation or conversation[0]["role"] != "system":
-        return
-        
-    try:
-        prompt_manager = await create_prompt_manager(temporal_client=client)
-        
-        context = {
-            "risk_mode": user_preferences.get("risk_tolerance", "moderate"),
-            "performance_trend": ["stable"]  # Default to stable, judge can update this
-        }
-        updated_prompt = await prompt_manager.get_current_prompt("execution_agent", context)
-        
-        # Update the conversation
-        conversation[0]["content"] = updated_prompt
-        print(f"[ExecutionAgent] 🔄 System prompt updated with {user_preferences.get('risk_tolerance', 'moderate')} risk tolerance")
-        
-        # Log the full updated prompt to the execution agent workflow for transparency
+async def _watch_system_prompt_updates(client: Client, conversation: list) -> None:
+    """Watch for system prompt updates from the judge agent."""
+    wf_id = "execution-agent"
+    last_prompt = ""
+    
+    while True:
         try:
-            agent_logger = AgentLogger("execution_agent", client)
-            await agent_logger.log_action(
-                action_type="system_prompt_update",
-                details={
-                    "trigger": "user_preferences_change",
-                    "risk_tolerance": user_preferences.get("risk_tolerance", "moderate"),
-                    "trading_style": user_preferences.get("trading_style", "unknown"),
-                    "context": context,
-                    "prompt_length": len(updated_prompt),
-                    "prompt_lines": len(updated_prompt.split('\n'))
-                },
-                result={
-                    "success": True,
-                    "full_prompt": updated_prompt
-                }
-            )
-        except Exception as log_exc:
-            print(f"[ExecutionAgent] Failed to log prompt update: {log_exc}")
+            handle = client.get_workflow_handle(wf_id)
+            current_prompt = await handle.query("get_system_prompt")
             
-    except Exception as exc:
-        print(f"[ExecutionAgent] Failed to update system prompt: {exc}")
+            # Check if prompt has changed
+            if current_prompt and current_prompt != last_prompt:
+                if conversation and conversation[0]["role"] == "system":
+                    conversation[0]["content"] = current_prompt
+                    print(f"[ExecutionAgent] 🔄 System prompt updated by judge (length: {len(current_prompt)} chars)")
+                    last_prompt = current_prompt
+                
+        except Exception as exc:
+            # Silently continue if execution agent workflow not found or other issues
+            pass
+        
+        await asyncio.sleep(5)  # Check every 5 seconds
 
 
 async def _stream_nudges(client: Client) -> AsyncIterator[int]:
@@ -342,10 +335,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
         namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
     )
     
-    # Initialize context and prompt managers
+    # Initialize context manager
     model = os.environ.get("OPENAI_MODEL", "gpt-4o")
     context_manager = create_context_manager(model=model, openai_client=openai_client)
-    prompt_manager = await create_prompt_manager(temporal_client=temporal)
     symbols: Set[str] = set()
     current_preferences: dict = {}
     _symbol_task = asyncio.create_task(_watch_symbols(temporal, symbols))
@@ -362,8 +354,18 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
             all_tools = tools_resp.tools
             tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
             
-            # Initialize with default prompt - will be updated after user preferences are retrieved
-            current_prompt = SYSTEM_PROMPT
+            # Get current system prompt from workflow, fallback to default
+            try:
+                handle = temporal.get_workflow_handle("execution-agent")
+                current_prompt = await handle.query("get_system_prompt")
+                if not current_prompt:
+                    current_prompt = SYSTEM_PROMPT
+                    # Initialize workflow with default prompt
+                    await handle.signal("update_system_prompt", SYSTEM_PROMPT)
+                print(f"[ExecutionAgent] Using system prompt from workflow (length: {len(current_prompt)} chars)")
+            except Exception as exc:
+                current_prompt = SYSTEM_PROMPT
+                print(f"[ExecutionAgent] Using fallback system prompt: {exc}")
             
             conversation = [{"role": "system", "content": current_prompt}]
             print(
@@ -373,6 +375,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
 
             # Start watching for user preference updates
             _preferences_task = asyncio.create_task(_watch_user_preferences(temporal, current_preferences, conversation))
+            
+            # Start watching for system prompt updates from judge
+            _prompt_task = asyncio.create_task(_watch_system_prompt_updates(temporal, conversation))
 
             # Track latest processed timestamp for data continuity
             latest_processed_ts = None
@@ -390,10 +395,10 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 # ===============================
                 print(f"[ExecutionAgent] Starting mandatory data collection (parallel)...")
                 
-                # Determine since_ts for data continuity
+                # Determine since_ts for incremental data fetching
                 if latest_processed_ts is not None:
                     since_ts = latest_processed_ts
-                    print(f"[ExecutionAgent] Using latest processed timestamp: {since_ts}")
+                    print(f"[ExecutionAgent] Fetching NEW ticks since timestamp: {since_ts}")
                 else:
                     since_ts = 0  # Get all historical data on first run
                     print(f"[ExecutionAgent] First run - fetching all available historical data (since_ts=0)")
@@ -402,7 +407,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 tasks = [
                     session.call_tool("get_historical_ticks", {
                         "symbols": sorted(symbols),
-                        "since_ts": since_ts
+                        "since_ts": since_ts  # Incremental fetching to avoid context bloat
                     }),
                     session.call_tool("get_portfolio_status", {}),
                     session.call_tool("get_user_preferences", {}),
@@ -422,9 +427,11 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 if historical_ticks_data and isinstance(historical_ticks_data, dict):
                     # Find the latest timestamp from all symbols' tick data
                     max_timestamp = 0
+                    new_tick_count = 0
                     
                     for symbol, symbol_data in historical_ticks_data.items():
                         if isinstance(symbol_data, list) and symbol_data:
+                            new_tick_count += len(symbol_data)
                             # Get the latest timestamp from this symbol's ticks
                             for tick in symbol_data:
                                 if isinstance(tick, dict):
@@ -435,7 +442,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     
                     if max_timestamp > 0:
                         latest_processed_ts = max_timestamp
-                        print(f"[ExecutionAgent] Updated latest processed timestamp: {latest_processed_ts}")
+                        print(f"[ExecutionAgent] Received {new_tick_count} new ticks (latest timestamp: {latest_processed_ts})")
                     else:
                         print(f"[ExecutionAgent] Warning: No valid timestamps found in tick data")
                 
@@ -479,7 +486,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     try:
                         msg = stream_chat_completion(
                             openai_client,
-                            model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+                            model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                             messages=conversation,
                             tools=openai_tools,
                             tool_choice="auto",

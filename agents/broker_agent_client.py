@@ -179,7 +179,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 try:
                     msg_dict = stream_chat_completion(
                         _openai_client,
-                        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                        model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                         messages=conversation,
                         prefix="[BrokerAgent] ",
                         color=PINK,
@@ -220,7 +220,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 try:
                     msg_dict = stream_chat_completion(
                         _openai_client,
-                        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                        model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                         messages=conversation,
                         tools=tools_payload,
                         tool_choice="auto",
@@ -258,7 +258,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     try:
                         followup = stream_chat_completion(
                             _openai_client,
-                            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                            model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                             messages=conversation,
                             tools=tools_payload,
                             prefix="[BrokerAgent] ",
@@ -292,7 +292,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     try:
                         followup = stream_chat_completion(
                             _openai_client,
-                            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                            model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                             messages=conversation,
                             tools=tools_payload,
                             prefix="[BrokerAgent] ",

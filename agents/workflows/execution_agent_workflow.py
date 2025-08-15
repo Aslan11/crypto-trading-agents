@@ -18,6 +18,7 @@ class ExecutionAgentWorkflow:
         self.decision_count = 0
         self.action_count = 0
         self.summary_count = 0
+        self.system_prompt: str = ""  # Store the current system prompt
 
     @workflow.signal
     def nudge(self, ts: int) -> None:
@@ -36,6 +37,17 @@ class ExecutionAgentWorkflow:
     def get_user_preferences(self) -> Dict:
         """Get current user preferences."""
         return dict(self.user_preferences)
+    
+    @workflow.signal
+    def update_system_prompt(self, prompt: str) -> None:
+        """Update the system prompt for the execution agent."""
+        self.system_prompt = prompt
+        workflow.logger.info(f"System prompt updated (length: {len(prompt)} chars)")
+    
+    @workflow.query
+    def get_system_prompt(self) -> str:
+        """Get the current system prompt."""
+        return self.system_prompt
 
     def _get_timestamp(self) -> Dict[str, Any]:
         """Get standardized timestamp information."""

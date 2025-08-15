@@ -14,8 +14,8 @@ from temporalio.client import Client, RPCError, RPCStatusCode
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-from agents.prompt_manager import create_prompt_manager
-from agents.workflows import JudgeAgentWorkflow, ExecutionLedgerWorkflow
+from agents.workflows.judge_agent_workflow import JudgeAgentWorkflow
+from agents.workflows.execution_ledger_workflow import ExecutionLedgerWorkflow
 from tools.performance_analysis import PerformanceAnalyzer, format_performance_report
 from tools.agent_logger import AgentLogger
 
@@ -39,7 +39,6 @@ class JudgeAgent:
         self.temporal_client = temporal_client
         self.mcp_session = mcp_session
         self.performance_analyzer = PerformanceAnalyzer()
-        self.prompt_manager = None
         self.agent_logger = AgentLogger("judge_agent", temporal_client)
         self.user_preferences = {}  # Cache user preferences
         
@@ -61,8 +60,6 @@ class JudgeAgent:
     
     async def initialize(self) -> None:
         """Initialize the judge agent."""
-        self.prompt_manager = await create_prompt_manager(self.temporal_client)
-        
         # Ensure judge workflow exists
         try:
             handle = self.temporal_client.get_workflow_handle("judge-agent")
@@ -214,7 +211,7 @@ Respond in JSON format:
         
         try:
             response = openai_client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5-mini",
                 messages=[
                     {
                         "role": "system",
@@ -392,7 +389,8 @@ Respond in JSON format:
                     f"Reduced maximum position size to {conservative_position:.0%} (50% of your {baseline['max_position_size']:.0%} comfort level)",
                     f"Increased cash reserves to {conservative_cash:.0%} (from your {baseline['cash_reserve']:.0%} preference)",
                     "Enhanced risk controls for trade sizing"
-                ]
+                ],
+                "performance_report": performance_report  # Add performance data for LLM prompt engineering
             }
         
         # Check for high drawdown using user's tolerance as baseline
@@ -413,7 +411,8 @@ Respond in JSON format:
                     "Enhanced drawdown protection",
                     f"Reduced position sizing to {conservative_position:.0%} (70% of your {baseline['max_position_size']:.0%} comfort level)",
                     f"Increased cash reserves to {conservative_cash:.0%}"
-                ]
+                ],
+                "performance_report": performance_report
             }
         
         # Check decision quality issues
@@ -429,7 +428,8 @@ Respond in JSON format:
                     "Added performance monitoring guidelines",
                     "Enhanced decision analysis requirements",
                     "Improved market analysis framework"
-                ]
+                ],
+                "performance_report": performance_report
             }
         
         # Check for overly conservative performance (relative to user's risk tolerance)
@@ -457,7 +457,8 @@ Respond in JSON format:
                         f"Increased position sizing to {aggressive_position:.0%} (up to 120% of your {baseline['max_position_size']:.0%} comfort level)",
                         f"Reduced cash reserves to {aggressive_cash:.0%} (80% of your {baseline['cash_reserve']:.0%} preference)",
                         "More aggressive risk parameters aligned with your risk tolerance"
-                    ]
+                    ],
+                    "performance_report": performance_report
                 }
             else:
                 # User prefers conservative/moderate - don't increase aggressiveness
@@ -465,6 +466,141 @@ Respond in JSON format:
         
         # No updates needed
         return None
+    
+    async def _improve_system_prompt(self, current_prompt: str, performance_report: Dict, context: Dict) -> str:
+        """Use LLM to improve the system prompt based on performance analysis."""
+        
+        improvement_prompt = f"""You are a prompt engineering expert tasked with improving a trading agent's system prompt based on performance analysis.
+
+CURRENT SYSTEM PROMPT:
+```
+{current_prompt}
+```
+
+PERFORMANCE ANALYSIS:
+```json
+{json.dumps(performance_report, indent=2)}
+```
+
+CONTEXT & ISSUES IDENTIFIED:
+- Update Type: {context.get('update_type', 'general_improvement')}
+- Reason: {context.get('reason', 'Performance optimization needed')}
+- Specific Changes Needed: {context.get('changes', [])}
+
+INSTRUCTIONS:
+1. Analyze the current prompt and performance data
+2. Identify specific weaknesses in the current prompt that correlate with poor performance
+3. Improve the prompt while maintaining its core structure and autonomous nature
+4. Focus on the specific issues identified in the context
+5. Keep the prompt length reasonable (not too verbose)
+6. Ensure the agent remains fully autonomous and doesn't ask for confirmation
+7. Maintain emphasis on using complete memory of all ticks from conversation history
+
+CRITICAL REQUIREMENTS TO PRESERVE:
+- Full autonomy (no confirmation requests)
+- Memory-based analysis using ALL ticks from conversation history
+- Incremental data fetching with cumulative memory
+- Specific order execution format
+- Action reporting (not suggestion reporting)
+
+Return ONLY the improved system prompt, no explanations."""
+
+        try:
+            response = openai_client.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                messages=[{"role": "user", "content": improvement_prompt}],
+                temperature=0.1  # Low temperature for consistent improvements
+            )
+            
+            improved_prompt = response.choices[0].message.content.strip()
+            
+            # Remove any markdown code blocks if present
+            if improved_prompt.startswith("```") and improved_prompt.endswith("```"):
+                lines = improved_prompt.split('\n')
+                improved_prompt = '\n'.join(lines[1:-1])
+            
+            return improved_prompt
+            
+        except Exception as exc:
+            logger.error("Failed to improve system prompt with LLM: %s", exc)
+            # Fallback to current prompt if LLM fails
+            return current_prompt
+    
+    async def update_prompt_for_user_preferences(self, user_preferences: Dict) -> bool:
+        """Update execution agent system prompt based on user preference changes."""
+        try:
+            # Get current system prompt from execution agent workflow
+            current_prompt = ""
+            try:
+                handle = self.temporal_client.get_workflow_handle("execution-agent")
+                current_prompt = await handle.query("get_system_prompt")
+                if not current_prompt:
+                    print(f"{RED}[JudgeAgent] No current system prompt found - using fallback{RESET}")
+                    # Import the fallback prompt from execution agent
+                    from agents.execution_agent_client import SYSTEM_PROMPT
+                    current_prompt = SYSTEM_PROMPT
+            except Exception as query_exc:
+                print(f"{RED}[JudgeAgent] Failed to query current system prompt: {query_exc}{RESET}")
+                return False
+            
+            # Create context for user preference update
+            context = {
+                "update_type": "user_preferences_update",
+                "reason": f"User preferences updated - adjusting trading parameters to match user's risk tolerance and trading style",
+                "changes": [
+                    f"Risk tolerance: {user_preferences.get('risk_tolerance', 'moderate')}",
+                    f"Position size comfort: {user_preferences.get('position_size_comfort', '20%')}",
+                    f"Cash reserve level: {user_preferences.get('cash_reserve_level', '15%')}",
+                    f"Drawdown tolerance: {user_preferences.get('drawdown_tolerance', '15%')}",
+                    f"Trading style: {user_preferences.get('trading_style', 'balanced')}"
+                ],
+                "performance_report": {
+                    "trigger": "user_preferences_change",
+                    "user_preferences": user_preferences
+                }
+            }
+            
+            # Use LLM to adapt the system prompt to new user preferences
+            improved_prompt = await self._improve_system_prompt(
+                current_prompt=current_prompt,
+                performance_report=context["performance_report"],
+                context=context
+            )
+            
+            # Update execution agent workflow's system prompt
+            try:
+                await handle.signal("update_system_prompt", improved_prompt)
+                print(f"{GREEN}[JudgeAgent] ✅ System prompt updated for user preferences{RESET}")
+                print(f"{CYAN}[JudgeAgent] New prompt length: {len(improved_prompt)} chars{RESET}")
+                
+                # Log the preference update
+                await self.agent_logger.log_action(
+                    action_type="preference_update",
+                    details={
+                        "trigger": "user_preferences_change",
+                        "user_preferences": user_preferences,
+                        "changes": context["changes"]
+                    },
+                    result={
+                        "success": True,
+                        "prompt_length": len(improved_prompt)
+                    }
+                )
+                
+                return True
+                
+            except Exception as signal_exc:
+                print(f"{RED}[JudgeAgent] Failed to signal execution agent with updated prompt: {signal_exc}{RESET}")
+                return False
+                
+        except Exception as exc:
+            print(f"{RED}[JudgeAgent] Error updating prompt for user preferences: {exc}{RESET}")
+            await self.agent_logger.log_action(
+                action_type="preference_update", 
+                details={"user_preferences": user_preferences},
+                result={"success": False, "error": str(exc)}
+            )
+            return False
     
     async def implement_context_update(self, update_spec: Dict) -> bool:
         """Implement the specified context update."""
@@ -474,37 +610,66 @@ Respond in JSON format:
             reason = update_spec["reason"]
             changes = update_spec["changes"]
             
-            # Update the context
-            success = await self.prompt_manager.update_agent_context(
-                agent_type="execution_agent",
-                new_context=new_context,
-                description=f"{update_type.replace('_', ' ').title()} update",
-                reason=reason,
-                changes=changes
+            # Get current system prompt from execution agent workflow
+            current_prompt = ""
+            try:
+                handle = self.temporal_client.get_workflow_handle("execution-agent")
+                current_prompt = await handle.query("get_system_prompt")
+                if not current_prompt:
+                    print(f"{RED}[JudgeAgent] No current system prompt found in workflow{RESET}")
+                    return False
+            except Exception as query_exc:
+                print(f"{RED}[JudgeAgent] Failed to query current system prompt: {query_exc}{RESET}")
+                return False
+            
+            # Use LLM to improve the system prompt based on performance analysis
+            improved_prompt = await self._improve_system_prompt(
+                current_prompt=current_prompt,
+                performance_report=update_spec.get("performance_report", {}),
+                context=update_spec
             )
             
-            if success:
-                print(f"{GREEN}[JudgeAgent] Implemented context update: {update_type}{RESET}")
+            # Update execution agent workflow's system prompt
+            try:
+                await handle.signal("update_system_prompt", improved_prompt)
+                success = True
+                
+                print(f"{GREEN}[JudgeAgent] Updated execution agent system prompt: {update_type}{RESET}")
                 print(f"{CYAN}[JudgeAgent] Reason: {reason}{RESET}")
                 print(f"{CYAN}[JudgeAgent] New context: {new_context}{RESET}")
                 for change in changes:
                     print(f"{CYAN}[JudgeAgent] - {change}{RESET}")
                 
-                # Display the rendered prompt with new context
-                new_prompt = await self.prompt_manager.get_current_prompt(
-                    agent_type="execution_agent",
-                    context=new_context
-                )
-                
-                print(f"{GREEN}[JudgeAgent] New Execution Agent Prompt:{RESET}")
+                print(f"{GREEN}[JudgeAgent] New System Prompt (length: {len(improved_prompt)} chars):{RESET}")
                 print(f"{CYAN}{'='*80}{RESET}")
                 
-                prompt_lines = new_prompt.split('\n')
+                # Display first few lines of the prompt
+                prompt_lines = improved_prompt.split('\n')[:10]
                 for line in prompt_lines:
                     print(f"{CYAN}{line}{RESET}")
-                
+                if len(improved_prompt.split('\n')) > 10:
+                    print(f"{CYAN}... (truncated, {len(improved_prompt.split('\n')) - 10} more lines){RESET}")
                 print(f"{CYAN}{'='*80}{RESET}")
-                print(f"{GREEN}[JudgeAgent] Context update complete (length: {len(new_prompt)} chars, {len(prompt_lines)} lines){RESET}")
+                
+            except Exception as signal_exc:
+                print(f"{RED}[JudgeAgent] Failed to signal execution agent: {signal_exc}{RESET}")
+                success = False
+            
+            # Log the context update
+            await self.agent_logger.log_action(
+                action_type="context_update",
+                details={
+                    "update_type": update_type,
+                    "context": new_context,
+                    "reason": reason,
+                    "changes": changes
+                },
+                result={
+                    "success": success,
+                    "prompt_length": len(improved_prompt) if success else 0,
+                    "error": None if success else "Failed to signal execution agent"
+                }
+            )
             
             return success
             
@@ -627,7 +792,7 @@ Respond in JSON format:
             print(f"{RED}[JudgeAgent] Evaluation cycle failed: {exc}{RESET}")
 
 
-async def _watch_judge_preferences(client: Client, current_preferences: dict) -> None:
+async def _watch_judge_preferences(client: Client, current_preferences: dict, judge_agent: JudgeAgent) -> None:
     """Poll judge agent workflow for user preference updates."""
     wf_id = "judge-agent"
     while True:
@@ -653,6 +818,18 @@ async def _watch_judge_preferences(client: Client, current_preferences: dict) ->
                         print(f"{GREEN}[JudgeAgent] Baseline limits: position={max_position:.0%}, cash={cash_reserve:.0%}, drawdown_tolerance={drawdown_tolerance:.0%}{RESET}")
                     except Exception as e:
                         logger.warning("Failed to parse baseline limits: %s", e)
+                    
+                    # IMMEDIATELY update execution agent system prompt to reflect new preferences
+                    print(f"{ORANGE}[JudgeAgent] 🔄 Updating execution agent system prompt for new preferences...{RESET}")
+                    try:
+                        success = await judge_agent.update_prompt_for_user_preferences(prefs)
+                        if success:
+                            print(f"{GREEN}[JudgeAgent] ✅ Execution agent system prompt successfully updated{RESET}")
+                        else:
+                            print(f"{RED}[JudgeAgent] ❌ Failed to update execution agent system prompt{RESET}")
+                    except Exception as update_exc:
+                        print(f"{RED}[JudgeAgent] Error updating execution agent prompt: {update_exc}{RESET}")
+                        
                 else:
                     print(f"{CYAN}[JudgeAgent] No user preferences set - using defaults{RESET}")
                     
@@ -686,7 +863,7 @@ async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
             
             # Start watching for user preference updates (similar to execution agent)
             current_preferences = {}
-            _preferences_task = asyncio.create_task(_watch_judge_preferences(temporal, current_preferences))
+            _preferences_task = asyncio.create_task(_watch_judge_preferences(temporal, current_preferences, judge))
             
             print(f"{CYAN}[JudgeAgent] Waiting for trading activity before starting evaluations...{RESET}")
             

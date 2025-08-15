@@ -50,13 +50,8 @@ class JudgeAgent:
             "consistency": 0.20
         }
         
-        # Performance thresholds for prompt updates
-        self.update_thresholds = {
-            "min_evaluation_score": 60.0,  # Only update if score is above this
-            "max_drawdown_trigger": 0.20,  # Trigger conservative mode
-            "poor_performance_trigger": 40.0,  # Score below this triggers intervention
-            "improvement_threshold": 5.0,  # Minimum improvement to justify update
-        }
+        # Performance threshold for prompt updates
+        self.update_threshold = 50.0  # Trigger prompt examination if score below this
     
     async def initialize(self) -> None:
         """Initialize the judge agent."""
@@ -341,23 +336,18 @@ Respond in JSON format:
         except (ValueError, TypeError):
             return default
     
-    def get_user_baseline_limits(self) -> Dict[str, float]:
-        """Get user's baseline risk limits from preferences."""
+    def get_user_baseline_preferences(self) -> Dict[str, str]:
+        """Get user's preference strings."""
         prefs = self.user_preferences
         
-        # Parse user preferences with fallback defaults
         baseline = {
-            "max_position_size": self.parse_percentage(prefs.get('position_size_comfort', '20%'), 0.20),
-            "cash_reserve": self.parse_percentage(prefs.get('cash_reserve_level', '15%'), 0.15),
-            "drawdown_tolerance": self.parse_percentage(prefs.get('drawdown_tolerance', '15%'), 0.15),
-            "risk_tolerance": prefs.get('risk_tolerance', 'moderate')
+            "risk_tolerance": prefs.get('risk_tolerance', 'moderate'),
+            "trading_style": prefs.get('trading_style', 'balanced'),
+            "experience_level": prefs.get('experience_level', 'intermediate')
         }
         
-        logger.info("User baseline limits: position=%.1f%%, cash=%.1f%%, drawdown=%.1f%%, risk=%s",
-                   baseline["max_position_size"] * 100,
-                   baseline["cash_reserve"] * 100, 
-                   baseline["drawdown_tolerance"] * 100,
-                   baseline["risk_tolerance"])
+        logger.info("User preferences: risk_tolerance=%s, trading_style=%s, experience_level=%s",
+                   baseline["risk_tolerance"], baseline["trading_style"], baseline["experience_level"])
         
         return baseline
     
@@ -367,104 +357,29 @@ Respond in JSON format:
         performance_report = evaluation["performance_report"]
         component_scores = evaluation["component_scores"]
         
-        # Get user preferences and baseline limits
+        # Get user preferences
         await self.get_user_preferences()
-        baseline = self.get_user_baseline_limits()
+        user_prefs = self.get_user_baseline_preferences()
         
-        # Check if performance is poor enough to warrant intervention
-        if overall_score < self.update_thresholds["poor_performance_trigger"]:
-            # Emergency intervention - reduce risk from user's baseline
-            conservative_position = baseline["max_position_size"] * 0.5  # 50% of user's comfort level
-            conservative_cash = min(baseline["cash_reserve"] * 1.5, 0.30)  # 1.5x user's preference, capped at 30%
-            
+        # Check if performance warrants prompt examination and update
+        if overall_score < self.update_threshold:
             return {
-                "update_type": "emergency_conservative",
-                "reason": f"Poor performance (score: {overall_score:.1f}) requires immediate risk reduction",
+                "update_type": "performance_based_update",
+                "reason": f"Performance score ({overall_score:.1f}) below threshold ({self.update_threshold})",
                 "context": {
-                    "risk_mode": "conservative",
-                    "performance_trend": ["declining", "poor"]
+                    "performance_score": overall_score,
+                    "component_scores": component_scores,
+                    "user_preferences": user_prefs
                 },
                 "changes": [
-                    "Switched to conservative risk mode",
-                    f"Reduced maximum position size to {conservative_position:.0%} (50% of your {baseline['max_position_size']:.0%} comfort level)",
-                    f"Increased cash reserves to {conservative_cash:.0%} (from your {baseline['cash_reserve']:.0%} preference)",
-                    "Enhanced risk controls for trade sizing"
-                ],
-                "performance_report": performance_report  # Add performance data for LLM prompt engineering
-            }
-        
-        # Check for high drawdown using user's tolerance as baseline
-        drawdown_trigger = baseline["drawdown_tolerance"] * 1.5  # Trigger when 1.5x user's tolerance
-        if performance_report.get("max_drawdown", 0.0) > drawdown_trigger:
-            conservative_position = baseline["max_position_size"] * 0.7  # 70% of user's comfort level
-            conservative_cash = min(baseline["cash_reserve"] * 1.3, 0.25)  # 1.3x user's preference
-            
-            return {
-                "update_type": "risk_reduction",
-                "reason": f"High drawdown ({performance_report.get('max_drawdown', 0.0):.1%}) exceeds {drawdown_trigger:.1%} trigger (1.5x your {baseline['drawdown_tolerance']:.1%} tolerance)",
-                "context": {
-                    "risk_mode": "conservative",
-                    "performance_trend": ["declining"]
-                },
-                "changes": [
-                    "Switched to conservative risk mode",
-                    "Enhanced drawdown protection",
-                    f"Reduced position sizing to {conservative_position:.0%} (70% of your {baseline['max_position_size']:.0%} comfort level)",
-                    f"Increased cash reserves to {conservative_cash:.0%}"
+                    f"Examining system prompt due to performance score of {overall_score:.1f}",
+                    f"User preferences: {user_prefs['risk_tolerance']} risk, {user_prefs['trading_style']} style",
+                    "Agent will determine appropriate adjustments based on performance analysis"
                 ],
                 "performance_report": performance_report
             }
         
-        # Check decision quality issues
-        if component_scores["decision_quality"] < 40:
-            return {
-                "update_type": "decision_improvement",
-                "reason": "Poor decision quality requires enhanced decision framework",
-                "context": {
-                    "risk_mode": "moderate",
-                    "performance_trend": ["declining", "poor"]
-                },
-                "changes": [
-                    "Added performance monitoring guidelines",
-                    "Enhanced decision analysis requirements",
-                    "Improved market analysis framework"
-                ],
-                "performance_report": performance_report
-            }
-        
-        # Check for overly conservative performance (relative to user's risk tolerance)
-        conservative_drawdown_threshold = baseline["drawdown_tolerance"] * 0.3  # Much less than user's tolerance
-        low_return_threshold = 0.02  # Still use 2% as low return threshold
-        
-        if (performance_report.get("max_drawdown", 0.0) < conservative_drawdown_threshold and 
-            performance_report.get("total_return", 0.0) < low_return_threshold and 
-            overall_score > 60):
-            
-            # Only increase if user has higher risk tolerance
-            if baseline["risk_tolerance"] in ["high", "aggressive"]:
-                aggressive_position = min(baseline["max_position_size"] * 1.2, 0.80)  # Up to 120% of user comfort, capped at 80%
-                aggressive_cash = max(baseline["cash_reserve"] * 0.8, 0.05)  # 80% of user preference, minimum 5%
-                
-                return {
-                    "update_type": "increase_aggressiveness",
-                    "reason": f"Very low drawdown ({performance_report.get('max_drawdown', 0.0):.1%} vs your {baseline['drawdown_tolerance']:.1%} tolerance) suggests room for more risk",
-                    "context": {
-                        "risk_mode": "aggressive",
-                        "performance_trend": ["stable"]
-                    },
-                    "changes": [
-                        "Switched to aggressive risk mode",
-                        f"Increased position sizing to {aggressive_position:.0%} (up to 120% of your {baseline['max_position_size']:.0%} comfort level)",
-                        f"Reduced cash reserves to {aggressive_cash:.0%} (80% of your {baseline['cash_reserve']:.0%} preference)",
-                        "More aggressive risk parameters aligned with your risk tolerance"
-                    ],
-                    "performance_report": performance_report
-                }
-            else:
-                # User prefers conservative/moderate - don't increase aggressiveness
-                return None
-        
-        # No updates needed
+        # No updates needed if performance is above threshold
         return None
     
     async def _improve_system_prompt(self, current_prompt: str, performance_report: Dict, context: Dict) -> str:
@@ -549,10 +464,8 @@ Return ONLY the improved system prompt, no explanations."""
                 "reason": f"User preferences updated - adjusting trading parameters to match user's risk tolerance and trading style",
                 "changes": [
                     f"Risk tolerance: {user_preferences.get('risk_tolerance', 'moderate')}",
-                    f"Position size comfort: {user_preferences.get('position_size_comfort', '20%')}",
-                    f"Cash reserve level: {user_preferences.get('cash_reserve_level', '15%')}",
-                    f"Drawdown tolerance: {user_preferences.get('drawdown_tolerance', '15%')}",
-                    f"Trading style: {user_preferences.get('trading_style', 'balanced')}"
+                    f"Trading style: {user_preferences.get('trading_style', 'balanced')}",
+                    f"Experience level: {user_preferences.get('experience_level', 'intermediate')}"
                 ],
                 "performance_report": {
                     "trigger": "user_preferences_change",
@@ -806,18 +719,7 @@ async def _watch_judge_preferences(client: Client, current_preferences: dict, ju
                 current_preferences.update(prefs)
                 
                 if prefs:
-                    print(f"{GREEN}[JudgeAgent] ✅ User preferences updated: risk_tolerance={prefs.get('risk_tolerance', 'unknown')}, position_comfort={prefs.get('position_size_comfort', 'unknown')}, cash_reserve={prefs.get('cash_reserve_level', 'unknown')}{RESET}")
-                    
-                    # Show calculated baseline limits
-                    try:
-                        # Parse baseline limits like the judge agent does
-                        max_position = float(prefs.get('position_size_comfort', '20%').rstrip('%')) / 100.0 if isinstance(prefs.get('position_size_comfort'), str) else prefs.get('position_size_comfort', 0.20)
-                        cash_reserve = float(prefs.get('cash_reserve_level', '15%').rstrip('%')) / 100.0 if isinstance(prefs.get('cash_reserve_level'), str) else prefs.get('cash_reserve_level', 0.15)
-                        drawdown_tolerance = float(prefs.get('drawdown_tolerance', '15%').rstrip('%')) / 100.0 if isinstance(prefs.get('drawdown_tolerance'), str) else prefs.get('drawdown_tolerance', 0.15)
-                        
-                        print(f"{GREEN}[JudgeAgent] Baseline limits: position={max_position:.0%}, cash={cash_reserve:.0%}, drawdown_tolerance={drawdown_tolerance:.0%}{RESET}")
-                    except Exception as e:
-                        logger.warning("Failed to parse baseline limits: %s", e)
+                    print(f"{GREEN}[JudgeAgent] ✅ User preferences updated: risk_tolerance={prefs.get('risk_tolerance', 'moderate')}, trading_style={prefs.get('trading_style', 'balanced')}, experience_level={prefs.get('experience_level', 'intermediate')}{RESET}")
                     
                     # IMMEDIATELY update execution agent system prompt to reflect new preferences
                     print(f"{ORANGE}[JudgeAgent] 🔄 Updating execution agent system prompt for new preferences...{RESET}")

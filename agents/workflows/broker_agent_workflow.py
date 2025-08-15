@@ -14,11 +14,8 @@ class BrokerAgentWorkflow:
         self.symbols: list[str] = []
         self.user_preferences: Dict = {
             "risk_tolerance": "moderate",  # conservative, moderate, aggressive
-            "experience_level": "intermediate",  # beginner, intermediate, advanced
-            "max_position_size": 0.20,  # Maximum % of portfolio per position
-            "cash_reserve": 0.10,  # Minimum cash reserve %
-            "max_drawdown_tolerance": 0.15,  # Maximum acceptable drawdown
-            "trading_style": "balanced"  # conservative, balanced, aggressive
+            "trading_style": "balanced",  # conservative, balanced, aggressive
+            "experience_level": "intermediate"  # beginner, intermediate, advanced
         }
 
     @workflow.signal

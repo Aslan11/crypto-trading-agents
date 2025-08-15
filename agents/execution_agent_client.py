@@ -67,9 +67,10 @@ SYSTEM_PROMPT = (
     "• Apply user risk tolerance and trading style preferences\n\n"
     
     "RISK MANAGEMENT:\n"
-    "• Size positions according to position_size_comfort limit\n"
+    "• Apply user risk tolerance and trading style preferences when making decisions\n"
+    "• Determine appropriate position sizes and risk limits based on user preferences\n"
     "• Verify sufficient cash for buys and holdings for sells\n"
-    "• Apply profit-taking and stop-loss based on user preferences and market conditions\n"
+    "• Set profit-taking and stop-loss levels appropriate for user's risk profile\n"
     "• Account for slippage in order sizing\n\n"
     
     "ORDER FORMAT:\n"

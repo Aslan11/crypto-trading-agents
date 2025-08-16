@@ -399,7 +399,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                             "function": {
                                 "name": order_tool.name,
                                 "description": order_tool.description,
-                                "parameters": order_tool.inputSchema,
+                                "input_schema": order_tool.inputSchema,
                             },
                         }
                     ]

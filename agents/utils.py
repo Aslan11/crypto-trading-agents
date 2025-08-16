@@ -67,6 +67,19 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
     if "reasoning_effort" in kwargs and "reasoning" not in kwargs:
         kwargs["reasoning"] = {"effort": kwargs.pop("reasoning_effort")}
 
+    # Convert legacy Chat Completions tool format
+    if "tools" in kwargs:
+        converted_tools = []
+        for tool in kwargs["tools"]:
+            if isinstance(tool, dict) and tool.get("type") == "function":
+                fn = dict(tool.get("function", {}))
+                if "parameters" in fn and "input_schema" not in fn:
+                    fn["input_schema"] = fn.pop("parameters")
+                converted_tools.append({"type": "function", "function": fn})
+            else:
+                converted_tools.append(tool)
+        kwargs["tools"] = converted_tools
+
     content_parts: list[str] = []
     tool_calls: list[dict] = []
     first_token = True

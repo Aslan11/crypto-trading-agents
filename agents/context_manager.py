@@ -39,34 +39,41 @@ class ContextManager:
         # Initialize tokenizer
         try:
             self.encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            # Fallback for unknown models
-            self.encoding = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            # Fallback for unknown models or when encoding requires network access
+            try:
+                self.encoding = tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                self.encoding = None
     
     def count_tokens(self, messages: List[Dict[str, Any]]) -> int:
         """Count tokens in a conversation."""
         total_tokens = 0
+        def token_len(text: str) -> int:
+            if self.encoding:
+                return len(self.encoding.encode(text))
+            return len(text)
         for message in messages:
             # Add tokens for role
-            total_tokens += len(self.encoding.encode(message.get("role", "")))
-            
+            total_tokens += token_len(message.get("role", ""))
+
             # Add tokens for content
             content = message.get("content", "")
             if content:
-                total_tokens += len(self.encoding.encode(str(content)))
-            
+                total_tokens += token_len(str(content))
+
             # Add tokens for tool calls
             if "tool_calls" in message:
                 for tool_call in message["tool_calls"]:
                     func_data = tool_call.get("function", {})
-                    total_tokens += len(self.encoding.encode(func_data.get("name", "")))
-                    total_tokens += len(self.encoding.encode(func_data.get("arguments", "")))
-            
+                    total_tokens += token_len(func_data.get("name", ""))
+                    total_tokens += token_len(func_data.get("arguments", ""))
+
             # Add tokens for function calls (legacy format)
             if "function_call" in message:
                 func_call = message["function_call"]
-                total_tokens += len(self.encoding.encode(func_call.get("name", "")))
-                total_tokens += len(self.encoding.encode(func_call.get("arguments", "")))
+                total_tokens += token_len(func_call.get("name", ""))
+                total_tokens += token_len(func_call.get("arguments", ""))
             
             # Add overhead per message (role markers, formatting)
             total_tokens += 4
@@ -94,7 +101,7 @@ class ContextManager:
                         "role": "system",
                         "content": [
                             {
-                                "type": "text",
+                                "type": "input_text",
                                 "text": (
                                     "You are a conversation summarizer for crypto trading agents. "
                                     "Summarize the key points, decisions, and context from the conversation below. "
@@ -108,7 +115,7 @@ class ContextManager:
                         "role": "user",
                         "content": [
                             {
-                                "type": "text",
+                                "type": "input_text",
                                 "text": f"Summarize this conversation:\n\n{conversation_text}",
                             }
                         ],

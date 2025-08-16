@@ -211,13 +211,13 @@ Respond in JSON format:
                     {
                         "role": "system",
                         "content": [
-                            {"type": "text", "text": "You are an expert trading analyst evaluating algorithmic trading decisions. Provide objective, data-driven analysis."}
+                            {"type": "input_text", "text": "You are an expert trading analyst evaluating algorithmic trading decisions. Provide objective, data-driven analysis."}
                         ],
                     },
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": analysis_prompt},
+                            {"type": "input_text", "text": analysis_prompt},
                         ],
                     },
                 ],
@@ -435,7 +435,7 @@ Return ONLY the improved system prompt, no explanations."""
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": improvement_prompt},
+                            {"type": "input_text", "text": improvement_prompt},
                         ],
                     }
                 ],

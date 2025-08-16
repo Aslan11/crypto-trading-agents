@@ -52,11 +52,16 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
             new_msg = {k: v for k, v in msg.items() if k != "content"}
             content = msg.get("content")
             if isinstance(content, list):
-                new_msg["content"] = content
+                new_content = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        part = {**part, "type": "input_text"}
+                    new_content.append(part)
+                new_msg["content"] = new_content
             elif content is None:
                 new_msg["content"] = []
             else:
-                new_msg["content"] = [{"type": "text", "text": str(content)}]
+                new_msg["content"] = [{"type": "input_text", "text": str(content)}]
             converted.append(new_msg)
         kwargs["input"] = converted
     if "reasoning_effort" in kwargs and "reasoning" not in kwargs:

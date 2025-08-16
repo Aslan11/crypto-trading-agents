@@ -205,22 +205,32 @@ Respond in JSON format:
 """
         
         try:
-            response = openai_client.chat.completions.create(
+            response = openai_client.responses.create(
                 model="gpt-5-mini",
-                messages=[
+                input=[
                     {
                         "role": "system",
-                        "content": "You are an expert trading analyst evaluating algorithmic trading decisions. Provide objective, data-driven analysis."
+                        "content": [
+                            {"type": "text", "text": "You are an expert trading analyst evaluating algorithmic trading decisions. Provide objective, data-driven analysis."}
+                        ],
                     },
                     {
                         "role": "user",
-                        "content": analysis_prompt
-                    }
+                        "content": [
+                            {"type": "text", "text": analysis_prompt},
+                        ],
+                    },
                 ],
-                reasoning_effort="high"
+                reasoning={"effort": "high"},
             )
-            
-            analysis_text = response.choices[0].message.content
+
+            analysis_parts: list[str] = []
+            for item in getattr(response, "output", []) or []:
+                if getattr(item, "type", "") == "message":
+                    for content in getattr(item, "content", []) or []:
+                        if getattr(content, "type", "") == "output_text":
+                            analysis_parts.append(content.text)
+            analysis_text = "".join(analysis_parts)
             # Extract JSON from response
             start_idx = analysis_text.find('{')
             end_idx = analysis_text.rfind('}') + 1
@@ -419,13 +429,26 @@ CRITICAL REQUIREMENTS TO PRESERVE:
 Return ONLY the improved system prompt, no explanations."""
 
         try:
-            response = openai_client.chat.completions.create(
+            response = openai_client.responses.create(
                 model="gpt-5-mini",
-                messages=[{"role": "user", "content": improvement_prompt}],
-                reasoning_effort="high"
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": improvement_prompt},
+                        ],
+                    }
+                ],
+                reasoning={"effort": "high"},
             )
-            
-            improved_prompt = response.choices[0].message.content.strip()
+
+            prompt_parts: list[str] = []
+            for item in getattr(response, "output", []) or []:
+                if getattr(item, "type", "") == "message":
+                    for content in getattr(item, "content", []) or []:
+                        if getattr(content, "type", "") == "output_text":
+                            prompt_parts.append(content.text)
+            improved_prompt = "".join(prompt_parts).strip()
             
             # Remove any markdown code blocks if present
             if improved_prompt.startswith("```") and improved_prompt.endswith("```"):

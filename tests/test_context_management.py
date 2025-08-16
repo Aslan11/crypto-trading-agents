@@ -96,9 +96,14 @@ class TestContextManager:
         # Mock OpenAI client
         mock_client = Mock()
         mock_response = Mock()
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].message.content = "Summary of previous conversation"
-        mock_client.chat.completions.create.return_value = mock_response
+        mock_content = Mock()
+        mock_content.type = "output_text"
+        mock_content.text = "Summary of previous conversation"
+        mock_message = Mock()
+        mock_message.type = "message"
+        mock_message.content = [mock_content]
+        mock_response.output = [mock_message]
+        mock_client.responses.create.return_value = mock_response
         
         manager = ContextManager(
             max_tokens=100,  # Very small to trigger summarization

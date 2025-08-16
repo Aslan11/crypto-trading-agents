@@ -6,7 +6,7 @@ import openai
 import logging
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from agents.utils import stream_chat_completion
+from agents.utils import stream_response
 from mcp.types import CallToolResult, TextContent
 from agents.context_manager import create_context_manager
 from datetime import timedelta
@@ -405,7 +405,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     ]
                 while True:
                     try:
-                        msg = stream_chat_completion(
+                        msg = stream_response(
                             openai_client,
                             model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                             messages=conversation,

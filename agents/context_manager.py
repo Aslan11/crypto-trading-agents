@@ -87,27 +87,43 @@ class ContextManager:
         conversation_text = self._format_messages_for_summary(messages)
         
         try:
-            response = self.openai_client.chat.completions.create(
+            response = self.openai_client.responses.create(
                 model="gpt-4o-mini",  # Use smaller model for summarization
-                messages=[
+                input=[
                     {
                         "role": "system",
-                        "content": (
-                            "You are a conversation summarizer for crypto trading agents. "
-                            "Summarize the key points, decisions, and context from the conversation below. "
-                            "Focus on trading decisions, market data, portfolio changes, and important insights. "
-                            "Keep the summary concise but preserve critical trading context."
-                        )
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "You are a conversation summarizer for crypto trading agents. "
+                                    "Summarize the key points, decisions, and context from the conversation below. "
+                                    "Focus on trading decisions, market data, portfolio changes, and important insights. "
+                                    "Keep the summary concise but preserve critical trading context."
+                                ),
+                            }
+                        ],
                     },
                     {
-                        "role": "user", 
-                        "content": f"Summarize this conversation:\n\n{conversation_text}"
-                    }
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Summarize this conversation:\n\n{conversation_text}",
+                            }
+                        ],
+                    },
                 ],
-                max_tokens=300,
-                temperature=0.1
+                max_output_tokens=300,
+                temperature=0.1,
             )
-            summary = response.choices[0].message.content
+            summary_parts: list[str] = []
+            for item in getattr(response, "output", []) or []:
+                if getattr(item, "type", "") == "message":
+                    for content in getattr(item, "content", []) or []:
+                        if getattr(content, "type", "") == "output_text":
+                            summary_parts.append(content.text)
+            summary = "".join(summary_parts)
             return f"[CONVERSATION SUMMARY] {summary}"
         except Exception as exc:
             logger.error("Failed to generate summary: %s", exc)

@@ -27,8 +27,8 @@ def format_log(data: Any) -> str:
 
 
 
-def stream_chat_completion(client, *, prefix: str = "", color: str = "", reset: str = "", **kwargs) -> dict:
-    """Stream chat completion tokens to stdout and return the final message.
+def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "", **kwargs) -> dict:
+    """Stream model responses to stdout and return the final message.
 
     Parameters
     ----------
@@ -41,52 +41,64 @@ def stream_chat_completion(client, *, prefix: str = "", color: str = "", reset: 
     reset:
         ANSI escape code used to reset the terminal color when streaming ends.
     kwargs:
-        Additional parameters forwarded to ``client.chat.completions.create``.
+        Additional parameters forwarded to ``client.responses.stream``.
     """
 
-    stream = client.chat.completions.create(stream=True, **kwargs)
+    # Support legacy ``messages`` and ``reasoning_effort`` parameters
+    if "messages" in kwargs and "input" not in kwargs:
+        messages = kwargs.pop("messages")
+        converted = []
+        for msg in messages:
+            new_msg = {k: v for k, v in msg.items() if k != "content"}
+            content = msg.get("content")
+            if isinstance(content, list):
+                new_msg["content"] = content
+            elif content is None:
+                new_msg["content"] = []
+            else:
+                new_msg["content"] = [{"type": "text", "text": str(content)}]
+            converted.append(new_msg)
+        kwargs["input"] = converted
+    if "reasoning_effort" in kwargs and "reasoning" not in kwargs:
+        kwargs["reasoning"] = {"effort": kwargs.pop("reasoning_effort")}
+
     content_parts: list[str] = []
-    tool_calls: dict[int, dict] = {}
+    tool_calls: list[dict] = []
     first_token = True
 
-    for chunk in stream:
-        choice = chunk.choices[0]
-        delta = getattr(choice, "delta", None)
-        if not delta:
-            continue
-        token = getattr(delta, "content", None)
-        if token:
-            if first_token:
-                if prefix or color:
-                    print(f"{color}{prefix}", end="", flush=True)
-                first_token = False
-            print(token, end="", flush=True)
-            content_parts.append(token)
-        for tc in getattr(delta, "tool_calls", []) or []:
-            entry = tool_calls.setdefault(
-                getattr(tc, "index", 0),
-                {
-                    "id": tc.id,
-                    "type": getattr(tc, "type", "function"),
-                    "function": {"name": "", "arguments": ""},
-                },
-            )
-            name = getattr(tc.function, "name", "")
-            if name:
-                entry["function"]["name"] += name
-            args = getattr(tc.function, "arguments", "")
-            if args:
-                entry["function"]["arguments"] += args
+    with client.responses.stream(**kwargs) as stream:
+        for event in stream:
+            if event.type == "response.output_text.delta":
+                token = event.delta
+                if first_token:
+                    if prefix or color:
+                        print(f"{color}{prefix}", end="", flush=True)
+                    first_token = False
+                print(token, end="", flush=True)
+                content_parts.append(token)
+
+        final = stream.get_final_response()
 
     if not first_token and reset:
         print(reset)
     else:
         print()
+
+    for item in getattr(final, "output", []) or []:
+        if getattr(item, "type", "") == "function_call":
+            tool_calls.append(
+                {
+                    "id": getattr(item, "id", None) or item.call_id,
+                    "type": "function",
+                    "function": {"name": item.name, "arguments": item.arguments},
+                }
+            )
+
     message: dict = {"role": "assistant", "content": "".join(content_parts)}
     if tool_calls:
-        message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+        message["tool_calls"] = tool_calls
     return message
 
 
-__all__ = ["print_banner", "format_log", "stream_chat_completion"]
+__all__ = ["print_banner", "format_log", "stream_response"]
 

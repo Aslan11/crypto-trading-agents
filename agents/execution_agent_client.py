@@ -66,12 +66,16 @@ SYSTEM_PROMPT = (
     "• Consider current portfolio, performance metrics, and risk exposure\n"
     "• Apply user risk tolerance and trading style preferences\n\n"
     
-    "RISK MANAGEMENT:\n"
+    "RISK MANAGEMENT & FINANCIAL DISCIPLINE:\n"
+    "• ALWAYS use the provided portfolio data to know exact cash available and current positions\n"
+    "• Calculate total cost of ALL BUY orders (qty * price * 1.02 for slippage) and ensure it's under available cash\n"
+    "• Never place orders that would exceed available funds - be conservative with position sizing\n"
+    "• For batch orders, sum up all BUY order costs and verify total is within the cash shown in portfolio data\n"
     "• Apply user risk tolerance and trading style preferences when making decisions\n"
-    "• Determine appropriate position sizes and risk limits based on user preferences\n"
-    "• Verify sufficient cash for buys and holdings for sells\n"
-    "• Set profit-taking and stop-loss levels appropriate for user's risk profile\n"
-    "• Account for slippage in order sizing\n\n"
+    "• Only SELL positions you actually own - check current holdings in the provided portfolio data\n"
+    "• ALL ORDERS MUST BE TYPE 'market' - NEVER use 'limit' orders\n"
+    "• Leave some cash buffer (5-10%) for market volatility and slippage\n"
+    "• Pay close attention to the 'cash' field in the portfolio data provided to you\n\n"
     
     "ORDER FORMAT:\n"
     "Single order:\n"
@@ -438,19 +442,25 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                             is_batch = "orders" in intent
                             order_count = len(intent["orders"]) if is_batch else 1
                             
-                            print(
-                                f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} "
-                                f"({'batch: ' + str(order_count) + ' orders' if is_batch else 'single order'}) "
-                                f"{RESET}"
-                            )
+                            # DETAILED LOGGING: Show raw input and output
+                            print(f"\n" + "="*80)
+                            print(f"{ORANGE}[ExecutionAgent] 🔄 PLACE_MOCK_ORDER CALL{RESET}")
+                            print(f"📥 RAW INPUT: {json.dumps(func_args, indent=2)}")
+                            print("="*80)
                             
                             result = await session.call_tool(func_name, func_args)
+                            result_data = _tool_result_data(result)
+                            
+                            # DETAILED LOGGING: Show raw output
+                            print(f"\n📤 RAW OUTPUT: {json.dumps(result_data, indent=2)}")
+                            print("="*80 + "\n")
+                            
                             conversation.append(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tool_call["id"],
                                     "name": func_name,
-                                    "content": json.dumps(_tool_result_data(result)),
+                                    "content": json.dumps(result_data),
                                 }
                             )
                         continue
@@ -471,15 +481,24 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         if func_name != "place_mock_order":
                             print(f"[ExecutionAgent] Tool not allowed in analysis phase: {func_name}")
                             continue
-                        print(
-                            f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} {func_args}{RESET}"
-                        )
+                        # DETAILED LOGGING: Show raw input and output
+                        print(f"\n" + "="*80)
+                        print(f"{ORANGE}[ExecutionAgent] 🔄 PLACE_MOCK_ORDER CALL (function_call){RESET}")
+                        print(f"📥 RAW INPUT: {json.dumps(func_args, indent=2)}")
+                        print("="*80)
+                        
                         result = await session.call_tool(func_name, func_args)
+                        result_data = _tool_result_data(result)
+                        
+                        # DETAILED LOGGING: Show raw output
+                        print(f"\n📤 RAW OUTPUT: {json.dumps(result_data, indent=2)}")
+                        print("="*80 + "\n")
+                        
                         conversation.append(
                             {
                                 "role": "function",
                                 "name": func_name,
-                                "content": json.dumps(_tool_result_data(result)),
+                                "content": json.dumps(result_data),
                             }
                         )
                         continue

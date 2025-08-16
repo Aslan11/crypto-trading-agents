@@ -174,13 +174,32 @@ async def set_user_preferences(preferences: Dict[str, Any]) -> Dict[str, str]:
     Parameters
     ----------
     preferences:
-        Dictionary of user preferences including risk_tolerance, experience_level, etc.
+        Dictionary of user preferences. Required keys:
+        - experience_level: 'beginner', 'intermediate', or 'advanced'
+        - risk_tolerance: 'low', 'medium', or 'high'  
+        - trading_style: 'conservative', 'balanced', or 'aggressive'
+        Example: {"experience_level": "intermediate", "risk_tolerance": "high", "trading_style": "aggressive"}
 
     Returns
     -------
     Dict[str, str]
         Confirmation of preferences set.
     """
+    # Validate preferences
+    if not preferences or not isinstance(preferences, dict):
+        return {
+            "status": "error",
+            "message": "Preferences parameter is required and must be a non-empty dictionary"
+        }
+    
+    required_keys = ["experience_level", "risk_tolerance", "trading_style"]
+    missing_keys = [key for key in required_keys if key not in preferences]
+    if missing_keys:
+        return {
+            "status": "error", 
+            "message": f"Missing required preference keys: {missing_keys}. Required: {required_keys}"
+        }
+    
     client = await get_temporal_client()
     wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
     logger.info("Setting user preferences: %s", preferences)

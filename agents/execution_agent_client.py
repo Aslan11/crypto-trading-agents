@@ -64,7 +64,9 @@ SYSTEM_PROMPT = (
     "• Combine new tick data with your conversation history for complete market picture\n"
     "• Analyze price momentum, trends, support/resistance, and volume patterns\n"
     "• Consider current portfolio, performance metrics, and risk exposure\n"
-    "• Apply user risk tolerance and trading style preferences\n\n"
+    "• Apply user risk tolerance and trading style preferences\n"
+    "• CRITICAL: Always extract and use the LATEST market prices from the historical tick data\n"
+    "• NEVER use example prices or hardcoded values - only use real-time data provided to you\n\n"
     
     "RISK MANAGEMENT & FINANCIAL DISCIPLINE:\n"
     "• ALWAYS use the provided portfolio data to know exact cash available and current positions\n"
@@ -78,13 +80,14 @@ SYSTEM_PROMPT = (
     "• Pay close attention to the 'cash' field in the portfolio data provided to you\n\n"
     
     "ORDER FORMAT:\n"
-    "CRITICAL: Always use FULL symbol names exactly as provided (e.g., 'BTC/USD', 'ETH/USD', 'DOGE/USD')\n\n"
-    "Single order (array with one order):\n"
-    '{"orders": [{"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": 50000, "type": "market"}]}\n\n'
+    "CRITICAL: Always use FULL symbol names exactly as provided (e.g., 'BTC/USD', 'ETH/USD', 'DOGE/USD')\n"
+    "CRITICAL: NEVER use the example prices below - ALWAYS use current market prices from the provided data\n\n"
+    "Single order (array with one order) - EXAMPLE FORMAT ONLY:\n"
+    '{"orders": [{"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": CURRENT_MARKET_PRICE, "type": "market"}]}\n\n'
     
-    "Multiple orders (array with multiple orders):\n"
-    '{"orders": [{"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": 50000, "type": "market"}, '
-    '{"symbol": "ETH/USD", "side": "SELL", "qty": 0.1, "price": 3000, "type": "market"}]}\n\n'
+    "Multiple orders (array with multiple orders) - EXAMPLE FORMAT ONLY:\n"
+    '{"orders": [{"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": CURRENT_MARKET_PRICE, "type": "market"}, '
+    '{"symbol": "ETH/USD", "side": "SELL", "qty": 0.1, "price": CURRENT_MARKET_PRICE, "type": "market"}]}\n\n'
     
     "Execute trades decisively using `place_mock_order`. Report completed actions and reasoning."
 )
@@ -438,10 +441,12 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                                 print(f"[ExecutionAgent] Tool not allowed in analysis phase: {func_name}")
                                 continue
                             
-                            # Check if this is a batch order
-                            intent = func_args.get("intent", {})
-                            is_batch = "orders" in intent
-                            order_count = len(intent["orders"]) if is_batch else 1
+                            # Log tool usage
+                            order_count = len(func_args.get("orders", []))
+                            print(
+                                f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} "
+                                f"({order_count} order{'s' if order_count != 1 else ''}){RESET}"
+                            )
                             
                             result = await session.call_tool(func_name, func_args)
                             result_data = _tool_result_data(result)
@@ -472,6 +477,14 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         if func_name != "place_mock_order":
                             print(f"[ExecutionAgent] Tool not allowed in analysis phase: {func_name}")
                             continue
+                        
+                        # Log tool usage
+                        order_count = len(func_args.get("orders", []))
+                        print(
+                            f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} "
+                            f"({order_count} order{'s' if order_count != 1 else ''}){RESET}"
+                        )
+                        
                         result = await session.call_tool(func_name, func_args)
                         result_data = _tool_result_data(result)
                         

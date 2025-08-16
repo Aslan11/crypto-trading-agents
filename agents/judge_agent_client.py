@@ -385,7 +385,7 @@ Respond in JSON format:
     async def _improve_system_prompt(self, current_prompt: str, performance_report: Dict, context: Dict) -> str:
         """Use LLM to improve the system prompt based on performance analysis."""
         
-        improvement_prompt = f"""You are a prompt engineering expert tasked with improving a trading agent's system prompt based on performance analysis.
+        improvement_prompt = f"""You are a prompt engineering expert tasked with improving a trading agent's system prompt based on performance analysis and user preferences.
 
 CURRENT SYSTEM PROMPT:
 ```
@@ -404,12 +404,11 @@ CONTEXT & ISSUES IDENTIFIED:
 
 INSTRUCTIONS:
 1. Analyze the current prompt and performance data
-2. Identify specific weaknesses in the current prompt that correlate with poor performance
-3. Improve the prompt while maintaining its core structure and autonomous nature
-4. Focus on the specific issues identified in the context
+2. If user preferences are provided (risk tolerance, trading style, experience level), these should HEAVILY influence how you rewrite the prompt
+3. Make the prompt reflect the user's preferences through concrete behavioral changes, not just superficial mentions
+4. The trading agent's behavior should clearly align with the user's stated risk tolerance, trading style, and experience level
 5. Keep the prompt length reasonable (not too verbose)
 6. Ensure the agent remains fully autonomous and doesn't ask for confirmation
-7. Maintain emphasis on using complete memory of all ticks from conversation history
 
 CRITICAL REQUIREMENTS TO PRESERVE:
 - Full autonomy (no confirmation requests)

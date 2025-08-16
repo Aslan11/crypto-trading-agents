@@ -148,7 +148,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
     logger.info("Connecting to MCP server at %s", url)
     
     # Initialize context manager
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+    model = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
     context_manager = create_context_manager(model=model, openai_client=_openai_client)
     
     async with streamablehttp_client(url) as (read_stream, write_stream, _):

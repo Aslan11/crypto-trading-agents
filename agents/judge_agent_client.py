@@ -217,8 +217,7 @@ Respond in JSON format:
                         "content": analysis_prompt
                     }
                 ],
-                max_completion_tokens=800,
-                temperature=0.1
+                reasoning_effort="high"
             )
             
             analysis_text = response.choices[0].message.content
@@ -421,9 +420,9 @@ Return ONLY the improved system prompt, no explanations."""
 
         try:
             response = openai_client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                model="gpt-5-mini",
                 messages=[{"role": "user", "content": improvement_prompt}],
-                temperature=0.1  # Low temperature for consistent improvements
+                reasoning_effort="high"
             )
             
             improved_prompt = response.choices[0].message.content.strip()

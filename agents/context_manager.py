@@ -227,6 +227,7 @@ def create_context_manager(
     model_limits = {
         "gpt-4o": 120000,
         "gpt-4o-mini": 120000,
+        "gpt-5-mini": 400000,
         "gpt-4": 8000,
         "gpt-3.5-turbo": 4000,
     }

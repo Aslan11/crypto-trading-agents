@@ -257,7 +257,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
     )
     
     # Initialize context manager
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+    model = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
     context_manager = create_context_manager(model=model, openai_client=openai_client)
     symbols: Set[str] = set()
     current_preferences: dict = {}
@@ -411,6 +411,8 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                             messages=conversation,
                             tools=openai_tools,
                             tool_choice="auto",
+                            reasoning_effort="medium",
+                            verbosity="low",
                             prefix="[ExecutionAgent] Decision: ",
                             color=PINK,
                             reset=RESET,

@@ -78,12 +78,13 @@ SYSTEM_PROMPT = (
     "• Pay close attention to the 'cash' field in the portfolio data provided to you\n\n"
     
     "ORDER FORMAT:\n"
+    "CRITICAL: Always use FULL symbol names exactly as provided (e.g., 'BTC/USD', 'ETH/USD', 'DOGE/USD')\n\n"
     "Single order:\n"
-    '{"intent": {"symbol": "BTC", "side": "BUY", "qty": 100, "price": 50000, "type": "market"}}\n\n'
+    '{"intent": {"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": 50000, "type": "market"}}\n\n'
     
     "Batch orders (preferred for multiple trades):\n"
-    '{"intent": {"orders": [{"symbol": "BTC", "side": "BUY", "qty": 100, "price": 50000, "type": "market"}, '
-    '{"symbol": "ETH", "side": "SELL", "qty": 50, "price": 3000, "type": "limit"}]}}\n\n'
+    '{"intent": {"orders": [{"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": 50000, "type": "market"}, '
+    '{"symbol": "ETH/USD", "side": "SELL", "qty": 0.1, "price": 3000, "type": "market"}]}}\n\n'
     
     "Execute trades decisively using `place_mock_order`. Report completed actions and reasoning."
 )

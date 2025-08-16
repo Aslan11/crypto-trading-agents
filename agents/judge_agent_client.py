@@ -217,7 +217,7 @@ Respond in JSON format:
                         "content": analysis_prompt
                     }
                 ],
-                max_tokens=800,
+                max_completion_tokens=800,
                 temperature=0.1
             )
             

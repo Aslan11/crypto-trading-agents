@@ -196,7 +196,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         "type": "function",
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.inputSchema,
+                        "input_schema": t.inputSchema,
                         "strict": True,
                     }
                     for t in tools

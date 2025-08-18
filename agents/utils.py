@@ -36,22 +36,42 @@ def _normalize_schema(schema: dict | None) -> dict:
     if not isinstance(schema, dict):
         return {"type": "object", "properties": {}, "required": []}
 
+    schema_type = schema.get("type", "object")
+
+    # Arrays need their item schema normalized but don't have properties/required
+    if schema_type == "array":
+        items = schema.get("items")
+        if isinstance(items, dict):
+            items = _normalize_schema(items)
+        normalized = {**schema, "type": "array", "items": items}
+        return normalized
+
+    # Primitives require only their type
+    if schema_type != "object":
+        return {**schema, "type": schema_type}
+
     props = schema.get("properties") or {}
     if not isinstance(props, dict):
         props = {}
 
+    normalized_props = {}
+    for key, subschema in props.items():
+        if isinstance(subschema, dict):
+            normalized_props[key] = _normalize_schema(subschema)
+        else:
+            normalized_props[key] = subschema
+
     required = schema.get("required") or []
     if not isinstance(required, list):
         required = []
-
-    for key in props.keys():
+    for key in normalized_props.keys():
         if key not in required:
             required.append(key)
 
-    normalized = {
+    normalized: dict = {
         **schema,
-        "type": schema.get("type", "object"),
-        "properties": props,
+        "type": schema_type,
+        "properties": normalized_props,
         "required": required,
     }
     if "additionalProperties" not in normalized:

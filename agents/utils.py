@@ -49,19 +49,22 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
         messages = kwargs.pop("messages")
         converted = []
         for msg in messages:
+            role = msg.get("role")
             new_msg = {k: v for k, v in msg.items() if k != "content"}
             content = msg.get("content")
             if isinstance(content, list):
                 new_content = []
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "text":
-                        part = {**part, "type": "input_text"}
+                        part_type = "output_text" if role == "assistant" else "input_text"
+                        part = {**part, "type": part_type}
                     new_content.append(part)
                 new_msg["content"] = new_content
             elif content is None:
                 new_msg["content"] = []
             else:
-                new_msg["content"] = [{"type": "input_text", "text": str(content)}]
+                part_type = "output_text" if role == "assistant" else "input_text"
+                new_msg["content"] = [{"type": part_type, "text": str(content)}]
             converted.append(new_msg)
         kwargs["input"] = converted
     if "reasoning_effort" in kwargs and "reasoning" not in kwargs:

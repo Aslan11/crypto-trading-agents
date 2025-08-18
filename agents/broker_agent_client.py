@@ -194,11 +194,10 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 tools_payload = [
                     {
                         "type": "function",
-                        "function": {
-                            "name": t.name,
-                            "description": t.description,
-                            "input_schema": t.inputSchema,
-                        },
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.inputSchema,
+                        "strict": True,
                     }
                     for t in tools
                 ]

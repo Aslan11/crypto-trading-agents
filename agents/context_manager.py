@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, Dict, List
-import tiktoken
+try:  # pragma: no cover - optional dependency
+    import tiktoken
+except Exception:  # pragma: no cover - tiktoken may be unavailable
+    tiktoken = None
 import openai
 
 logger = logging.getLogger(__name__)
@@ -37,14 +40,17 @@ class ContextManager:
         self.openai_client = openai_client
         
         # Initialize tokenizer
-        try:
-            self.encoding = tiktoken.encoding_for_model(model)
-        except Exception:
-            # Fallback for unknown models or when encoding requires network access
+        if tiktoken is not None:
             try:
-                self.encoding = tiktoken.get_encoding("cl100k_base")
+                self.encoding = tiktoken.encoding_for_model(model)
             except Exception:
-                self.encoding = None
+                # Fallback for unknown models or when encoding requires network access
+                try:
+                    self.encoding = tiktoken.get_encoding("cl100k_base")
+                except Exception:
+                    self.encoding = None
+        else:  # pragma: no cover - tiktoken missing
+            self.encoding = None
     
     def count_tokens(self, messages: List[Dict[str, Any]]) -> int:
         """Count tokens in a conversation."""

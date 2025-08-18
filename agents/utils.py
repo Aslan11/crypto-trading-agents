@@ -67,15 +67,31 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
     if "reasoning_effort" in kwargs and "reasoning" not in kwargs:
         kwargs["reasoning"] = {"effort": kwargs.pop("reasoning_effort")}
 
-    # Convert legacy Chat Completions tool format
+    # Convert legacy Chat Completions tool format to Responses API shape
     if "tools" in kwargs:
-        converted_tools = []
+        converted_tools: list[dict] = []
         for tool in kwargs["tools"]:
             if isinstance(tool, dict) and tool.get("type") == "function":
-                fn = dict(tool.get("function", {}))
-                if "parameters" in fn and "input_schema" not in fn:
-                    fn["input_schema"] = fn.pop("parameters")
-                converted_tools.append({"type": "function", "function": fn})
+                # Chat Completions style uses nested "function" object
+                if "function" in tool:
+                    fn = dict(tool["function"])
+                    schema = fn.get("input_schema") or fn.get("parameters") or {}
+                    converted_tools.append(
+                        {
+                            "type": "function",
+                            "name": fn.get("name"),
+                            "description": fn.get("description"),
+                            "parameters": schema,
+                            "strict": fn.get("strict", True),
+                        }
+                    )
+                else:
+                    # Already Responses API style but may use "input_schema"
+                    if "input_schema" in tool and "parameters" not in tool:
+                        tool = {**tool, "parameters": tool.pop("input_schema")}
+                    if "strict" not in tool:
+                        tool = {**tool, "strict": True}
+                    converted_tools.append(tool)
             else:
                 converted_tools.append(tool)
         kwargs["tools"] = converted_tools

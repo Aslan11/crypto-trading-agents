@@ -393,16 +393,15 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 order_tool = next((t for t in tools if t.name == "place_mock_order"), None)
                 openai_tools = []
                 if order_tool:
-                    openai_tools = [
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": order_tool.name,
-                                "description": order_tool.description,
-                                "input_schema": order_tool.inputSchema,
-                            },
-                        }
-                    ]
+                openai_tools = [
+                    {
+                        "type": "function",
+                        "name": order_tool.name,
+                        "description": order_tool.description,
+                        "parameters": order_tool.inputSchema,
+                        "strict": True,
+                    }
+                ]
                 while True:
                     try:
                         msg = stream_response(

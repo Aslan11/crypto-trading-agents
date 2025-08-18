@@ -74,8 +74,10 @@ def _normalize_schema(schema: dict | None) -> dict:
         "properties": normalized_props,
         "required": required,
     }
-    if "additionalProperties" not in normalized:
-        normalized["additionalProperties"] = False
+    # The Responses API expects all object schemas to explicitly disable
+    # unknown properties. We always set ``additionalProperties`` to ``False``
+    # even if upstream definitions specify otherwise.
+    normalized["additionalProperties"] = False
     return normalized
 
 

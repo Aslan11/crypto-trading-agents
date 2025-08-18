@@ -24,6 +24,41 @@ def format_log(data: Any) -> str:
     return pformat(data, width=60)
 
 
+def _normalize_schema(schema: dict | None) -> dict:
+    """Ensure tool schemas satisfy Responses API validation rules.
+
+    The Responses API requires ``required`` to list every property and
+    ``additionalProperties`` to be explicitly declared. This helper inserts
+    any missing keys so upstream tools don't need to worry about schema
+    completeness.
+    """
+
+    if not isinstance(schema, dict):
+        return {"type": "object", "properties": {}, "required": []}
+
+    props = schema.get("properties") or {}
+    if not isinstance(props, dict):
+        props = {}
+
+    required = schema.get("required") or []
+    if not isinstance(required, list):
+        required = []
+
+    for key in props.keys():
+        if key not in required:
+            required.append(key)
+
+    normalized = {
+        **schema,
+        "type": schema.get("type", "object"),
+        "properties": props,
+        "required": required,
+    }
+    if "additionalProperties" not in normalized:
+        normalized["additionalProperties"] = False
+    return normalized
+
+
 
 
 
@@ -78,9 +113,7 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
                 # Chat Completions style uses nested "function" object
                 if "function" in tool:
                     fn = dict(tool["function"])
-                    schema = fn.get("input_schema") or fn.get("parameters") or {}
-                    if isinstance(schema, dict) and "additionalProperties" not in schema:
-                        schema = {**schema, "additionalProperties": False}
+                    schema = _normalize_schema(fn.get("input_schema") or fn.get("parameters"))
                     converted_tools.append(
                         {
                             "type": "function",
@@ -93,12 +126,10 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
                 else:
                     # Already Responses API style but may use "input_schema"
                     if "input_schema" in tool and "parameters" not in tool:
-                        schema = tool.pop("input_schema") or {}
-                        if isinstance(schema, dict) and "additionalProperties" not in schema:
-                            schema = {**schema, "additionalProperties": False}
+                        schema = _normalize_schema(tool.pop("input_schema"))
                         tool = {**tool, "parameters": schema}
-                    if "parameters" in tool and isinstance(tool["parameters"], dict) and "additionalProperties" not in tool["parameters"]:
-                        tool = {**tool, "parameters": {**tool["parameters"], "additionalProperties": False}}
+                    if "parameters" in tool and isinstance(tool["parameters"], dict):
+                        tool = {**tool, "parameters": _normalize_schema(tool["parameters"])}
                     if "strict" not in tool:
                         tool = {**tool, "strict": True}
                     converted_tools.append(tool)

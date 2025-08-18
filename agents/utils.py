@@ -79,6 +79,8 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
                 if "function" in tool:
                     fn = dict(tool["function"])
                     schema = fn.get("input_schema") or fn.get("parameters") or {}
+                    if isinstance(schema, dict) and "additionalProperties" not in schema:
+                        schema = {**schema, "additionalProperties": False}
                     converted_tools.append(
                         {
                             "type": "function",
@@ -91,7 +93,12 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
                 else:
                     # Already Responses API style but may use "input_schema"
                     if "input_schema" in tool and "parameters" not in tool:
-                        tool = {**tool, "parameters": tool.pop("input_schema")}
+                        schema = tool.pop("input_schema") or {}
+                        if isinstance(schema, dict) and "additionalProperties" not in schema:
+                            schema = {**schema, "additionalProperties": False}
+                        tool = {**tool, "parameters": schema}
+                    if "parameters" in tool and isinstance(tool["parameters"], dict) and "additionalProperties" not in tool["parameters"]:
+                        tool = {**tool, "parameters": {**tool["parameters"], "additionalProperties": False}}
                     if "strict" not in tool:
                         tool = {**tool, "strict": True}
                     converted_tools.append(tool)

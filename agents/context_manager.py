@@ -9,7 +9,11 @@ try:  # pragma: no cover - optional dependency
     import tiktoken
 except Exception:  # pragma: no cover - tiktoken may be unavailable
     tiktoken = None
-import openai
+# OpenAI is optional; context management can function without it
+try:  # pragma: no cover - optional dependency
+    import openai
+except Exception:  # pragma: no cover - openai may be unavailable
+    openai = None
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +26,7 @@ class ContextManager:
         max_tokens: int = 8000,
         summary_threshold: int = 6000,
         min_recent_messages: int = 5,
-        openai_client: openai.OpenAI | None = None
+        openai_client: Any = None
     ):
         """Initialize context manager.
         
@@ -249,7 +253,7 @@ class ContextManager:
 
 def create_context_manager(
     model: str = "gpt-4o",
-    openai_client: openai.OpenAI | None = None
+    openai_client: Any = None
 ) -> ContextManager:
     """Factory function to create a context manager with sensible defaults."""
     # Model-specific token limits (conservative estimates)

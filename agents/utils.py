@@ -107,7 +107,14 @@ def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "
         converted = []
         for msg in messages:
             role = msg.get("role")
-            new_msg = {k: v for k, v in msg.items() if k != "content"}
+            # ``tool_calls`` and ``function_call`` are metadata from previous
+            # Responses or Chat Completions turns that should not be forwarded
+            # back to the API as part of the conversation history.
+            new_msg = {
+                k: v
+                for k, v in msg.items()
+                if k not in {"content", "tool_calls", "function_call"}
+            }
             content = msg.get("content")
             if isinstance(content, list):
                 new_content = []

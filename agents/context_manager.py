@@ -39,34 +39,62 @@ class ContextManager:
         # Initialize tokenizer
         try:
             self.encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            # Fallback for unknown models
-            self.encoding = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            try:
+                self.encoding = tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                self.encoding = None
     
     def count_tokens(self, messages: List[Dict[str, Any]]) -> int:
         """Count tokens in a conversation."""
         total_tokens = 0
         for message in messages:
             # Add tokens for role
-            total_tokens += len(self.encoding.encode(message.get("role", "")))
+            if self.encoding:
+                total_tokens += len(self.encoding.encode(message.get("role", "")))
+            else:
+                total_tokens += len(message.get("role", ""))
             
             # Add tokens for content
             content = message.get("content", "")
-            if content:
-                total_tokens += len(self.encoding.encode(str(content)))
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        output = part.get("output", "")
+                        if self.encoding:
+                            total_tokens += len(self.encoding.encode(str(output)))
+                            total_tokens += len(
+                                self.encoding.encode(str(part.get("tool_call_id", "")))
+                            )
+                        else:
+                            total_tokens += len(str(output))
+                            total_tokens += len(str(part.get("tool_call_id", "")))
+            elif content:
+                if self.encoding:
+                    total_tokens += len(self.encoding.encode(str(content)))
+                else:
+                    total_tokens += len(str(content))
             
             # Add tokens for tool calls
             if "tool_calls" in message:
                 for tool_call in message["tool_calls"]:
                     func_data = tool_call.get("function", {})
-                    total_tokens += len(self.encoding.encode(func_data.get("name", "")))
-                    total_tokens += len(self.encoding.encode(func_data.get("arguments", "")))
+                    if self.encoding:
+                        total_tokens += len(self.encoding.encode(func_data.get("name", "")))
+                        total_tokens += len(self.encoding.encode(func_data.get("arguments", "")))
+                    else:
+                        total_tokens += len(func_data.get("name", ""))
+                        total_tokens += len(func_data.get("arguments", ""))
             
             # Add tokens for function calls (legacy format)
             if "function_call" in message:
                 func_call = message["function_call"]
-                total_tokens += len(self.encoding.encode(func_call.get("name", "")))
-                total_tokens += len(self.encoding.encode(func_call.get("arguments", "")))
+                if self.encoding:
+                    total_tokens += len(self.encoding.encode(func_call.get("name", "")))
+                    total_tokens += len(self.encoding.encode(func_call.get("arguments", "")))
+                else:
+                    total_tokens += len(func_call.get("name", ""))
+                    total_tokens += len(func_call.get("arguments", ""))
             
             # Add overhead per message (role markers, formatting)
             total_tokens += 4
@@ -129,9 +157,13 @@ class ContextManager:
                     func_name = tool_call.get("function", {}).get("name", "")
                     formatted.append(f"Assistant called tool: {func_name}")
             elif role == "tool":
-                # Format tool responses
                 tool_name = msg.get("name", "unknown_tool")
                 formatted.append(f"Tool {tool_name} returned data")
+            elif role == "developer":
+                parts = msg.get("content") or []
+                for part in parts:
+                    if isinstance(part, dict) and part.get("type") == "tool_result":
+                        formatted.append("Tool returned data")
             else:
                 # Regular message content
                 if content:

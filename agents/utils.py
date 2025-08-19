@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pprint import pformat
 from typing import Any
+import json
 
 
 def print_banner(name: str, purpose: str) -> None:
@@ -27,7 +28,7 @@ def format_log(data: Any) -> str:
 
 
 
-def stream_chat_completion(client, *, prefix: str = "", color: str = "", reset: str = "", **kwargs) -> dict:
+def stream_response(client, *, prefix: str = "", color: str = "", reset: str = "", **kwargs) -> dict:
     """Stream chat completion tokens to stdout and return the final message.
 
     Parameters
@@ -43,6 +44,33 @@ def stream_chat_completion(client, *, prefix: str = "", color: str = "", reset: 
     kwargs:
         Additional parameters forwarded to ``client.chat.completions.create``.
     """
+
+    # Translate legacy tool messages to new developer format expected by OpenAI
+    messages = kwargs.get("messages", []) or []
+    converted: list[dict] = []
+    for msg in messages:
+        if msg.get("role") == "tool":
+            output = msg.get("content")
+            if isinstance(output, str):
+                try:
+                    output = json.loads(output)
+                except Exception:
+                    pass
+            converted.append(
+                {
+                    "role": "developer",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_call_id": msg.get("tool_call_id"),
+                            "output": output,
+                        }
+                    ],
+                }
+            )
+        else:
+            converted.append(msg)
+    kwargs["messages"] = converted
 
     stream = client.chat.completions.create(stream=True, **kwargs)
     content_parts: list[str] = []
@@ -88,5 +116,5 @@ def stream_chat_completion(client, *, prefix: str = "", color: str = "", reset: 
     return message
 
 
-__all__ = ["print_banner", "format_log", "stream_chat_completion"]
+__all__ = ["print_banner", "format_log", "stream_response"]
 

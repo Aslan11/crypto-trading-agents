@@ -13,7 +13,7 @@ except Exception:  # pragma: no cover - optional dependency
     _openai_client = None
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from agents.utils import stream_chat_completion
+from agents.utils import stream_response
 from agents.context_manager import create_context_manager
 
 ORANGE = "\033[33m"
@@ -163,7 +163,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
 
             if _openai_client is not None:
                 try:
-                    msg_dict = stream_chat_completion(
+                    msg_dict = stream_response(
                         _openai_client,
                         model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                         messages=conversation,
@@ -204,7 +204,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                 ]
 
                 try:
-                    msg_dict = stream_chat_completion(
+                    msg_dict = stream_response(
                         _openai_client,
                         model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                         messages=conversation,
@@ -235,14 +235,19 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                             continue
                         conversation.append(
                             {
-                                "role": "tool",
-                                "tool_call_id": call.get("id"),
-                                "content": json.dumps(result_data),
+                                "role": "developer",
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_call_id": call.get("id"),
+                                        "output": result_data,
+                                    }
+                                ],
                             }
                         )
 
                     try:
-                        followup = stream_chat_completion(
+                        followup = stream_response(
                             _openai_client,
                             model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                             messages=conversation,
@@ -276,7 +281,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         continue
                     conversation.append({"role": "function", "name": func_name, "content": json.dumps(result_data)})
                     try:
-                        followup = stream_chat_completion(
+                        followup = stream_response(
                             _openai_client,
                             model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                             messages=conversation,

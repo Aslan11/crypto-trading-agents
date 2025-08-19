@@ -31,6 +31,7 @@ class TestContextManager:
                 "content": None,
                 "tool_calls": [
                     {
+                        "id": "call_1",
                         "function": {
                             "name": "get_portfolio_status",
                             "arguments": "{}"
@@ -39,9 +40,14 @@ class TestContextManager:
                 ]
             },
             {
-                "role": "tool",
-                "name": "get_portfolio_status", 
-                "content": '{"cash": 100000, "positions": {}}'
+                "role": "developer",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_call_id": "call_1",
+                        "output": {"cash": 100000, "positions": {}}
+                    }
+                ]
             }
         ]
         
@@ -60,7 +66,16 @@ class TestContextManager:
                 "role": "assistant",
                 "tool_calls": [{"function": {"name": "test_tool"}}]
             },
-            {"role": "tool", "name": "test_tool", "content": "result"}
+            {
+                "role": "developer",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_call_id": "test_call",
+                        "output": "result"
+                    }
+                ]
+            }
         ]
         
         formatted = manager._format_messages_for_summary(messages)
@@ -72,7 +87,7 @@ class TestContextManager:
         assert "Assistant: Assistant response" in formatted
         # Should format tool calls
         assert "Assistant called tool: test_tool" in formatted
-        assert "Tool test_tool returned data" in formatted
+        assert "Tool returned data" in formatted
     
     @pytest.mark.asyncio
     async def test_context_management_no_summarization_needed(self):

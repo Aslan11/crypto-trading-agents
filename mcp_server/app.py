@@ -16,17 +16,29 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.requests import Request
 
 # Import workflow classes
-from tools.market_data import SubscribeCEXStream
+from tools.market_data import SubscribeCEXStream, HistoricalDataLoaderWorkflow
 from tools.strategy_signal import EvaluateStrategyMomentum
-from tools.execution import PlaceMockOrder, OrderIntent
+from tools.execution import PlaceMockOrder, PlaceMockBatchOrder, OrderIntent, BatchOrderIntent
 from agents.workflows import (
     ExecutionLedgerWorkflow,
     BrokerAgentWorkflow,
+    JudgeAgentWorkflow,
 )
+from tools.agent_logger import AgentLogger
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+# Initialize market tick logger for data continuity monitoring
+market_tick_logger = AgentLogger("market_data")
+
+# Track tick statistics for continuity monitoring
+tick_stats = {
+    "symbols": {},  # symbol -> {count, last_timestamp, first_timestamp}
+    "total_ticks": 0,
+    "session_start": int(datetime.now(timezone.utc).timestamp())
+}
 
 # Initialize FastMCP
 app = FastMCP("crypto-trading-server")
@@ -97,11 +109,11 @@ async def subscribe_cex_stream(
 
 @app.tool(annotations={"title": "Start Market Stream", "readOnlyHint": True})
 async def start_market_stream(
-    symbols: List[str], interval_sec: int = 1
+    symbols: List[str], interval_sec: int = 1, load_historical: bool = True
 ) -> Dict[str, str]:
     """Convenience wrapper around ``subscribe_cex_stream``.
 
-    Also records the selected symbols for the execution agent.
+    Also records the selected symbols for the execution agent and optionally loads historical data.
 
     Parameters
     ----------
@@ -109,12 +121,15 @@ async def start_market_stream(
         Trading pairs to stream.
     interval_sec:
         Seconds between ticker fetches.
+    load_historical:
+        Whether to load 24 hours of historical data on startup.
 
     Returns
     -------
     Dict[str, str]
         ``workflow_id`` and ``run_id`` of the started workflow.
     """
+    # Start the real-time stream first
     result = await subscribe_cex_stream(symbols, interval_sec)
     client = await get_temporal_client()
     wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
@@ -131,7 +146,139 @@ async def start_market_stream(
             await handle.signal("set_symbols", symbols)
         else:
             raise
+    
+    # Load historical data if requested
+    if load_historical:
+        logger.info("Loading historical data for %d symbols", len(symbols))
+        
+        # Create a temporary workflow to handle historical data loading
+        hist_wf_id = f"historical-loader-{secrets.token_hex(4)}"
+        
+        # Start a workflow that will handle the historical data loading
+        await client.start_workflow(
+            HistoricalDataLoaderWorkflow.run,
+            args=[symbols],
+            id=hist_wf_id,
+            task_queue="mcp-tools"
+        )
+        
+        logger.info("Historical data loading initiated")
+                
     return result
+
+
+@app.tool(annotations={"title": "Set User Preferences", "readOnlyHint": False})
+async def set_user_preferences(preferences: Dict[str, Any]) -> Dict[str, str]:
+    """Set user trading preferences including risk tolerance.
+
+    Parameters
+    ----------
+    preferences:
+        Dictionary of user preferences. Required keys:
+        - experience_level: 'beginner', 'intermediate', or 'advanced'
+        - risk_tolerance: 'low', 'medium', or 'high'  
+        - trading_style: 'conservative', 'balanced', or 'aggressive'
+        Example: {"experience_level": "intermediate", "risk_tolerance": "high", "trading_style": "aggressive"}
+
+    Returns
+    -------
+    Dict[str, str]
+        Confirmation of preferences set.
+    """
+    # Validate preferences
+    if not preferences or not isinstance(preferences, dict):
+        return {
+            "status": "error",
+            "message": "Preferences parameter is required and must be a non-empty dictionary"
+        }
+    
+    required_keys = ["experience_level", "risk_tolerance", "trading_style"]
+    missing_keys = [key for key in required_keys if key not in preferences]
+    if missing_keys:
+        return {
+            "status": "error", 
+            "message": f"Missing required preference keys: {missing_keys}. Required: {required_keys}"
+        }
+    
+    client = await get_temporal_client()
+    wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
+    logger.info("Setting user preferences: %s", preferences)
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                BrokerAgentWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    await handle.signal("set_user_preferences", preferences)
+    logger.info("User preferences updated successfully")
+    
+    # Also signal the execution agent, judge agent, and ledger with the new preferences
+    try:
+        execution_handle = client.get_workflow_handle("execution-agent")
+        await execution_handle.signal("set_user_preferences", preferences)
+        logger.info("User preferences sent to execution agent")
+    except Exception as exc:
+        logger.warning("Failed to signal execution agent with preferences: %s", exc)
+    
+    try:
+        judge_handle = client.get_workflow_handle("judge-agent")
+        await judge_handle.signal("set_user_preferences", preferences)
+        logger.info("User preferences sent to judge agent")
+    except Exception as exc:
+        logger.warning("Failed to signal judge agent with preferences: %s", exc)
+    
+    try:
+        ledger_handle = client.get_workflow_handle(os.environ.get("LEDGER_WF_ID", "mock-ledger"))
+        await ledger_handle.signal("set_user_preferences", preferences)
+        logger.info("User preferences sent to ledger (including profit scraping)")
+    except Exception as exc:
+        logger.warning("Failed to signal ledger with preferences: %s", exc)
+    
+    return {
+        "status": "success",
+        "message": f"Updated user preferences: {', '.join(preferences.keys())}",
+        "preferences_set": str(list(preferences.keys()))
+    }
+
+
+@app.tool(annotations={"title": "Get User Preferences", "readOnlyHint": True})
+async def get_user_preferences() -> Dict[str, Any]:
+    """Get current user trading preferences.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Current user preferences including risk tolerance, experience level, etc.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("BROKER_WF_ID", "broker-agent")
+    logger.info("Retrieving user preferences")
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                BrokerAgentWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    preferences = await handle.query("get_user_preferences")
+    logger.info("Retrieved user preferences")
+    
+    return preferences
 
 
 @app.tool(annotations={"title": "Evaluate Momentum Strategy", "readOnlyHint": True})
@@ -173,38 +320,125 @@ async def evaluate_strategy_momentum(
         "destructiveHint": False,
     }
 )
-async def place_mock_order(intent: OrderIntent) -> Dict[str, Any]:
-    """Simulate executing an order intent.
+async def place_mock_order(orders: List[OrderIntent]) -> Dict[str, Any]:
+    """Execute trading orders with automatic portfolio updates.
+    
+    SIMPLIFIED CONSISTENT FORMAT:
+    
+    Single Order - Array with one order:
+    {"orders": [{"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": 50000, "type": "market"}]}
+    
+    Multiple Orders - Array with multiple orders:
+    {"orders": [
+        {"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": 50000, "type": "market"},
+        {"symbol": "ETH/USD", "side": "SELL", "qty": 0.1, "price": 3000, "type": "market"}
+    ]}
+    
+    Validation & Execution:
+    - BUY orders: Validates sufficient cash before execution
+    - SELL orders: Validates sufficient holdings before execution  
+    - All orders: Atomic operation (all succeed or all fail)
+    - Orders automatically update portfolio and trigger 20% profit scraping on profitable sells
 
     Parameters
     ----------
-    intent:
-        Order details with keys ``symbol``, ``side``, ``qty``, ``price`` and ``type``.
+    orders:
+        List of OrderIntent objects, each with {symbol, side, qty, price, type} fields
 
     Returns
     -------
     Dict[str, Any]
-        Fill information including ``fill_price`` and ``cost``.
+        Always returns: {order_count: int, fills: [list], total_cost: float, total_proceeds: float}
     """
     client = await get_temporal_client()
+    
+    logger.info("Processing %d order(s)", len(orders))
+    
+    # PRE-FLIGHT VALIDATION: Check cash for all BUY orders
+    total_buy_cost = 0.0
+    buy_orders = []
+    
+    for order in orders:
+        if order.side == "BUY":
+            estimated_cost = float(order.qty) * float(order.price) * 1.02  # Add 2% slippage buffer
+            total_buy_cost += estimated_cost
+            buy_orders.append((order, estimated_cost))
+    
+    if buy_orders:
+        try:
+            ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+            ledger = client.get_workflow_handle(ledger_wf_id)
+            
+            # Check available cash
+            available_cash = await ledger.query("get_cash")
+            
+            if available_cash < total_buy_cost:
+                logger.warning(f"INSUFFICIENT CASH: Need ${total_buy_cost:.2f}, have ${available_cash:.2f}")
+                return {
+                    "error": "INSUFFICIENT_CASH",
+                    "message": f"Cannot execute BUY orders: need ${total_buy_cost:.2f}, available ${available_cash:.2f}",
+                    "required": total_buy_cost,
+                    "available": available_cash,
+                    "buy_order_count": len(buy_orders),
+                    "total_order_count": len(orders)
+                }
+        except Exception as exc:
+            logger.warning(f"Could not validate cash for BUY orders: {exc}")
+            # Continue with orders if we can't check (fail open for now)
+    
+    # Create BatchOrderIntent for workflow execution
+    from tools.execution import BatchOrderIntent
+    batch_intent = BatchOrderIntent(orders=orders)
+    
+    # Execute orders via workflow
     workflow_id = f"order-{secrets.token_hex(4)}"
-    logger.info("Placing mock order via workflow %s", workflow_id)
+    logger.info("Placing order(s) via workflow %s", workflow_id)
+    
     handle = await client.start_workflow(
-        PlaceMockOrder.run,
-        intent,
+        PlaceMockBatchOrder.run,
+        batch_intent,
         id=workflow_id,
         task_queue="mcp-tools",
     )
-    fill = await handle.result()
-    logger.info("Order workflow %s completed", workflow_id)
+    fills = await handle.result()
+    logger.info("Order workflow %s completed with %d fills", workflow_id, len(fills))
+    
+    # Record all fills in ledger
     try:
-        ledger = client.get_workflow_handle(
-            os.environ.get("LEDGER_WF_ID", "mock-ledger")
-        )
-        await ledger.signal("record_fill", fill)
-    except Exception:
-        pass
-    return fill
+        ledger_wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+        ledger = client.get_workflow_handle(ledger_wf_id)
+        
+        # Ensure ledger workflow exists
+        try:
+            await ledger.describe()
+        except RPCError as err:
+            if err.status == RPCStatusCode.NOT_FOUND:
+                ledger = await client.start_workflow(
+                    ExecutionLedgerWorkflow.run,
+                    id=ledger_wf_id,
+                    task_queue="mcp-tools",
+                )
+                logger.info("Started ledger workflow %s", ledger_wf_id)
+            else:
+                raise
+        
+        # Record each fill
+        for fill in fills:
+            await ledger.signal("record_fill", fill)
+            logger.info("Recorded fill in ledger: %s %s %s", fill["side"], fill["qty"], fill["symbol"])
+            
+    except Exception as exc:
+        logger.error("Failed to record fills in ledger: %s", exc)
+    
+    # Prepare result
+    result = {
+        "order_count": len(orders),
+        "fills": fills,
+        "total_cost": sum(fill["cost"] for fill in fills if fill.get("side") == "BUY"),
+        "total_proceeds": sum(fill["cost"] for fill in fills if fill.get("side") == "SELL")
+    }
+    
+    return result
 
 @app.tool(annotations={"title": "Get Historical Ticks", "readOnlyHint": True})
 async def get_historical_ticks(
@@ -270,7 +504,13 @@ async def get_portfolio_status() -> Dict[str, Any]:
     Returns
     -------
     Dict[str, Any]
-        Cash balance, open positions, entry prices and PnL.
+        Cash balance, open positions, entry prices, total PnL, realized PnL, and unrealized PnL.
+        - cash: Current cash balance
+        - positions: Current position sizes by symbol
+        - entry_prices: Weighted average entry prices for positions
+        - total_pnl: Total profit/loss (realized + unrealized)
+        - realized_pnl: Realized profit/loss from completed trades
+        - unrealized_pnl: Unrealized profit/loss from open positions
     """
     client = await get_temporal_client()
     wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
@@ -287,16 +527,517 @@ async def get_portfolio_status() -> Dict[str, Any]:
             )
         else:
             raise
+    
+    # Get basic data first
     cash = await handle.query("get_cash")
     positions = await handle.query("get_positions")
     entry_prices = await handle.query("get_entry_prices")
-    pnl = await handle.query("get_pnl")
-    logger.info("Ledger status retrieved")
+    realized_pnl = await handle.query("get_realized_pnl")
+    scraped_profits = await handle.query("get_scraped_profits")
+    
+    # Get live market prices for all positions using efficient get_latest_price query
+    live_prices = {}
+    price_fetch_errors = []
+    if positions:
+        symbols = list(positions.keys())
+        client = await get_temporal_client()
+        
+        for symbol in symbols:
+            wf_id = f"feature-{symbol.replace('/', '-')}"
+            try:
+                feature_handle = client.get_workflow_handle(wf_id)
+                price_info = await feature_handle.query("get_latest_price")
+                
+                if price_info["price"] is not None and price_info["age_seconds"] <= 60:
+                    # Fresh price available
+                    live_prices[symbol] = price_info["price"]
+                elif price_info["price"] is not None:
+                    # Stale price - note the issue but don't use it
+                    price_fetch_errors.append(f"{symbol}: price is {price_info['age_seconds']:.1f}s stale")
+                else:
+                    # No price data available
+                    price_fetch_errors.append(f"{symbol}: no price data from feature workflow")
+                    
+            except Exception as e:
+                price_fetch_errors.append(f"{symbol}: failed to query feature workflow - {str(e)}")
+                logger.warning("Failed to get latest price for %s: %s", symbol, e)
+    
+    # Calculate P&L with live prices if available, otherwise fall back
+    if live_prices:
+        pnl = await handle.query("get_pnl_with_live_prices", live_prices)
+        unrealized_pnl = await handle.query("get_unrealized_pnl_with_live_prices", live_prices)
+        logger.info("Portfolio status retrieved with live prices for %d symbols", len(live_prices))
+    else:
+        pnl = await handle.query("get_pnl")
+        unrealized_pnl = await handle.query("get_unrealized_pnl")
+        logger.info("Portfolio status retrieved with last fill prices")
+    
+    # Calculate detailed position information
+    position_details = {}
+    total_position_value = 0.0
+    
+    for symbol, quantity in positions.items():
+        entry_price = entry_prices.get(symbol, 0.0)
+        current_price = live_prices.get(symbol, entry_price)  # Fallback to entry price if no live price
+        
+        # Calculate position values
+        entry_value = quantity * entry_price
+        current_value = quantity * current_price
+        position_pnl = current_value - entry_value
+        position_pnl_pct = (position_pnl / entry_value * 100) if entry_value > 0 else 0.0
+        
+        total_position_value += current_value
+        
+        position_details[symbol] = {
+            "quantity": quantity,
+            "entry_price": entry_price,
+            "current_price": current_price,
+            "entry_value": entry_value,
+            "current_value": current_value,
+            "position_pnl": position_pnl,
+            "position_pnl_pct": position_pnl_pct,
+            "price_is_live": symbol in live_prices
+        }
+    
+    # Calculate total portfolio value
+    total_portfolio_value = cash + total_position_value + scraped_profits
+
     return {
         "cash": cash,
-        "positions": positions,
-        "entry_prices": entry_prices,
-        "pnl": pnl,
+        "positions": positions,  # Legacy format for compatibility
+        "entry_prices": entry_prices,  # Legacy format for compatibility
+        "position_details": position_details,  # New detailed format
+        "total_position_value": total_position_value,
+        "total_portfolio_value": total_portfolio_value,
+        "total_pnl": pnl,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "scraped_profits": scraped_profits,
+        "available_cash": cash,  # Cash available for trading
+        "total_cash_value": cash + scraped_profits,  # Total cash including scraped profits
+        "price_data_quality": {
+            "live_prices_used": len(live_prices),
+            "total_positions": len(positions),
+            "using_stale_fallback": len(live_prices) < len(positions),
+            "price_fetch_errors": price_fetch_errors
+        },
+        "live_prices_used": live_prices,
+    }
+
+
+@app.tool(annotations={"title": "Get Transaction History", "readOnlyHint": True})
+async def get_transaction_history(
+    since_ts: int = 0, limit: int = 1000
+) -> Dict[str, Any]:
+    """Get transaction history from the execution ledger.
+    
+    Parameters
+    ----------
+    since_ts:
+        Unix timestamp in seconds. Only transactions at or after this time.
+    limit:
+        Maximum number of transactions to return.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Transaction history with metadata.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+    logger.info("Fetching transaction history from %s", wf_id)
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    transactions = await handle.query("get_transaction_history", {"since_ts": since_ts, "limit": limit})
+    logger.info("Retrieved %d transactions", len(transactions))
+    
+    return {
+        "transactions": transactions,
+        "count": len(transactions),
+        "since_timestamp": since_ts,
+        "limit": limit
+    }
+
+
+@app.tool(annotations={"title": "Get Performance Metrics", "readOnlyHint": True})
+async def get_performance_metrics(window_days: int = 30) -> Dict[str, Any]:
+    """Get performance metrics from the execution ledger.
+    
+    Parameters
+    ----------
+    window_days:
+        Number of days to analyze for performance metrics.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Performance metrics including returns, drawdown, trade statistics.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+    logger.info("Fetching performance metrics from %s for %d days", wf_id, window_days)
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    metrics = await handle.query("get_performance_metrics", window_days)
+    logger.info("Retrieved performance metrics")
+    
+    return metrics
+
+
+@app.tool(annotations={"title": "Get Risk Metrics", "readOnlyHint": True})
+async def get_risk_metrics() -> Dict[str, Any]:
+    """Get current risk metrics from the execution ledger.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Risk metrics including position concentration, leverage, cash ratio.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+    logger.info("Fetching risk metrics from %s", wf_id)
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                ExecutionLedgerWorkflow.run,
+                id=wf_id,
+                task_queue="mcp-tools",
+            )
+        else:
+            raise
+    
+    # Get positions to fetch live prices  
+    positions = await handle.query("get_positions")
+    
+    # Get live market prices for all positions using efficient get_latest_price query
+    live_prices = {}
+    price_fetch_status = {"success": True, "errors": [], "stale_count": 0}
+    
+    if positions:
+        symbols = list(positions.keys())
+        client = await get_temporal_client()
+        
+        for symbol in symbols:
+            wf_id = f"feature-{symbol.replace('/', '-')}"
+            try:
+                feature_handle = client.get_workflow_handle(wf_id)
+                price_info = await feature_handle.query("get_latest_price")
+                
+                if price_info["price"] is not None and price_info["age_seconds"] <= 60:
+                    # Fresh price available
+                    live_prices[symbol] = price_info["price"]
+                elif price_info["price"] is not None:
+                    # Stale price
+                    price_fetch_status["stale_count"] += 1
+                    price_fetch_status["errors"].append(f"{symbol}: price is {price_info['age_seconds']:.1f}s old")
+                else:
+                    # No price data available
+                    price_fetch_status["errors"].append(f"{symbol}: no price data from feature workflow")
+                    
+            except Exception as e:
+                price_fetch_status["success"] = False
+                price_fetch_status["errors"].append(f"{symbol}: failed to query feature workflow - {str(e)}")
+                logger.warning("Failed to get latest price for risk metrics %s: %s", symbol, e)
+    
+    # Calculate risk metrics with live prices if available
+    if live_prices:
+        metrics = await handle.query("get_risk_metrics_with_live_prices", live_prices)
+        logger.info("Retrieved risk metrics with live prices for %d symbols", len(live_prices))
+    else:
+        metrics = await handle.query("get_risk_metrics")
+        logger.info("Retrieved risk metrics with last fill prices")
+    
+    # Add price data quality information to the response
+    metrics["price_data_quality"] = {
+        "live_prices_used": len(live_prices),
+        "total_positions": len(positions),
+        "price_fetch_status": price_fetch_status,
+        "using_stale_fallback": len(live_prices) < len(positions)
+    }
+    
+    return metrics
+
+
+@app.tool(annotations={"title": "Get PnL Status with Data Quality", "readOnlyHint": True})
+async def get_pnl_status_with_quality() -> Dict[str, Any]:
+    """Get PnL status with detailed information about price data quality.
+    
+    Returns
+    -------
+    Dict[str, Any]
+        PnL information including data quality metrics and staleness warnings.
+    """
+    client = await get_temporal_client()
+    wf_id = os.environ.get("LEDGER_WF_ID", "mock-ledger")
+    
+    try:
+        handle = client.get_workflow_handle(wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            return {
+                "error": "No trading data available - ledger workflow not started",
+                "total_pnl": 0.0,
+                "realized_pnl": 0.0,
+                "unrealized_pnl": 0.0,
+                "price_staleness_info": {"stale_symbols": [], "fresh_symbols": []}
+            }
+        else:
+            raise
+    
+    # Get PnL data
+    total_pnl = await handle.query("get_pnl")
+    realized_pnl = await handle.query("get_realized_pnl")
+    unrealized_pnl = await handle.query("get_unrealized_pnl")
+    
+    # Get price staleness information
+    staleness_info = await handle.query("get_price_staleness_info")
+    
+    # Get positions to fetch live prices
+    positions = await handle.query("get_positions")
+    
+    # Attempt to get live prices for comparison using efficient get_latest_price query
+    live_prices = {}
+    live_price_errors = []
+    
+    if positions:
+        symbols = list(positions.keys())
+        client = await get_temporal_client()
+        
+        for symbol in symbols:
+            wf_id = f"feature-{symbol.replace('/', '-')}"
+            try:
+                feature_handle = client.get_workflow_handle(wf_id)
+                price_info = await feature_handle.query("get_latest_price")
+                
+                if price_info["price"] is not None and price_info["age_seconds"] <= 60:
+                    # Fresh price available
+                    live_prices[symbol] = price_info["price"]
+                elif price_info["price"] is not None:
+                    # Stale price
+                    live_price_errors.append(f"{symbol}: live price is {price_info['age_seconds']:.1f}s stale")
+                else:
+                    # No price data available
+                    live_price_errors.append(f"{symbol}: no live price data from feature workflow")
+                    
+            except Exception as e:
+                live_price_errors.append(f"{symbol}: failed to query feature workflow - {str(e)}")
+                logger.warning("Failed to get latest price for PnL quality check %s: %s", symbol, e)
+    
+    # Calculate PnL with live prices if available
+    live_pnl_data = None
+    if live_prices:
+        try:
+            live_total_pnl = await handle.query("get_pnl_with_live_prices", live_prices)
+            live_unrealized_pnl = await handle.query("get_unrealized_pnl_with_live_prices", live_prices)
+            live_pnl_data = {
+                "total_pnl": live_total_pnl,
+                "unrealized_pnl": live_unrealized_pnl,
+                "symbols_with_live_prices": list(live_prices.keys())
+            }
+        except Exception as e:
+            live_price_errors.append(f"Live PnL calculation failed: {str(e)}")
+    
+    return {
+        "total_pnl": total_pnl,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "live_pnl_data": live_pnl_data,
+        "price_staleness_info": staleness_info,
+        "live_price_status": {
+            "available_symbols": len(live_prices),
+            "total_symbols": len(positions),
+            "errors": live_price_errors
+        },
+        "accuracy_warning": len(staleness_info.get("stale_symbols", [])) > 0 or len(live_price_errors) > 0
+    }
+
+
+@app.tool(annotations={"title": "Trigger Performance Evaluation", "readOnlyHint": False})
+async def trigger_performance_evaluation(
+    window_days: int = 7, force: bool = False
+) -> Dict[str, Any]:
+    """Trigger a performance evaluation by the judge agent.
+    
+    Parameters
+    ----------
+    window_days:
+        Number of days to analyze for the evaluation.
+    force:
+        Force evaluation even if cooldown period hasn't elapsed.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Evaluation trigger result.
+    """
+    client = await get_temporal_client()
+    judge_wf_id = os.environ.get("JUDGE_WF_ID", "judge-agent")
+    logger.info("Triggering performance evaluation")
+    
+    try:
+        handle = client.get_workflow_handle(judge_wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            handle = await client.start_workflow(
+                JudgeAgentWorkflow.run,
+                id=judge_wf_id,
+                task_queue="mcp-tools",
+            )
+            logger.info("Started judge agent workflow")
+        else:
+            raise
+    
+    # Check if evaluation should be triggered
+    if not force:
+        should_evaluate = await handle.query("should_trigger_evaluation", 4)
+        if not should_evaluate:
+            return {
+                "triggered": False,
+                "reason": "Evaluation cooldown period has not elapsed",
+                "suggestion": "Use force=true to override cooldown"
+            }
+    
+    # Create evaluation trigger signal
+    trigger_data = {
+        "window_days": window_days,
+        "trigger_timestamp": int(datetime.now(timezone.utc).timestamp()),
+        "force": force
+    }
+    
+    # Signal the judge agent to trigger an immediate evaluation
+    await handle.signal("trigger_immediate_evaluation", {
+        "window_days": window_days,
+        "forced": force,
+        "trigger_timestamp": trigger_data["trigger_timestamp"]
+    })
+    
+    logger.info("Performance evaluation triggered")
+    
+    return {
+        "triggered": True,
+        "window_days": window_days,
+        "forced": force,
+        "message": "Performance evaluation has been requested"
+    }
+
+
+@app.tool(annotations={"title": "Get Judge Evaluations", "readOnlyHint": True})
+async def get_judge_evaluations(limit: int = 20, since_ts: int = 0) -> Dict[str, Any]:
+    """Get recent performance evaluations from the judge agent.
+    
+    Parameters
+    ----------
+    limit:
+        Maximum number of evaluations to return.
+    since_ts:
+        Unix timestamp in seconds. Only evaluations at or after this time.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Recent evaluations and performance trends.
+    """
+    client = await get_temporal_client()
+    judge_wf_id = os.environ.get("JUDGE_WF_ID", "judge-agent")
+    logger.info("Fetching judge evaluations")
+    
+    try:
+        handle = client.get_workflow_handle(judge_wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            logger.warning("Judge workflow not found")
+            return {
+                "evaluations": [],
+                "count": 0,
+                "trend": {"trend": "unknown", "avg_score": 0.0}
+            }
+        else:
+            raise
+    
+    evaluations = await handle.query("get_evaluations", {"limit": limit, "since_ts": since_ts})
+    trend = await handle.query("get_performance_trend", 30)
+    
+    logger.info("Retrieved %d evaluations", len(evaluations))
+    
+    return {
+        "evaluations": evaluations,
+        "count": len(evaluations),
+        "trend": trend
+    }
+
+
+@app.tool(annotations={"title": "Get Prompt History", "readOnlyHint": True})
+async def get_prompt_history(limit: int = 10) -> Dict[str, Any]:
+    """Get prompt version history from the judge agent.
+    
+    Parameters
+    ----------
+    limit:
+        Maximum number of prompt versions to return.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Prompt version history and current active version.
+    """
+    client = await get_temporal_client()
+    judge_wf_id = os.environ.get("JUDGE_WF_ID", "judge-agent")
+    logger.info("Fetching prompt history")
+    
+    try:
+        handle = client.get_workflow_handle(judge_wf_id)
+        await handle.describe()
+    except RPCError as err:
+        if err.status == RPCStatusCode.NOT_FOUND:
+            logger.warning("Judge workflow not found")
+            return {
+                "versions": [],
+                "current_version": {},
+                "count": 0
+            }
+        else:
+            raise
+    
+    versions = await handle.query("get_prompt_versions", limit)
+    current_version = await handle.query("get_current_prompt_version")
+    
+    logger.info("Retrieved %d prompt versions", len(versions))
+    
+    return {
+        "versions": versions,
+        "current_version": current_version,
+        "count": len(versions)
     }
 
 
@@ -319,6 +1060,47 @@ async def workflow_status(request: Request) -> Response:
     return JSONResponse({"status": status_name, "result": result})
 
 
+def _log_tick_continuity_summary() -> None:
+    """Log a summary of tick data continuity for monitoring."""
+    try:
+        current_time = int(datetime.now(timezone.utc).timestamp())
+        session_duration = current_time - tick_stats["session_start"]
+        
+        # Calculate continuity metrics per symbol
+        symbol_continuity = {}
+        for symbol, stats in tick_stats["symbols"].items():
+            data_span = stats["last_timestamp"] - stats["first_timestamp"]
+            expected_ticks = max(1, data_span)  # Assume ~1 tick per second
+            continuity_ratio = stats["count"] / expected_ticks if expected_ticks > 0 else 1.0
+            
+            symbol_continuity[symbol] = {
+                "tick_count": stats["count"],
+                "data_span_seconds": data_span,
+                "continuity_ratio": min(1.0, continuity_ratio),
+                "first_tick": stats["first_timestamp"],
+                "latest_tick": stats["last_timestamp"],
+                "gap_from_now": current_time - stats["last_timestamp"]
+            }
+        
+        market_tick_logger.log_summary(
+            summary_type="tick_continuity_report",
+            data={
+                "session_duration_seconds": session_duration,
+                "total_ticks_received": tick_stats["total_ticks"],
+                "symbols_tracked": len(tick_stats["symbols"]),
+                "symbols_continuity": symbol_continuity,
+                "overall_tick_rate": tick_stats["total_ticks"] / session_duration if session_duration > 0 else 0,
+                "potential_gaps": [
+                    symbol for symbol, stats in symbol_continuity.items() 
+                    if stats["gap_from_now"] > 30  # More than 30 seconds since last tick
+                ]
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to log tick continuity summary: {e}")
+
+
 @app.custom_route("/signal/{name}", methods=["POST"])
 async def record_signal(request: Request) -> Response:
     """Record a signal event for services still using HTTP polling."""
@@ -330,6 +1112,53 @@ async def record_signal(request: Request) -> Response:
         ts = int(datetime.now(timezone.utc).timestamp())
         payload["ts"] = ts
     signal_log.setdefault(name, []).append(payload)
+    
+    # Log market tick data for continuity monitoring
+    if name == "market_tick":
+        try:
+            symbol = payload.get("symbol")
+            tick_timestamp = payload.get("timestamp", ts)
+            
+            # Update tick statistics
+            tick_stats["total_ticks"] += 1
+            if symbol:
+                if symbol not in tick_stats["symbols"]:
+                    tick_stats["symbols"][symbol] = {
+                        "count": 0,
+                        "first_timestamp": tick_timestamp,
+                        "last_timestamp": tick_timestamp
+                    }
+                
+                symbol_stats = tick_stats["symbols"][symbol]
+                symbol_stats["count"] += 1
+                symbol_stats["last_timestamp"] = max(symbol_stats["last_timestamp"], tick_timestamp)
+                symbol_stats["first_timestamp"] = min(symbol_stats["first_timestamp"], tick_timestamp)
+            
+            # Log individual tick
+            market_tick_logger.log_action(
+                action_type="market_tick_received",
+                details={
+                    "symbol": symbol,
+                    "price": payload.get("price"),
+                    "timestamp": tick_timestamp,
+                    "volume": payload.get("volume"),
+                    "high": payload.get("high"),
+                    "low": payload.get("low"),
+                    "open": payload.get("open"),
+                    "close": payload.get("close")
+                },
+                result={"recorded": True},
+                signal_name=name,
+                payload_timestamp=ts
+            )
+            
+            # Log periodic summary (every 100 ticks)
+            if tick_stats["total_ticks"] % 100 == 0:
+                _log_tick_continuity_summary()
+                
+        except Exception as log_error:
+            logger.error(f"Failed to log market tick: {log_error}")
+    
     logger.debug("Recorded signal %s", name)
     return Response(status_code=204)
 

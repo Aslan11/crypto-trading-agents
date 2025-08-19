@@ -8,6 +8,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from agents.utils import stream_chat_completion
 from mcp.types import CallToolResult, TextContent
+from agents.context_manager import create_context_manager
 from datetime import timedelta
 from temporalio.client import (
     Client,
@@ -19,7 +20,9 @@ from temporalio.client import (
     RPCStatusCode,
 )
 from tools.ensemble_nudge import EnsembleNudgeWorkflow
-from agents.workflows import BrokerAgentWorkflow, ExecutionAgentWorkflow
+from agents.workflows.broker_agent_workflow import BrokerAgentWorkflow
+from agents.workflows.execution_agent_workflow import ExecutionAgentWorkflow
+from tools.agent_logger import AgentLogger
 
 ORANGE = "\033[33m"
 PINK = "\033[95m"
@@ -30,14 +33,17 @@ ALLOWED_TOOLS = {
     "place_mock_order",
     "get_historical_ticks",
     "get_portfolio_status",
+    "get_user_preferences",
+    "get_transaction_history",
+    "get_performance_metrics",
+    "get_risk_metrics",
 }
 
-# Maximum number of messages to keep in the conversation history. The
-# broker agent applies the same limit to avoid exceeding the LLM context
-# window.
-MAX_CONVERSATION_LENGTH = 20
+# Context management is now handled by the ContextManager class
 
 NUDGE_SCHEDULE_ID = "ensemble-nudge"
+
+
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
@@ -45,50 +51,45 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = (
-    "You are a portfolio‑management agent in a proactive AI system that wakes only when nudged. "
-    "You have a moderate risk profile and focus on short‑horizon scalping. "
-    "You have complete agency and will not interact with humans, but you must obey EVERY rule below.\n\n"
-    # ───────────────────────────────  GLOBAL NUDGE LIFECYCLE  ───────────────────────────────
-    "**Exactly one `get_historical_ticks` per nudge**\n"
-    "   • Maintain an internal Boolean flag `called_ticks` (initially False each nudge).\n"
-    "   • When the nudge arrives, first set `called_ticks` to False.\n"
-    "   • Immediately call `get_historical_ticks` with:\n"
-    "       ▸ `symbols`: ALL followed tickers (no omissions)\n"
-    "       ▸ `since_ts`: the latest timestamp already processed (0 on first use)\n"
-    "   • After this call, set `called_ticks = True` and **never call it again** "
-    "until the next nudge. If logic ever tries a second call while `called_ticks` is True, "
-    "abort the call and treat it as a fatal logic error.\n\n"
-    "**Exactly one `get_portfolio_status` per nudge**, called *after* the single "
-    "`get_historical_ticks` call.\n\n"
-    # ───────────────────────────────  PER‑SYMBOL ANALYSIS  ───────────────────────────────
-    "For every symbol returned:\n"
-    "   • Combine new ticks with current positions & cash.\n"
-    "   • Decide: BUY, SELL, or HOLD.\n"
-    "   • Record a short rationale (even for HOLD).\n\n"
-    # ───────────────────────────────  SAFETY CHECKS  ───────────────────────────────
-    "Before placing an order:\n"
-    "   • BUY → ensure cash ≥ qty × price.\n"
-    "   • SELL → ensure position qty ≥ desired qty.\n"
-    "   • If either check fails, downgrade decision to HOLD.\n\n"
-    # ───────────────────────────────  ORDER EXECUTION  ───────────────────────────────
-    "Only when the **final** decision is BUY or SELL, call `place_mock_order` **once per trade** "
-    "with exactly the following payload (note the surrounding **`intent`** key):\n"
-    "      `{"
-    '"intent": {'
-    '"symbol": <str>, '
-    '"side": "BUY" | "SELL", '
-    '"qty": <number>, '
-    '"price": <number>, '
-    '"type": "market" | "limit"'
-    "}}`\n"
-    "   • Never pass 'HOLD' as the `side`.\n"
-    "   • Never call `place_mock_order` for HOLD decisions.\n\n"
-    # ───────────────────────────────  STATE PERSISTENCE  ───────────────────────────────
-    "After processing, store the newest tick timestamp for next nudge's `since_ts`.\n\n"
-    # ───────────────────────────────  REPORTING  ───────────────────────────────
-    "Output a structured report listing every symbol with its decision & rationale, "
-    "then list any order intents submitted.\n\n"
-    "All rules are mandatory. Skipping, reordering, or violating any rule constitutes a fatal error."
+    "You are an autonomous portfolio management agent that analyzes market data and executes trading decisions "
+    "based on user preferences and risk profile. You operate independently without human confirmation.\n\n"
+    
+    "AUTONOMOUS OPERATION:\n"
+    "• Make all trading decisions independently - no human approval required\n"
+    "• Execute orders immediately when your analysis indicates action\n"
+    "• Never ask for confirmation or present multiple choice options\n"
+    "• Report what you decided and executed, not what you recommend\n\n"
+    
+    "DATA ANALYSIS:\n"
+    "• Combine new tick data with your conversation history for complete market picture\n"
+    "• Analyze price momentum, trends, support/resistance, and volume patterns\n"
+    "• Consider current portfolio, performance metrics, and risk exposure\n"
+    "• Apply user risk tolerance and trading style preferences\n"
+    "• CRITICAL: Always extract and use the LATEST market prices from the historical tick data\n"
+    "• NEVER use example prices or hardcoded values - only use real-time data provided to you\n\n"
+    
+    "RISK MANAGEMENT & FINANCIAL DISCIPLINE:\n"
+    "• ALWAYS use the provided portfolio data to know exact cash available and current positions\n"
+    "• Calculate total cost of ALL BUY orders (qty * price * 1.02 for slippage) and ensure it's under available cash\n"
+    "• Never place orders that would exceed available funds - be conservative with position sizing\n"
+    "• For batch orders, sum up all BUY order costs and verify total is within the cash shown in portfolio data\n"
+    "• Apply user risk tolerance and trading style preferences when making decisions\n"
+    "• Only SELL positions you actually own - check current holdings in the provided portfolio data\n"
+    "• ALL ORDERS MUST BE TYPE 'market' - NEVER use 'limit' orders\n"
+    "• Leave some cash buffer (5-10%) for market volatility and slippage\n"
+    "• Pay close attention to the 'cash' field in the portfolio data provided to you\n\n"
+    
+    "ORDER FORMAT:\n"
+    "CRITICAL: Always use FULL symbol names exactly as provided (e.g., 'BTC/USD', 'ETH/USD', 'DOGE/USD')\n"
+    "CRITICAL: NEVER use the example prices below - ALWAYS use current market prices from the provided data\n\n"
+    "Single order (array with one order) - EXAMPLE FORMAT ONLY:\n"
+    '{"orders": [{"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": CURRENT_MARKET_PRICE, "type": "market"}]}\n\n'
+    
+    "Multiple orders (array with multiple orders) - EXAMPLE FORMAT ONLY:\n"
+    '{"orders": [{"symbol": "BTC/USD", "side": "BUY", "qty": 0.001, "price": CURRENT_MARKET_PRICE, "type": "market"}, '
+    '{"symbol": "ETH/USD", "side": "SELL", "qty": 0.1, "price": CURRENT_MARKET_PRICE, "type": "market"}]}\n\n'
+    
+    "Execute trades decisively using `place_mock_order`. Report completed actions and reasoning."
 )
 
 
@@ -126,6 +127,7 @@ async def _watch_symbols(client: Client, symbols: Set[str]) -> None:
                 symbols.clear()
                 symbols.update(new_set)
                 print(f"[ExecutionAgent] Active symbols updated: {sorted(symbols)}")
+                
         except RPCError as err:
             if err.status == RPCStatusCode.NOT_FOUND:
                 try:
@@ -142,6 +144,53 @@ async def _watch_symbols(client: Client, symbols: Set[str]) -> None:
         except Exception as exc:
             print(f"[ExecutionAgent] Error watching symbols: {exc}")
         await asyncio.sleep(1)
+
+
+async def _watch_user_preferences(client: Client, current_preferences: dict, conversation: list) -> None:
+    """Poll execution agent workflow for user preference updates."""
+    wf_id = "execution-agent"
+    while True:
+        try:
+            handle = client.get_workflow_handle(wf_id)
+            prefs = await handle.query("get_user_preferences")
+            
+            # Check if preferences have changed
+            if prefs != current_preferences:
+                current_preferences.clear()
+                current_preferences.update(prefs)
+                print(f"[ExecutionAgent] ✅ User preferences updated: risk_tolerance={prefs.get('risk_tolerance', 'moderate')}, style={prefs.get('trading_style', 'unknown')}")
+                
+                # The judge agent will handle system prompt updates directly
+                
+        except Exception as exc:
+            # Silently continue if execution agent workflow not found or other issues
+            pass
+        
+        await asyncio.sleep(2)  # Check every 2 seconds
+
+
+async def _watch_system_prompt_updates(client: Client, conversation: list) -> None:
+    """Watch for system prompt updates from the judge agent."""
+    wf_id = "execution-agent"
+    last_prompt = ""
+    
+    while True:
+        try:
+            handle = client.get_workflow_handle(wf_id)
+            current_prompt = await handle.query("get_system_prompt")
+            
+            # Check if prompt has changed
+            if current_prompt and current_prompt != last_prompt:
+                if conversation and conversation[0]["role"] == "system":
+                    conversation[0]["content"] = current_prompt
+                    print(f"[ExecutionAgent] 🔄 System prompt updated by judge (length: {len(current_prompt)} chars)")
+                    last_prompt = current_prompt
+                
+        except Exception as exc:
+            # Silently continue if execution agent workflow not found or other issues
+            pass
+        
+        await asyncio.sleep(5)  # Check every 5 seconds
 
 
 async def _stream_nudges(client: Client) -> AsyncIterator[int]:
@@ -191,7 +240,7 @@ async def _ensure_schedule(client: Client) -> None:
             id="ensemble-nudge-wf",
             task_queue=os.environ.get("TASK_QUEUE", "mcp-tools"),
         ),
-        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(minutes=1))]),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(seconds=25))]),
     )
     await client.create_schedule(NUDGE_SCHEDULE_ID, schedule)
     await client.get_schedule_handle(NUDGE_SCHEDULE_ID).trigger()
@@ -206,7 +255,12 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
         os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
         namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
     )
+    
+    # Initialize context manager
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+    context_manager = create_context_manager(model=model, openai_client=openai_client)
     symbols: Set[str] = set()
+    current_preferences: dict = {}
     _symbol_task = asyncio.create_task(_watch_symbols(temporal, symbols))
     await _ensure_schedule(temporal)
 
@@ -220,40 +274,140 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
             tools_resp = await session.list_tools()
             all_tools = tools_resp.tools
             tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
-            conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+            
+            # Get current system prompt from workflow, fallback to default
+            try:
+                handle = temporal.get_workflow_handle("execution-agent")
+                current_prompt = await handle.query("get_system_prompt")
+                if not current_prompt:
+                    current_prompt = SYSTEM_PROMPT
+                    # Initialize workflow with default prompt
+                    await handle.signal("update_system_prompt", SYSTEM_PROMPT)
+                print(f"[ExecutionAgent] Using system prompt from workflow (length: {len(current_prompt)} chars)")
+            except Exception as exc:
+                current_prompt = SYSTEM_PROMPT
+                print(f"[ExecutionAgent] Using fallback system prompt: {exc}")
+            
+            conversation = [{"role": "system", "content": current_prompt}]
             print(
                 "[ExecutionAgent] Connected to MCP server with tools:",
                 [t.name for t in tools],
             )
 
+            # Start watching for user preference updates
+            _preferences_task = asyncio.create_task(_watch_user_preferences(temporal, current_preferences, conversation))
+            
+            # Start watching for system prompt updates from judge
+            _prompt_task = asyncio.create_task(_watch_system_prompt_updates(temporal, conversation))
+
+            # Track latest processed timestamp for data continuity
+            latest_processed_ts = None
+            
+            # Initialize agent logger
+            agent_logger = AgentLogger("execution_agent", temporal)
+            
             async for ts in _stream_nudges(temporal):
                 if not symbols:
                     continue
                 print(f"[ExecutionAgent] Nudge @ {ts} for {sorted(symbols)}")
+                
+                # ===============================
+                # DETERMINISTIC DATA COLLECTION PHASE (PARALLEL)
+                # ===============================
+                print(f"[ExecutionAgent] Starting mandatory data collection (parallel)...")
+                
+                # Determine since_ts for incremental data fetching
+                if latest_processed_ts is not None:
+                    since_ts = latest_processed_ts
+                    print(f"[ExecutionAgent] Fetching NEW ticks since timestamp: {since_ts}")
+                else:
+                    since_ts = 0  # Get all historical data on first run
+                    print(f"[ExecutionAgent] First run - fetching all available historical data (since_ts=0)")
+                
+                # Start all data collection tasks in parallel
+                tasks = [
+                    session.call_tool("get_historical_ticks", {
+                        "symbols": sorted(symbols),
+                        "since_ts": since_ts  # Incremental fetching to avoid context bloat
+                    }),
+                    session.call_tool("get_portfolio_status", {}),
+                    session.call_tool("get_user_preferences", {}),
+                    session.call_tool("get_performance_metrics", {}),
+                    session.call_tool("get_risk_metrics", {})
+                ]
+                
+                # Wait for all tasks to complete
+                results = await asyncio.gather(*tasks)
+                historical_data, portfolio_data, user_preferences, performance_metrics, risk_metrics = results
+                
+                print(f"[ExecutionAgent] ✓ Collected all data in parallel")
+                
+                # Extract and update latest processed timestamp for next cycle
+                historical_ticks_data = _tool_result_data(historical_data)
+                
+                if historical_ticks_data and isinstance(historical_ticks_data, dict):
+                    # Find the latest timestamp from all symbols' tick data
+                    max_timestamp = 0
+                    new_tick_count = 0
+                    
+                    for symbol, symbol_data in historical_ticks_data.items():
+                        if isinstance(symbol_data, list) and symbol_data:
+                            new_tick_count += len(symbol_data)
+                            # Get the latest timestamp from this symbol's ticks
+                            for tick in symbol_data:
+                                if isinstance(tick, dict):
+                                    # Try both 'ts' and 'timestamp' fields
+                                    tick_ts = tick.get('ts', 0) or tick.get('timestamp', 0)
+                                    if tick_ts > 0:
+                                        max_timestamp = max(max_timestamp, tick_ts)
+                    
+                    if max_timestamp > 0:
+                        latest_processed_ts = max_timestamp
+                        print(f"[ExecutionAgent] Received {new_tick_count} new ticks (latest timestamp: {latest_processed_ts})")
+                    else:
+                        print(f"[ExecutionAgent] Warning: No valid timestamps found in tick data")
+                
+                # Compile all data for LLM analysis
+                collected_data = {
+                    "nudge_timestamp": ts,
+                    "symbols": sorted(symbols),
+                    "historical_ticks": _tool_result_data(historical_data),
+                    "portfolio_status": _tool_result_data(portfolio_data),
+                    "user_preferences": _tool_result_data(user_preferences),
+                    "performance_metrics": _tool_result_data(performance_metrics),
+                    "risk_metrics": _tool_result_data(risk_metrics)
+                }
+                
+                print(f"[ExecutionAgent] Data collection complete. Starting analysis phase...")
+                
+                # ===============================
+                # LLM ANALYSIS PHASE
+                # ===============================
                 conversation.append(
                     {
                         "role": "user",
-                        "content": json.dumps(
-                            {"nudge": ts, "symbols": sorted(symbols)}
-                        ),
+                        "content": json.dumps(collected_data),
                     }
                 )
-                openai_tools = [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.inputSchema,
-                        },
-                    }
-                    for tool in tools
-                ]
+                # Only provide order execution tool to LLM (data collection is handled deterministically)
+                order_tool = next((t for t in tools if t.name == "place_mock_order"), None)
+                openai_tools = []
+                if order_tool:
+                    openai_tools = [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": order_tool.name,
+                                "description": order_tool.description,
+                                "parameters": order_tool.inputSchema,
+                            },
+                        }
+                    ]
                 while True:
                     try:
                         msg = stream_chat_completion(
                             openai_client,
-                            model=os.environ.get("OPENAI_MODEL", "o4-mini"),
+                            model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
                             messages=conversation,
                             tools=openai_tools,
                             tool_choice="auto",
@@ -263,7 +417,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         )
                     except openai.OpenAIError as exc:
                         print(f"[ExecutionAgent] LLM request failed: {exc}")
-                        conversation = [conversation[0], conversation[-1]]
+                        # Keep system prompt and last user message on error
+                        if len(conversation) >= 2:
+                            conversation = [conversation[0], conversation[-1]]
                         break
 
                     if msg.get("tool_calls"):
@@ -274,24 +430,33 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                                 "tool_calls": msg["tool_calls"],
                             }
                         )
+                        # Process each tool call (batch orders are handled by MCP server)
                         for tool_call in msg["tool_calls"]:
                             func_name = tool_call["function"]["name"]
                             func_args = json.loads(
                                 tool_call["function"].get("arguments") or "{}"
                             )
-                            if func_name not in ALLOWED_TOOLS:
-                                print(f"[ExecutionAgent] Tool not allowed: {func_name}")
+                            # Only allow order execution in LLM phase (data collection handled separately)
+                            if func_name != "place_mock_order":
+                                print(f"[ExecutionAgent] Tool not allowed in analysis phase: {func_name}")
                                 continue
+                            
+                            # Log tool usage
+                            order_count = len(func_args.get("orders", []))
                             print(
-                                f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} {func_args}{RESET}"
+                                f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} "
+                                f"({order_count} order{'s' if order_count != 1 else ''}){RESET}"
                             )
+                            
                             result = await session.call_tool(func_name, func_args)
+                            result_data = _tool_result_data(result)
+                            
                             conversation.append(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tool_call["id"],
                                     "name": func_name,
-                                    "content": json.dumps(_tool_result_data(result)),
+                                    "content": json.dumps(result_data),
                                 }
                             )
                         continue
@@ -308,18 +473,26 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         func_args = json.loads(
                             msg["function_call"].get("arguments") or "{}"
                         )
-                        if func_name not in ALLOWED_TOOLS:
-                            print(f"[ExecutionAgent] Tool not allowed: {func_name}")
+                        # Only allow order execution in LLM phase (data collection handled separately)
+                        if func_name != "place_mock_order":
+                            print(f"[ExecutionAgent] Tool not allowed in analysis phase: {func_name}")
                             continue
+                        
+                        # Log tool usage
+                        order_count = len(func_args.get("orders", []))
                         print(
-                            f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} {func_args}{RESET}"
+                            f"{ORANGE}[ExecutionAgent] Tool requested: {func_name} "
+                            f"({order_count} order{'s' if order_count != 1 else ''}){RESET}"
                         )
+                        
                         result = await session.call_tool(func_name, func_args)
+                        result_data = _tool_result_data(result)
+                        
                         conversation.append(
                             {
                                 "role": "function",
                                 "name": func_name,
-                                "content": json.dumps(_tool_result_data(result)),
+                                "content": json.dumps(result_data),
                             }
                         )
                         continue
@@ -328,12 +501,53 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                     conversation.append(
                         {"role": "assistant", "content": assistant_reply}
                     )
+                    
+                    # Log comprehensive decision with all context
+                    try:
+                        # Extract decisions from the current cycle only (tool calls made in this response)
+                        decisions_made = []
+                        if msg.get("tool_calls"):
+                            for tool_call in msg["tool_calls"]:
+                                if tool_call["function"]["name"] == "place_mock_order":
+                                    order_args = json.loads(tool_call["function"]["arguments"])
+                                    decisions_made.append({
+                                        "action": "place_order",
+                                        "details": order_args
+                                    })
+                        
+                        # Log the comprehensive decision
+                        await agent_logger.log_decision(
+                            nudge_timestamp=ts,
+                            symbols=sorted(symbols),
+                            market_data={"historical_ticks": _tool_result_data(historical_data)},
+                            portfolio_data=_tool_result_data(portfolio_data),
+                            user_preferences=_tool_result_data(user_preferences),
+                            decisions={
+                                "orders_placed": len(decisions_made),
+                                "decisions": decisions_made,
+                                "hold_decisions": len(symbols) - len(decisions_made)
+                            },
+                            reasoning=assistant_reply,
+                            performance_metrics=_tool_result_data(performance_metrics),
+                            risk_metrics=_tool_result_data(risk_metrics),
+                            latest_processed_timestamp=latest_processed_ts
+                        )
+                        
+                        # Log each individual action
+                        for decision in decisions_made:
+                            agent_logger.log_action(
+                                action_type="order_placement",
+                                details=decision["details"],
+                                nudge_timestamp=ts
+                            )
+                            
+                    except Exception as log_error:
+                        print(f"[ExecutionAgent] Failed to log decision: {log_error}")
+                    
                     break
 
-                if len(conversation) > MAX_CONVERSATION_LENGTH:
-                    conversation = [conversation[0]] + conversation[
-                        -(MAX_CONVERSATION_LENGTH - 1) :
-                    ]
+                # Manage conversation context intelligently
+                conversation = await context_manager.manage_context(conversation)
 
 
 if __name__ == "__main__":

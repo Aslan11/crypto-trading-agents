@@ -10,3 +10,8 @@ uv.lock
 .venv
 .pytest_cache/
 .env
+
+# Agent logs and history
+logs/
+*.log
+.DS_Store

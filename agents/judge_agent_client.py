@@ -385,6 +385,25 @@ Respond in JSON format:
     async def _improve_system_prompt(self, current_prompt: str, performance_report: Dict, context: Dict) -> str:
         """Use LLM to improve the system prompt based on performance analysis."""
         
+        # Extract user preferences from context if available
+        user_preferences = {}
+        if 'context' in context and isinstance(context['context'], dict):
+            user_preferences = context['context'].get('user_preferences', {})
+        elif 'user_preferences' in context:
+            user_preferences = context.get('user_preferences', {})
+        
+        # Build user preferences section for the prompt
+        user_prefs_section = ""
+        if user_preferences:
+            user_prefs_section = f"""
+USER PREFERENCES (CRITICAL - MUST BE REFLECTED IN THE PROMPT):
+- Risk Tolerance: {user_preferences.get('risk_tolerance', 'moderate')}
+- Trading Style: {user_preferences.get('trading_style', 'balanced')}
+- Experience Level: {user_preferences.get('experience_level', 'intermediate')}
+
+These preferences MUST be explicitly incorporated into the system prompt with specific behavioral guidelines that match the user's profile.
+"""
+        
         improvement_prompt = f"""You are a prompt engineering expert tasked with improving a trading agent's system prompt based on performance analysis and user preferences.
 
 CURRENT SYSTEM PROMPT:
@@ -396,7 +415,7 @@ PERFORMANCE ANALYSIS:
 ```json
 {json.dumps(performance_report, indent=2)}
 ```
-
+{user_prefs_section}
 CONTEXT & ISSUES IDENTIFIED:
 - Update Type: {context.get('update_type', 'general_improvement')}
 - Reason: {context.get('reason', 'Performance optimization needed')}
@@ -466,6 +485,10 @@ Return ONLY the improved system prompt, no explanations."""
                     f"Trading style: {user_preferences.get('trading_style', 'balanced')}",
                     f"Experience level: {user_preferences.get('experience_level', 'intermediate')}"
                 ],
+                "user_preferences": user_preferences,
+                "context": {
+                    "user_preferences": user_preferences
+                },
                 "performance_report": {
                     "trigger": "user_preferences_change",
                     "user_preferences": user_preferences

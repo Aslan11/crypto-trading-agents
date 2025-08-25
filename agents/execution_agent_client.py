@@ -193,6 +193,33 @@ async def _watch_system_prompt_updates(client: Client, conversation: list) -> No
         await asyncio.sleep(5)  # Check every 5 seconds
 
 
+async def _check_and_process_feedback(client: Client, conversation: list) -> None:
+    """Check for pending user feedback and add it to the conversation."""
+    try:
+        handle = client.get_workflow_handle("execution-agent")
+        pending_feedback = await handle.query("get_pending_feedback")
+        
+        if pending_feedback:
+            print(f"[ExecutionAgent] 📨 Processing {len(pending_feedback)} user feedback message(s)")
+            
+            for feedback in pending_feedback:
+                # Add feedback to conversation as a user message
+                feedback_message = {
+                    "role": "user",
+                    "content": f"[USER FEEDBACK]: {feedback['message']}"
+                }
+                conversation.append(feedback_message)
+                
+                # Mark feedback as processed
+                await handle.signal("mark_feedback_processed", feedback["feedback_id"])
+                
+                print(f"[ExecutionAgent] ✅ Processed feedback: {feedback['message'][:100]}...")
+                
+    except Exception as exc:
+        # Silently continue if there's an error
+        pass
+
+
 async def _stream_nudges(client: Client) -> AsyncIterator[int]:
     """Yield timestamps from execution-agent workflow nudges."""
     wf_id = os.environ.get("EXECUTION_WF_ID", "execution-agent")
@@ -310,6 +337,9 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 if not symbols:
                     continue
                 print(f"[ExecutionAgent] Nudge @ {ts} for {sorted(symbols)}")
+                
+                # Check for any pending user feedback before processing
+                await _check_and_process_feedback(temporal, conversation)
                 
                 # ===============================
                 # DETERMINISTIC DATA COLLECTION PHASE (PARALLEL)

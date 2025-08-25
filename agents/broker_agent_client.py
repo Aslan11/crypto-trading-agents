@@ -31,6 +31,8 @@ ALLOWED_TOOLS = {
     "get_prompt_history",
     "get_performance_metrics",
     "get_transaction_history",
+    "send_user_feedback",
+    "get_pending_feedback",
 }
 
 EXCHANGE = "coinbaseexchange"

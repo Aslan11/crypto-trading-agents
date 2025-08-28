@@ -13,12 +13,10 @@ except Exception:  # pragma: no cover - optional dependency
     _openai_client = None
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from agents.utils import stream_chat_completion
+from agents.utils import stream_chat_completion, tool_result_data
 from agents.context_manager import create_context_manager
-
-ORANGE = "\033[33m"
-PINK = "\033[95m"
-RESET = "\033[0m"
+from agents.constants import ORANGE, PINK, RESET, EXCHANGE, DEFAULT_LOG_LEVEL, BROKER_AGENT
+from agents.logging_utils import setup_logging
 
 # Tools this agent is allowed to call
 ALLOWED_TOOLS = {
@@ -31,34 +29,12 @@ ALLOWED_TOOLS = {
     "get_prompt_history",
     "get_performance_metrics",
     "get_transaction_history",
+    "send_user_feedback",
+    "get_pending_feedback",
 }
 
-EXCHANGE = "coinbaseexchange"
+logger = setup_logging(__name__)
 
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "WARNING")
-logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
-
-
-
-def _tool_result_data(result: Any) -> Any:
-    """Return JSON-friendly data from a tool call result."""
-    if isinstance(result, CallToolResult):
-        if result.content:
-            parsed: list[Any] = []
-            for item in result.content:
-                if isinstance(item, TextContent):
-                    try:
-                        parsed.append(json.loads(item.text))
-                    except Exception:
-                        parsed.append(item.text)
-                else:
-                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
-            return parsed if len(parsed) > 1 else parsed[0]
-        return []
-    if hasattr(result, "model_dump"):
-        return result.model_dump()
-    return result
 
 
 SYSTEM_PROMPT = (
@@ -229,7 +205,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                         print(f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}")
                         try:
                             result = await session.call_tool(func_name, func_args)
-                            result_data = _tool_result_data(result)
+                            result_data = tool_result_data(result)
                         except Exception as exc:
                             logger.error("Tool call failed: %s", exc)
                             continue
@@ -270,7 +246,7 @@ async def run_broker_agent(server_url: str = "http://localhost:8080"):
                     print(f"{ORANGE}[BrokerAgent] Tool requested: {func_name} {func_args}{RESET}")
                     try:
                         result = await session.call_tool(func_name, func_args)
-                        result_data = _tool_result_data(result)
+                        result_data = tool_result_data(result)
                     except Exception as exc:
                         logger.error("Tool call failed: %s", exc)
                         continue

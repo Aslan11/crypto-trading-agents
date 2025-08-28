@@ -40,29 +40,17 @@ tick_stats = {
     "session_start": int(datetime.now(timezone.utc).timestamp())
 }
 
+# Add parent directory to path for imports
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from agents.temporal_utils import get_temporal_client
+
 # Initialize FastMCP
 app = FastMCP("crypto-trading-server")
 
-# Shared Temporal client
-_temporal_client: Client | None = None
-_client_lock = asyncio.Lock()
-
 # Simple in-memory signal log for backward compatibility
 signal_log: dict[str, list[dict]] = {}
-
-
-async def get_temporal_client() -> Client:
-    """Connect to Temporal server (lazy singleton)."""
-    global _temporal_client
-    if _temporal_client is None:
-        async with _client_lock:
-            if _temporal_client is None:
-                address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
-                namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
-                logger.info("Connecting to Temporal at %s (ns=%s)", address, namespace)
-                _temporal_client = await Client.connect(address, namespace=namespace)
-                logger.info("Temporal client ready")
-    return _temporal_client
 
 
 @app.tool(annotations={"title": "Subscribe CEX Stream", "readOnlyHint": True})
@@ -995,6 +983,124 @@ async def get_judge_evaluations(limit: int = 20, since_ts: int = 0) -> Dict[str,
         "count": len(evaluations),
         "trend": trend
     }
+
+
+@app.tool(annotations={"title": "Send User Feedback", "readOnlyHint": False})
+async def send_user_feedback(
+    target_agent: str, 
+    message: str
+) -> Dict[str, Any]:
+    """Send feedback to either the execution or judge agent.
+    
+    This allows users to provide contextual feedback that will be incorporated
+    into the agent's conversation loop or evaluation process.
+    
+    Parameters
+    ----------
+    target_agent:
+        Which agent to send feedback to: "execution" or "judge"
+    message:
+        The feedback message to send
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Status of the feedback delivery
+    """
+    client = await get_temporal_client()
+    
+    try:
+        feedback_data = {
+            "message": message,
+            "source": "user",
+            "timestamp": int(datetime.now(timezone.utc).timestamp())
+        }
+        
+        if target_agent.lower() == "execution":
+            handle = client.get_workflow_handle("execution-agent")
+            await handle.signal("add_user_feedback", feedback_data)
+            logger.info(f"User feedback sent to execution agent: {message[:100]}...")
+            return {
+                "success": True,
+                "target": "execution-agent",
+                "message": "Feedback sent to execution agent successfully",
+                "feedback_preview": message[:200] + "..." if len(message) > 200 else message
+            }
+            
+        elif target_agent.lower() == "judge":
+            handle = client.get_workflow_handle("judge-agent")
+            await handle.signal("add_user_feedback", feedback_data)
+            logger.info(f"User feedback sent to judge agent: {message[:100]}...")
+            return {
+                "success": True,
+                "target": "judge-agent",
+                "message": "Feedback sent to judge agent successfully",
+                "feedback_preview": message[:200] + "..." if len(message) > 200 else message
+            }
+            
+        else:
+            return {
+                "success": False,
+                "error": f"Invalid target agent: {target_agent}. Must be 'execution' or 'judge'"
+            }
+            
+    except Exception as exc:
+        logger.error(f"Failed to send user feedback: {exc}")
+        return {
+            "success": False,
+            "error": f"Failed to send feedback: {str(exc)}"
+        }
+
+
+@app.tool(annotations={"title": "Get Pending Feedback", "readOnlyHint": True})
+async def get_pending_feedback(target_agent: str) -> Dict[str, Any]:
+    """Get any pending (unprocessed) feedback for an agent.
+    
+    Parameters
+    ----------
+    target_agent:
+        Which agent to check: "execution" or "judge"
+        
+    Returns
+    -------
+    Dict[str, Any]
+        List of pending feedback messages
+    """
+    client = await get_temporal_client()
+    
+    try:
+        if target_agent.lower() == "execution":
+            handle = client.get_workflow_handle("execution-agent")
+            pending = await handle.query("get_pending_feedback")
+            return {
+                "success": True,
+                "target": "execution-agent",
+                "pending_feedback": pending,
+                "count": len(pending)
+            }
+            
+        elif target_agent.lower() == "judge":
+            handle = client.get_workflow_handle("judge-agent")
+            pending = await handle.query("get_pending_feedback")
+            return {
+                "success": True,
+                "target": "judge-agent",
+                "pending_feedback": pending,
+                "count": len(pending)
+            }
+            
+        else:
+            return {
+                "success": False,
+                "error": f"Invalid target agent: {target_agent}. Must be 'execution' or 'judge'"
+            }
+            
+    except Exception as exc:
+        logger.error(f"Failed to get pending feedback: {exc}")
+        return {
+            "success": False,
+            "error": f"Failed to retrieve feedback: {str(exc)}"
+        }
 
 
 @app.tool(annotations={"title": "Get Prompt History", "readOnlyHint": True})

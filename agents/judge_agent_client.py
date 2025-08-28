@@ -18,16 +18,17 @@ from agents.workflows.judge_agent_workflow import JudgeAgentWorkflow
 from agents.workflows.execution_ledger_workflow import ExecutionLedgerWorkflow
 from tools.performance_analysis import PerformanceAnalyzer, format_performance_report
 from tools.agent_logger import AgentLogger
+from agents.utils import check_and_process_feedback
+from agents.constants import (
+    ORANGE, CYAN, GREEN, RED, RESET, 
+    DEFAULT_LOG_LEVEL, DEFAULT_OPENAI_MODEL,
+    DEFAULT_TEMPORAL_ADDRESS, DEFAULT_TEMPORAL_NAMESPACE,
+    JUDGE_AGENT, JUDGE_WF_ID, LEDGER_WF_ID
+)
+from agents.logging_utils import setup_logging
+from agents.temporal_utils import connect_temporal
 
-ORANGE = "\033[33m"
-CYAN = "\033[36m"
-GREEN = "\033[32m"
-RED = "\033[31m"
-RESET = "\033[0m"
-
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
+logger = setup_logging(__name__, level="INFO")
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -351,8 +352,8 @@ Respond in JSON format:
         
         return baseline
     
-    async def determine_context_updates(self, evaluation: Dict) -> Optional[Dict]:
-        """Determine if context updates are needed based on evaluation."""
+    async def determine_context_updates(self, evaluation: Dict, user_feedback: List[str] = None) -> Optional[Dict]:
+        """Determine if context updates are needed based on evaluation and user feedback."""
         overall_score = evaluation["overall_score"]
         performance_report = evaluation["performance_report"]
         component_scores = evaluation["component_scores"]
@@ -360,6 +361,25 @@ Respond in JSON format:
         # Get user preferences
         await self.get_user_preferences()
         user_prefs = self.get_user_baseline_preferences()
+        
+        # Check if we have user feedback that warrants an update
+        if user_feedback:
+            return {
+                "update_type": "user_feedback_update",
+                "reason": f"User provided direct feedback about agent performance",
+                "context": {
+                    "performance_score": overall_score,
+                    "component_scores": component_scores,
+                    "user_preferences": user_prefs,
+                    "user_feedback": user_feedback
+                },
+                "changes": [
+                    f"Incorporating user feedback into system prompt",
+                    f"User preferences: {user_prefs['risk_tolerance']} risk, {user_prefs['trading_style']} style",
+                    f"Feedback: {user_feedback[0][:100]}..." if user_feedback else "No feedback"
+                ],
+                "performance_report": performance_report
+            }
         
         # Check if performance warrants prompt examination and update
         if overall_score < self.update_threshold:
@@ -392,6 +412,11 @@ Respond in JSON format:
         elif 'user_preferences' in context:
             user_preferences = context.get('user_preferences', {})
         
+        # Extract user feedback from context if available
+        user_feedback = []
+        if 'context' in context and isinstance(context['context'], dict):
+            user_feedback = context['context'].get('user_feedback', [])
+        
         # Build user preferences section for the prompt
         user_prefs_section = ""
         if user_preferences:
@@ -402,6 +427,16 @@ USER PREFERENCES (CRITICAL - MUST BE REFLECTED IN THE PROMPT):
 - Experience Level: {user_preferences.get('experience_level', 'intermediate')}
 
 These preferences MUST be explicitly incorporated into the system prompt with specific behavioral guidelines that match the user's profile.
+"""
+        
+        # Build user feedback section for the prompt
+        user_feedback_section = ""
+        if user_feedback:
+            user_feedback_section = f"""
+USER FEEDBACK (CRITICAL - ADDRESS THESE CONCERNS):
+{chr(10).join(f"- {feedback}" for feedback in user_feedback)}
+
+The user has provided direct feedback about the agent's performance. You MUST address these specific concerns in the improved system prompt by adding explicit guidelines that will change the agent's behavior accordingly.
 """
         
         improvement_prompt = f"""You are a prompt engineering expert tasked with improving a trading agent's system prompt based on performance analysis and user preferences.
@@ -415,7 +450,7 @@ PERFORMANCE ANALYSIS:
 ```json
 {json.dumps(performance_report, indent=2)}
 ```
-{user_prefs_section}
+{user_prefs_section}{user_feedback_section}
 CONTEXT & ISSUES IDENTIFIED:
 - Update Type: {context.get('update_type', 'general_improvement')}
 - Reason: {context.get('reason', 'Performance optimization needed')}
@@ -424,10 +459,11 @@ CONTEXT & ISSUES IDENTIFIED:
 INSTRUCTIONS:
 1. Analyze the current prompt and performance data
 2. If user preferences are provided (risk tolerance, trading style, experience level), these should HEAVILY influence how you rewrite the prompt
-3. Make the prompt reflect the user's preferences through concrete behavioral changes, not just superficial mentions
-4. The trading agent's behavior should clearly align with the user's stated risk tolerance, trading style, and experience level
-5. Keep the prompt length reasonable (not too verbose)
-6. Ensure the agent remains fully autonomous and doesn't ask for confirmation
+3. If user feedback is provided, you MUST address each piece of feedback with specific behavioral changes in the prompt
+4. Make the prompt reflect the user's preferences through concrete behavioral changes, not just superficial mentions
+5. The trading agent's behavior should clearly align with the user's stated risk tolerance, trading style, and experience level
+6. Keep the prompt length reasonable (not too verbose)
+7. Ensure the agent remains fully autonomous and doesn't ask for confirmation
 
 CRITICAL REQUIREMENTS TO PRESERVE:
 - Full autonomy (no confirmation requests)
@@ -629,11 +665,21 @@ Return ONLY the improved system prompt, no explanations."""
         except Exception as exc:
             logger.debug("Failed to mark triggers as processed: %s", exc)
     
+    
     async def run_evaluation_cycle(self) -> None:
         """Run a complete evaluation cycle."""
         print(f"{ORANGE}[JudgeAgent] Starting evaluation cycle{RESET}")
         
         try:
+            # Check for user feedback first
+            user_feedback = await check_and_process_feedback(
+                self.temporal_client,
+                "judge-agent",
+                agent_name="JudgeAgent",
+                color_start=CYAN,
+                color_end=RESET
+            )
+            
             # Collect performance data
             print(f"{CYAN}[JudgeAgent] Collecting performance data...{RESET}")
             performance_data = await self.collect_performance_data(window_days=7)
@@ -663,8 +709,8 @@ Return ONLY the improved system prompt, no explanations."""
             for component, score in evaluation["component_scores"].items():
                 print(f"{CYAN}[JudgeAgent]   {component}: {score:.1f}{RESET}")
             
-            # Check for context updates
-            update_spec = await self.determine_context_updates(evaluation)
+            # Check for context updates (include user feedback if any)
+            update_spec = await self.determine_context_updates(evaluation, user_feedback)
             if update_spec:
                 print(f"{ORANGE}[JudgeAgent] Context update recommended: {update_spec['update_type']}{RESET}")
                 success = await self.implement_context_update(update_spec)
@@ -769,10 +815,7 @@ async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
     mcp_url = server_url.rstrip("/") + "/mcp/"
     
     # Connect to Temporal
-    temporal = await Client.connect(
-        os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
-        namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
-    )
+    temporal = await connect_temporal()
     
     # Connect to MCP server
     async with streamablehttp_client(mcp_url) as (read_stream, write_stream, _):

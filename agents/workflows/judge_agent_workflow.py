@@ -29,6 +29,7 @@ class JudgeAgentWorkflow:
         self.decision_count = 0
         self.action_count = 0
         self.summary_count = 0
+        self.user_feedback: List[Dict[str, Any]] = []  # Store user feedback messages
 
     @workflow.signal
     def record_evaluation(self, evaluation: Dict) -> None:
@@ -288,6 +289,32 @@ class JudgeAgentWorkflow:
             "event_type": "action", 
             "limit": limit
         })
+    
+    @workflow.signal
+    def add_user_feedback(self, feedback_data: Dict[str, Any]) -> None:
+        """Add user feedback to be incorporated into the judge's evaluation."""
+        feedback_entry = {
+            **self._get_timestamp(),
+            "feedback_id": f"feedback_{len(self.user_feedback) + 1}",
+            "message": feedback_data.get("message", ""),
+            "source": feedback_data.get("source", "user"),
+            "processed": False
+        }
+        self.user_feedback.append(feedback_entry)
+        workflow.logger.info(f"Judge received user feedback: {feedback_data.get('message', '')[:100]}...")
+    
+    @workflow.query
+    def get_pending_feedback(self) -> List[Dict[str, Any]]:
+        """Get unprocessed user feedback."""
+        return [fb for fb in self.user_feedback if not fb.get("processed", False)]
+    
+    @workflow.signal
+    def mark_feedback_processed(self, feedback_id: str) -> None:
+        """Mark a feedback message as processed."""
+        for feedback in self.user_feedback:
+            if feedback.get("feedback_id") == feedback_id:
+                feedback["processed"] = True
+                break
 
     @workflow.run
     async def run(self) -> None:

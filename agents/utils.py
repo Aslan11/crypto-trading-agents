@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from pprint import pformat
-from typing import Any
+from typing import Any, List, Dict
+import logging
+import json
+from mcp.types import CallToolResult, TextContent
+
+logger = logging.getLogger(__name__)
 
 
 def print_banner(name: str, purpose: str) -> None:
@@ -22,6 +27,37 @@ def format_log(data: Any) -> str:
     if isinstance(data, str):
         return data
     return pformat(data, width=60)
+
+
+def tool_result_data(result: Any) -> Any:
+    """Return JSON-friendly data from a tool call result.
+    
+    Parameters
+    ----------
+    result:
+        The result from an MCP tool call
+        
+    Returns
+    -------
+    Any
+        Parsed JSON data or the original result
+    """
+    if isinstance(result, CallToolResult):
+        if result.content:
+            parsed: list[Any] = []
+            for item in result.content:
+                if isinstance(item, TextContent):
+                    try:
+                        parsed.append(json.loads(item.text))
+                    except Exception:
+                        parsed.append(item.text)
+                else:
+                    parsed.append(item.model_dump() if hasattr(item, "model_dump") else item)
+            return parsed if len(parsed) > 1 else parsed[0]
+        return []
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    return result
 
 
 
@@ -88,5 +124,67 @@ def stream_chat_completion(client, *, prefix: str = "", color: str = "", reset: 
     return message
 
 
-__all__ = ["print_banner", "format_log", "stream_chat_completion"]
+async def check_and_process_feedback(
+    client,
+    workflow_id: str,
+    conversation: List[Dict[str, Any]] = None,
+    agent_name: str = "Agent",
+    color_start: str = "",
+    color_end: str = ""
+) -> List[str]:
+    """Check for pending user feedback and process it.
+    
+    Parameters
+    ----------
+    client:
+        Temporal client instance
+    workflow_id:
+        ID of the workflow to query for feedback
+    conversation:
+        Optional conversation list to append feedback to (for execution agent)
+    agent_name:
+        Name of the agent for logging purposes
+    color_start:
+        ANSI color code for output formatting
+    color_end:
+        ANSI color code to reset formatting
+        
+    Returns
+    -------
+    List[str]
+        List of feedback messages that were processed
+    """
+    feedback_messages = []
+    try:
+        handle = client.get_workflow_handle(workflow_id)
+        pending_feedback = await handle.query("get_pending_feedback")
+        
+        if pending_feedback:
+            print(f"{color_start}[{agent_name}] 📨 Processing {len(pending_feedback)} user feedback message(s){color_end}")
+            
+            for feedback in pending_feedback:
+                feedback_messages.append(feedback['message'])
+                
+                # Add to conversation if provided (for execution agent)
+                if conversation is not None:
+                    feedback_message = {
+                        "role": "user",
+                        "content": f"[USER FEEDBACK]: {feedback['message']}"
+                    }
+                    conversation.append(feedback_message)
+                
+                # Mark feedback as processed
+                await handle.signal("mark_feedback_processed", feedback["feedback_id"])
+                
+                print(f"{color_start}[{agent_name}] ✅ Processed feedback: {feedback['message'][:100]}...{color_end}")
+                
+    except Exception as exc:
+        logger.debug(f"Failed to check feedback for {agent_name}: {exc}")
+        # Silently continue if there's an error
+        pass
+    
+    return feedback_messages
+
+
+__all__ = ["print_banner", "format_log", "stream_chat_completion", "check_and_process_feedback", "tool_result_data"]
 

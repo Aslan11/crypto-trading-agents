@@ -6,7 +6,7 @@ import openai
 import logging
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from agents.utils import stream_chat_completion
+from agents.utils import stream_chat_completion, check_and_process_feedback, tool_result_data
 from mcp.types import CallToolResult, TextContent
 from agents.context_manager import create_context_manager
 from datetime import timedelta
@@ -23,10 +23,14 @@ from tools.ensemble_nudge import EnsembleNudgeWorkflow
 from agents.workflows.broker_agent_workflow import BrokerAgentWorkflow
 from agents.workflows.execution_agent_workflow import ExecutionAgentWorkflow
 from tools.agent_logger import AgentLogger
-
-ORANGE = "\033[33m"
-PINK = "\033[95m"
-RESET = "\033[0m"
+from agents.constants import (
+    ORANGE, PINK, RESET, DEFAULT_OPENAI_MODEL, 
+    DEFAULT_TEMPORAL_ADDRESS, DEFAULT_TEMPORAL_NAMESPACE,
+    DEFAULT_TASK_QUEUE, EXECUTION_WF_ID, NUDGE_SCHEDULE_ID,
+    EXECUTION_AGENT
+)
+from agents.logging_utils import setup_logging
+from agents.temporal_utils import connect_temporal
 
 # Tools this agent is allowed to call
 ALLOWED_TOOLS = {
@@ -41,12 +45,7 @@ ALLOWED_TOOLS = {
 
 # Context management is now handled by the ContextManager class
 
-NUDGE_SCHEDULE_ID = "ensemble-nudge"
-
-
-
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("openai").setLevel(logging.WARNING)
+logger = setup_logging(__name__)
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -91,28 +90,6 @@ SYSTEM_PROMPT = (
     
     "Execute trades decisively using `place_mock_order`. Report completed actions and reasoning."
 )
-
-
-def _tool_result_data(result: Any) -> Any:
-    """Return JSON-friendly data from a tool call result."""
-    if isinstance(result, CallToolResult):
-        if result.content:
-            parsed: list[Any] = []
-            for item in result.content:
-                if isinstance(item, TextContent):
-                    try:
-                        parsed.append(json.loads(item.text))
-                    except Exception:
-                        parsed.append(item.text)
-                else:
-                    parsed.append(
-                        item.model_dump() if hasattr(item, "model_dump") else item
-                    )
-            return parsed if len(parsed) > 1 else parsed[0]
-        return []
-    if hasattr(result, "model_dump"):
-        return result.model_dump()
-    return result
 
 
 async def _watch_symbols(client: Client, symbols: Set[str]) -> None:
@@ -193,33 +170,6 @@ async def _watch_system_prompt_updates(client: Client, conversation: list) -> No
         await asyncio.sleep(5)  # Check every 5 seconds
 
 
-async def _check_and_process_feedback(client: Client, conversation: list) -> None:
-    """Check for pending user feedback and add it to the conversation."""
-    try:
-        handle = client.get_workflow_handle("execution-agent")
-        pending_feedback = await handle.query("get_pending_feedback")
-        
-        if pending_feedback:
-            print(f"[ExecutionAgent] 📨 Processing {len(pending_feedback)} user feedback message(s)")
-            
-            for feedback in pending_feedback:
-                # Add feedback to conversation as a user message
-                feedback_message = {
-                    "role": "user",
-                    "content": f"[USER FEEDBACK]: {feedback['message']}"
-                }
-                conversation.append(feedback_message)
-                
-                # Mark feedback as processed
-                await handle.signal("mark_feedback_processed", feedback["feedback_id"])
-                
-                print(f"[ExecutionAgent] ✅ Processed feedback: {feedback['message'][:100]}...")
-                
-    except Exception as exc:
-        # Silently continue if there's an error
-        pass
-
-
 async def _stream_nudges(client: Client) -> AsyncIterator[int]:
     """Yield timestamps from execution-agent workflow nudges."""
     wf_id = os.environ.get("EXECUTION_WF_ID", "execution-agent")
@@ -278,10 +228,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
     base_url = server_url.rstrip("/")
     mcp_url = base_url + "/mcp/"
 
-    temporal = await Client.connect(
-        os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
-        namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
-    )
+    temporal = await connect_temporal()
     
     # Initialize context manager
     model = os.environ.get("OPENAI_MODEL", "gpt-4o")
@@ -339,7 +286,12 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 print(f"[ExecutionAgent] Nudge @ {ts} for {sorted(symbols)}")
                 
                 # Check for any pending user feedback before processing
-                await _check_and_process_feedback(temporal, conversation)
+                await check_and_process_feedback(
+                    temporal, 
+                    "execution-agent", 
+                    conversation=conversation,
+                    agent_name="ExecutionAgent"
+                )
                 
                 # ===============================
                 # DETERMINISTIC DATA COLLECTION PHASE (PARALLEL)
@@ -373,7 +325,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 print(f"[ExecutionAgent] ✓ Collected all data in parallel")
                 
                 # Extract and update latest processed timestamp for next cycle
-                historical_ticks_data = _tool_result_data(historical_data)
+                historical_ticks_data = tool_result_data(historical_data)
                 
                 if historical_ticks_data and isinstance(historical_ticks_data, dict):
                     # Find the latest timestamp from all symbols' tick data
@@ -401,11 +353,11 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                 collected_data = {
                     "nudge_timestamp": ts,
                     "symbols": sorted(symbols),
-                    "historical_ticks": _tool_result_data(historical_data),
-                    "portfolio_status": _tool_result_data(portfolio_data),
-                    "user_preferences": _tool_result_data(user_preferences),
-                    "performance_metrics": _tool_result_data(performance_metrics),
-                    "risk_metrics": _tool_result_data(risk_metrics)
+                    "historical_ticks": tool_result_data(historical_data),
+                    "portfolio_status": tool_result_data(portfolio_data),
+                    "user_preferences": tool_result_data(user_preferences),
+                    "performance_metrics": tool_result_data(performance_metrics),
+                    "risk_metrics": tool_result_data(risk_metrics)
                 }
                 
                 print(f"[ExecutionAgent] Data collection complete. Starting analysis phase...")
@@ -479,7 +431,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                             )
                             
                             result = await session.call_tool(func_name, func_args)
-                            result_data = _tool_result_data(result)
+                            result_data = tool_result_data(result)
                             
                             conversation.append(
                                 {
@@ -516,7 +468,7 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         )
                         
                         result = await session.call_tool(func_name, func_args)
-                        result_data = _tool_result_data(result)
+                        result_data = tool_result_data(result)
                         
                         conversation.append(
                             {
@@ -549,17 +501,17 @@ async def run_execution_agent(server_url: str = "http://localhost:8080") -> None
                         await agent_logger.log_decision(
                             nudge_timestamp=ts,
                             symbols=sorted(symbols),
-                            market_data={"historical_ticks": _tool_result_data(historical_data)},
-                            portfolio_data=_tool_result_data(portfolio_data),
-                            user_preferences=_tool_result_data(user_preferences),
+                            market_data={"historical_ticks": tool_result_data(historical_data)},
+                            portfolio_data=tool_result_data(portfolio_data),
+                            user_preferences=tool_result_data(user_preferences),
                             decisions={
                                 "orders_placed": len(decisions_made),
                                 "decisions": decisions_made,
                                 "hold_decisions": len(symbols) - len(decisions_made)
                             },
                             reasoning=assistant_reply,
-                            performance_metrics=_tool_result_data(performance_metrics),
-                            risk_metrics=_tool_result_data(risk_metrics),
+                            performance_metrics=tool_result_data(performance_metrics),
+                            risk_metrics=tool_result_data(risk_metrics),
                             latest_processed_timestamp=latest_processed_ts
                         )
                         

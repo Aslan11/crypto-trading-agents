@@ -18,16 +18,17 @@ from agents.workflows.judge_agent_workflow import JudgeAgentWorkflow
 from agents.workflows.execution_ledger_workflow import ExecutionLedgerWorkflow
 from tools.performance_analysis import PerformanceAnalyzer, format_performance_report
 from tools.agent_logger import AgentLogger
+from agents.utils import check_and_process_feedback
+from agents.constants import (
+    ORANGE, CYAN, GREEN, RED, RESET, 
+    DEFAULT_LOG_LEVEL, DEFAULT_OPENAI_MODEL,
+    DEFAULT_TEMPORAL_ADDRESS, DEFAULT_TEMPORAL_NAMESPACE,
+    JUDGE_AGENT, JUDGE_WF_ID, LEDGER_WF_ID
+)
+from agents.logging_utils import setup_logging
+from agents.temporal_utils import connect_temporal
 
-ORANGE = "\033[33m"
-CYAN = "\033[36m"
-GREEN = "\033[32m"
-RED = "\033[31m"
-RESET = "\033[0m"
-
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
+logger = setup_logging(__name__, level="INFO")
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -664,28 +665,6 @@ Return ONLY the improved system prompt, no explanations."""
         except Exception as exc:
             logger.debug("Failed to mark triggers as processed: %s", exc)
     
-    async def _check_and_process_feedback(self) -> List[str]:
-        """Check for pending user feedback and return it for evaluation context."""
-        feedback_messages = []
-        try:
-            handle = self.temporal_client.get_workflow_handle("judge-agent")
-            pending_feedback = await handle.query("get_pending_feedback")
-            
-            if pending_feedback:
-                print(f"{CYAN}[JudgeAgent] 📨 Found {len(pending_feedback)} user feedback message(s){RESET}")
-                
-                for feedback in pending_feedback:
-                    feedback_messages.append(feedback['message'])
-                    
-                    # Mark feedback as processed
-                    await handle.signal("mark_feedback_processed", feedback["feedback_id"])
-                    
-                    print(f"{GREEN}[JudgeAgent] ✅ Processing feedback: {feedback['message'][:100]}...{RESET}")
-                    
-        except Exception as exc:
-            logger.debug("Failed to check feedback: %s", exc)
-        
-        return feedback_messages
     
     async def run_evaluation_cycle(self) -> None:
         """Run a complete evaluation cycle."""
@@ -693,7 +672,13 @@ Return ONLY the improved system prompt, no explanations."""
         
         try:
             # Check for user feedback first
-            user_feedback = await self._check_and_process_feedback()
+            user_feedback = await check_and_process_feedback(
+                self.temporal_client,
+                "judge-agent",
+                agent_name="JudgeAgent",
+                color_start=CYAN,
+                color_end=RESET
+            )
             
             # Collect performance data
             print(f"{CYAN}[JudgeAgent] Collecting performance data...{RESET}")
@@ -830,10 +815,7 @@ async def run_judge_agent(server_url: str = "http://localhost:8080") -> None:
     mcp_url = server_url.rstrip("/") + "/mcp/"
     
     # Connect to Temporal
-    temporal = await Client.connect(
-        os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
-        namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
-    )
+    temporal = await connect_temporal()
     
     # Connect to MCP server
     async with streamablehttp_client(mcp_url) as (read_stream, write_stream, _):

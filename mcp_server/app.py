@@ -40,29 +40,17 @@ tick_stats = {
     "session_start": int(datetime.now(timezone.utc).timestamp())
 }
 
+# Add parent directory to path for imports
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from agents.temporal_utils import get_temporal_client
+
 # Initialize FastMCP
 app = FastMCP("crypto-trading-server")
 
-# Shared Temporal client
-_temporal_client: Client | None = None
-_client_lock = asyncio.Lock()
-
 # Simple in-memory signal log for backward compatibility
 signal_log: dict[str, list[dict]] = {}
-
-
-async def get_temporal_client() -> Client:
-    """Connect to Temporal server (lazy singleton)."""
-    global _temporal_client
-    if _temporal_client is None:
-        async with _client_lock:
-            if _temporal_client is None:
-                address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
-                namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
-                logger.info("Connecting to Temporal at %s (ns=%s)", address, namespace)
-                _temporal_client = await Client.connect(address, namespace=namespace)
-                logger.info("Temporal client ready")
-    return _temporal_client
 
 
 @app.tool(annotations={"title": "Subscribe CEX Stream", "readOnlyHint": True})

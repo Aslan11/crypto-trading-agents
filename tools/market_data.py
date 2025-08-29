@@ -13,6 +13,7 @@ import aiohttp
 from pydantic import BaseModel
 from temporalio import activity, workflow
 from tools.feature_engineering import signal_compute_vector, load_historical_data
+from agents.constants import STREAM_CONTINUE_EVERY, STREAM_HISTORY_LIMIT
 
 
 class MarketTick(BaseModel):
@@ -27,9 +28,6 @@ class MarketTick(BaseModel):
 MCP_HOST = os.environ.get("MCP_HOST", "localhost")
 MCP_PORT = os.environ.get("MCP_PORT", "8080")
 
-# Automatically continue the workflow periodically to avoid unbounded history
-STREAM_CONTINUE_EVERY = int(os.environ.get("STREAM_CONTINUE_EVERY", "3600"))
-STREAM_HISTORY_LIMIT = int(os.environ.get("STREAM_HISTORY_LIMIT", "9000"))
 # Historical data to load on startup (in minutes)
 HISTORICAL_MINUTES = int(os.environ.get("HISTORICAL_MINUTES", "60"))  # Default 1 hour
 

@@ -10,10 +10,7 @@ from temporalio.client import Client
 import os
 import asyncio
 import logging
-
-VECTOR_WINDOW_SEC = int(os.environ.get("VECTOR_WINDOW_SEC", "300"))
-VECTOR_CONTINUE_EVERY = int(os.environ.get("VECTOR_CONTINUE_EVERY", "3600"))
-VECTOR_HISTORY_LIMIT = int(os.environ.get("VECTOR_HISTORY_LIMIT", "9000"))
+from agents.constants import VECTOR_WINDOW_SEC, VECTOR_CONTINUE_EVERY, VECTOR_HISTORY_LIMIT
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(levelname)s: %(message)s")

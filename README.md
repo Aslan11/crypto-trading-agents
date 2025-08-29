@@ -1,6 +1,6 @@
 # Crypto Durable Trading Agents
 
-A 24×7 multi-agent crypto trading stack built on Temporal and Model Context Protocol (MCP) with integrated LLM as Judge performance optimization. Every `@mcp.tool()` is backed by a deterministic Temporal workflow, providing exactly-once execution, automatic retries and full replay for audit and compliance.
+A 24×7 multi-agent crypto trading stack built on Temporal and Model Context Protocol (MCP) with integrated LLM as Judge performance optimization. Every `@mcp.tool()` is backed by Temporal primitives (workflows, signals, or queries), providing deterministic execution, automatic retries and full replay for audit and compliance.
 
 ## ✨ Key Features
 
@@ -15,6 +15,7 @@ A 24×7 multi-agent crypto trading stack built on Temporal and Model Context Pro
 - **⚡ Durable Execution**: Built on Temporal workflows for fault tolerance and auditability
 
 ## Table of Contents
+
 - [Background](#background)
 - [Architecture](#architecture)
 - [Durable Tools Catalog](#durable-tools-catalog)
@@ -25,6 +26,7 @@ A 24×7 multi-agent crypto trading stack built on Temporal and Model Context Pro
 - [License](#license)
 
 ## Background
+
 Crypto markets never close. Building an automated trading system therefore demands:
 
 - **Continuous orchestration** – agents must coordinate 24×7 without downtime.
@@ -38,60 +40,78 @@ Temporal supplies resilient workflows while MCP gives agents a shared, tool-base
 The system consists of three main agents working together:
 
 ### 🏆 Single Interface Design
+
 The **Broker Agent** serves as the sole user interface, providing access to all system functionality including trading, performance analysis, and evaluation triggering.
 
 ```
-                 ┌─────┐
-                 │User │
-                 └─┬───┘
-                   │ commands & queries
-                   ▼
-           ┌──────────────────┐
-           │  Broker Agent    │◄─── Single User Interface
-           │  - Trading       │     • Market data & portfolio
-           │  - Analytics     │     • Performance evaluation
-           │  - Evaluation    │     • Transaction history
-           └──────┬───────────┘     • Risk metrics
-                  │ start_market_stream
-                  ▼
-           ┌──────────────────┐
-           │ Market Stream WF │
-           └──────┬───────────┘
-                  │ ticks
-                  ▼
-           ┌──────────────────┐
-           │ Feature Vector   │
-           └──────┬───────────┘
-                  │ history
-                  ▼
-           ┌──────────────────┐     ┌──────────────────┐
-           │ Execution Agent  │◄────┤  Judge Agent     │
-           │ - Dynamic Prompts│     │ - LLM as Judge   │
-           │ - Risk Management│     │ - Performance    │
-           │ - Order Execution│     │   Evaluation     │
-           └──────┬───────────┘     │ - Prompt Updates │
-                  │ orders          └─────────┬────────┘
-                  ▼                           │ evaluations
-           ┌──────────────────┐               │
-           │ Mock Order WF    │               │
-           └──────┬───────────┘               │
-                  │ fills                     │
-                  ▼                           ▼
-           ┌──────────────────┐     ┌──────────────────┐
-           │ Execution Ledger │────►│ Performance      │
-           │ - Transactions   │     │ Analytics        │
-           │ - P&L Tracking   │     │ - Sharpe Ratio   │
-           │ - Risk Metrics   │     │ - Drawdown       │
-           └──────────────────┘     │ - Decision Qual. │
-                  ▲                 └──────────────────┘
-                  │ nudges
+               ┌──────┐
+               │ User │
+               └──┬───┘
                   │
+                  ▼
            ┌──────────────────┐
-           │ Scheduled Nudges │
-           └──────────────────┘
+           │  Broker Agent    │◄────────────── Single User Interface
+           │  - Trading       │                  • Stream Market Data
+           │  - Analytics     │                  • Portfolio Status
+  ┌────────┤  - Evaluation    │─────────────┐    • Transaction History
+  │        └──────┬───────────┘             │    • User Feedback
+  │               │                         │
+  │               │ start_market_stream     │
+  │               ▼                         │
+  │        ┌──────────────────┐             │
+  │        │ Market Stream WF │             │
+  │        └──────┬───────────┘             │
+  │               │                         │
+  │               ▼                         │
+  │        ┌──────────────────┐             │
+  │    ┌──►│ Feature Vectors  │             │
+  │    │   └──────────────────┘             │
+  │    │                                    │
+  │    │                                    │
+  │    │ get_historical_ticks               │
+  │    │                                    │
+  │    │   ┌──────────────────┐             │
+  │    │   │ Scheduled Nudges │             │
+  │    │   └──────┬───────────┘             │ send_user_feedback
+  │    │          │      ┌────────────────────────────────────┐
+  │    │          ▼      ▼                                    ▼
+  │    │   ┌──────────────────┐                      ┌──────────────────┐
+  │    │   │ Execution Agent  │◄─────────────────────┤  Judge Agent     │
+  │    └───│ - Dynamic Prompts│ get_prompt_history   │ - LLM as Judge   │
+  │        │ - Risk Management│ update_system_prompt │ - Performance    │
+  │        │ - Order Execution│                      │   Evaluation     │
+  │        └──────┬───────────┘                      │ - Prompt Updates │
+  │               │ place_mock_order                 └───────┬──────────┘
+  │               ▼                                          │
+  │        ┌──────────────────┐                              │
+  │        │ Mock Order WF    │      get_performance_metrics │
+  │        └──────┬───────────┘                              │
+  │               │ fills                                    │
+  │               ▼                                          │
+  │        ┌──────────────────┐     ┌──────────────────┐     │
+  │        │ Execution Ledger │────►│ Performance      │◄────┘
+  │        │ - Transactions   │     │ Analytics        │
+  │        │ - P&L Tracking   │     │ - Sharpe Ratio   │
+  │        │ - Risk Metrics   │     │ - Drawdown       │
+  │        └──────────────────┘     │ - Decision Qual. │
+  │                 ▲               └──────────────────┘
+  └─────────────────┘
+   get_portfolio_status
+   get_transaction_history
+
 ```
 
-### 🔄 LLM as Judge Workflow
+### 🤖 Execution Agent
+
+The execution agent is the core trading decision-maker in the system:
+
+- **Automated Trading**: Receives scheduled nudges every 25 seconds to evaluate market conditions and execute trades
+- **Dynamic Adaptation**: System prompts are continuously updated by the Judge Agent based on performance
+- **User Alignment**: Incorporates user preferences (risk tolerance, trading style) and feedback into decision-making
+- **Portfolio Management**: Queries portfolio status and recent historical ticks before making buy/sell/hold decisions
+
+### 🔄 LLM as Judge Agent
+
 The judge agent continuously monitors performance and automatically optimizes the execution agent:
 
 1. **Performance Monitoring**: Evaluates trading performance dynamically (10-minute startup delay, then adaptive timing)
@@ -105,51 +125,58 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 
 ### Core Trading Tools
 
-| Tool (Workflow)            | Purpose                                                | Typical Triggers        |
-|----------------------------|--------------------------------------------------------|-------------------------|
-| `subscribe_cex_stream`   | Fan-in ticker data from centralized exchanges  | Startup, reconnect    |
-| `start_market_stream`    | Begin streaming market data for selected pairs | Auto-started by broker after pair selection |
-| `HistoricalDataLoaderWorkflow` | Load 1-hour historical data for informed startup | System initialization |
-| `ComputeFeatureVector`   | Store tick history for queries                | Market tick           |
-| `PlaceMockOrder`         | Simulate order execution and return a fill     | Portfolio rebalance   |
-| `ExecutionLedgerWorkflow`| Track fills, positions, transaction history, and profit scraping | Fill events           |
+| Tool                           | Primitive | Purpose                                                          | Typical Triggers                            |
+| ------------------------------ | --------- | ---------------------------------------------------------------- | ------------------------------------------- |
+| `subscribe_cex_stream`         | Workflow  | Fan-in ticker data from centralized exchanges                    | Startup, reconnect                          |
+| `start_market_stream`          | Workflow  | Begin streaming market data for selected pairs                   | Auto-started by broker after pair selection |
+| `HistoricalDataLoaderWorkflow` | Workflow  | Load 1-hour historical data for informed startup                 | System initialization                       |
+| `place_mock_order`             | Workflow  | Simulate order execution and return a fill                       | Portfolio rebalance                         |
+| `ExecutionLedgerWorkflow`      | Workflow  | Track fills, positions, transaction history, and profit scraping | Fill events                                 |
 
 ### Performance & Analytics Tools
 
-| Tool (Workflow)            | Purpose                                                | Typical Triggers        |
-|----------------------------|--------------------------------------------------------|-------------------------|
-| `get_transaction_history`  | Retrieve filtered transaction history               | User queries, evaluations |
-| `get_performance_metrics`  | Calculate returns, Sharpe ratio, win rates         | Performance analysis    |
-| `get_risk_metrics`         | Analyze position concentration and leverage         | Risk monitoring         |
-| `get_portfolio_status`     | Current cash, positions, and P&L                   | User queries            |
+| Tool                      | Primitive | Purpose                                     | Typical Triggers          |
+| ------------------------- | --------- | ------------------------------------------- | ------------------------- |
+| `get_transaction_history` | Query     | Retrieve filtered transaction history       | User queries, evaluations |
+| `get_performance_metrics` | Query     | Calculate returns, Sharpe ratio, win rates  | Performance analysis      |
+| `get_risk_metrics`        | Query     | Analyze position concentration and leverage | Risk monitoring           |
+| `get_portfolio_status`    | Query     | Current cash, positions, and P&L            | User queries              |
 
 ### Judge Agent Tools
 
-| Tool (Workflow)            | Purpose                                                | Typical Triggers        |
-|----------------------------|--------------------------------------------------------|-------------------------|
-| `trigger_performance_evaluation` | Force immediate performance evaluation        | User request, poor performance |
-| `get_judge_evaluations`    | Retrieve recent performance evaluations            | User queries            |
-| `get_prompt_history`       | View prompt evolution and version history           | System monitoring       |
-| `JudgeAgentWorkflow`       | Manage evaluation state and prompt versions        | Judge agent lifecycle   |
+| Tool                             | Primitive | Purpose                                     | Typical Triggers               |
+| -------------------------------- | --------- | ------------------------------------------- | ------------------------------ |
+| `trigger_performance_evaluation` | Signal    | Force immediate performance evaluation      | User request, poor performance |
+| `get_judge_evaluations`          | Query     | Retrieve recent performance evaluations     | User queries                   |
+| `get_prompt_history`             | Query     | View prompt evolution and version history   | System monitoring              |
+| `JudgeAgentWorkflow`             | Workflow  | Manage evaluation state and prompt versions | Judge agent lifecycle          |
 
-### Agent Logging Tools
+### User Interaction Tools
 
-| Tool (Workflow)            | Purpose                                                | Typical Triggers        |
-|----------------------------|--------------------------------------------------------|-------------------------|
-| `ExecutionAgentWorkflow`   | Individual execution agent logging and state          | Agent decisions         |
-| `JudgeAgentWorkflow`       | Individual judge agent logging and evaluations        | Performance analysis    |
-| `BrokerAgentWorkflow`      | Broker agent state and user interaction logging       | User interactions       |
+| Tool                   | Primitive | Purpose                                    | Typical Triggers   |
+| ---------------------- | --------- | ------------------------------------------ | ------------------ |
+| `set_user_preferences` | Signal    | Update trading preferences (risk, style)   | User configuration |
+| `get_user_preferences` | Query     | Retrieve current user trading preferences  | Agent decisions    |
+| `send_user_feedback`   | Signal    | Send feedback to execution or judge agents | User interaction   |
+| `get_pending_feedback` | Query     | Retrieve unprocessed user feedback         | Agent processing   |
 
+### Agent Workflows
+
+| Workflow Name            | Purpose                                         | Typical Triggers     |
+| ------------------------ | ----------------------------------------------- | -------------------- |
+| `ExecutionAgentWorkflow` | Individual execution agent logging and state    | Agent decisions      |
+| `JudgeAgentWorkflow`     | Individual judge agent logging and evaluations  | Performance analysis |
+| `BrokerAgentWorkflow`    | Broker agent state and user interaction logging | User interactions    |
 
 ## Getting Started
 
 ### Prerequisites
 
-| Requirement  | Version      | Notes                                        |
-|--------------|--------------|----------------------------------------------|
-| Python       | 3.11 or newer| Data & strategy agents                       |
-| Temporal CLI | 1.24+        | `brew install temporal` or use Temporal Cloud|
-| tmux         | latest       | Required for `run_stack.sh` start script     |
+| Requirement  | Version       | Notes                                         |
+| ------------ | ------------- | --------------------------------------------- |
+| Python       | 3.11 or newer | Data & strategy agents                        |
+| Temporal CLI | 1.24+         | `brew install temporal` or use Temporal Cloud |
+| tmux         | latest        | Required for `run_stack.sh` start script      |
 
 Required environment variables:
 
@@ -160,6 +187,7 @@ Required environment variables:
 - `HISTORICAL_MINUTES` – minutes of historical data to load on startup (defaults to `60` for 1 hour).
 
 ### Quick Setup (local dev)
+
 ```bash
 # Clone and bootstrap
 git clone https://github.com/your-org/durable-crypto-agents.git
@@ -173,6 +201,7 @@ uv sync
 # Launch the full stack
 ./run_stack.sh
 ```
+
 Point your agent workers at `localhost:8080` (default MCP port) and confirm health at <http://localhost:8080/healthz>.
 
 ## Demo
@@ -182,39 +211,44 @@ The quickest way to see the stack in action is to run the included `run_stack.sh
 ```bash
 ./run_stack.sh
 ```
-This starts the Temporal dev server, Python worker, MCP server and several sample agents. Each component runs in its own `tmux` pane so you can watch log output as orders flow through the system. Detach from the session with `Ctrl-b d` and reattach anytime by running the script again.
+
+This starts the Temporal dev server, Python worker, MCP server and several sample agents. Each component runs in its own `tmux` pane so you can watch log output as orders flow through the system. Detach from the session with `Ctrl-b d` and reattach anytime by running the script again. Shutdown is as simple as ctrl+c in any tmux pane and then entering `tmux kill-server`
 
 ### Walking through the demo
-1. With the tmux session running, open a new terminal window.
-2. When prompted for trading pairs, tell the broker agent **"BTC/USD, ETH/USD, SOL/USD"** (recommended 3-5 pairs for optimal performance).
+
+1. Run the shell script `./run_stack.sh`
+2. When prompted for trading pairs, tell the broker agent **"BTC/USD, ETH/USD, DOGE/USD"** (recommended 2-4 pairs for optimal performance).
 3. `start_market_stream` automatically loads 1 hour of historical data, then spawns a `subscribe_cex_stream` workflow that broadcasts each ticker to its `ComputeFeatureVector` child.
 4. The execution agent wakes up periodically via a scheduled workflow and analyzes market data to decide whether to trade using `place_mock_order`.
-5. Filled orders are recorded in the `ExecutionLedgerWorkflow` with automatic profit scraping if configured.
+5. Filled orders are recorded in the `ExecutionLedgerWorkflow` with automatic profit scraping.
 6. The judge agent monitors performance autonomously (10-minute startup delay) and can be queried through the broker:
    - **"How is the system performing?"** - Triggers evaluation and shows metrics
    - **"What's the transaction history?"** - Shows recent trades and fills
    - **"Evaluate performance"** - Forces immediate performance analysis
 
 ### 🤖 Interacting with the System
+
 The broker agent serves as your single interface. Try these commands:
 
 **Trading Commands:**
+
 - `"Start trading BTC/USD and ETH/USD"` (or choose from expanded DeFi/Layer 2 options)
 - `"What's my portfolio status?"` (includes profit scraping details)
 - `"Show me recent transactions"`
 
 **Performance Analysis:**
+
 - `"How is the system performing?"`
 - `"Trigger a performance evaluation"`
 - `"Show me the latest evaluation results"`
 - `"What are the current risk metrics?"`
 
 **System Insights:**
+
 - `"Show prompt evolution history"`
 - `"What performance trends do you see?"`
 
-
-`subscribe_cex_stream` automatically restarts itself via Temporal's *continue as new*
+`subscribe_cex_stream` automatically restarts itself via Temporal's _continue as new_
 mechanism after a configurable number of cycles to prevent unbounded workflow
 history growth. The default interval is one hour (3600 cycles) and can be
 changed by setting the `STREAM_CONTINUE_EVERY` environment variable. The workflow
@@ -224,6 +258,7 @@ also checks its current history length and continues early when it exceeds
 and `VECTOR_HISTORY_LIMIT` environment variables.
 
 ## Repository Layout
+
 ```
 ├── agents/                    # Multi-agent system components
 │   ├── broker_agent_client.py    # Single user interface agent
@@ -259,21 +294,25 @@ and `VECTOR_HISTORY_LIMIT` environment variables.
 The system implements a sophisticated "LLM as Judge" pattern for continuous self-improvement:
 
 ### Performance Evaluation Framework
+
 - **Multi-dimensional Analysis**: Evaluates returns, risk management, decision quality, and consistency
 - **Automated Scoring**: Combines quantitative metrics with LLM-based decision analysis
 - **Trend Detection**: Identifies performance patterns and degradation early
 
 ### Dynamic Prompt Optimization
+
 - **Template System**: Modular prompt components for different trading scenarios
 - **Automatic Updates**: Switches between conservative, standard, and aggressive modes based on performance
 - **Version Tracking**: Full history of prompt changes with performance attribution
 
 ### Intelligent Triggers
+
 - **Poor Performance**: Automatic intervention when scores drop below thresholds
 - **High Drawdown**: Emergency conservative mode activation
 - **Overly Conservative**: Increased risk-taking when performance is too safe
 
 ### Example Evaluation Cycle
+
 ```python
 # Triggered dynamically based on performance or on-demand via broker agent
 1. Collect transaction history and portfolio metrics
@@ -289,12 +328,14 @@ The system implements a sophisticated "LLM as Judge" pattern for continuous self
 The system includes intelligent profit-taking to secure gains while maintaining trading capital:
 
 ### User-Configurable Profit Taking
+
 - **Scraping Percentage**: Users set percentage of profits to secure (e.g., 20%)
 - **Automatic Execution**: Applied to all profitable trades automatically
 - **Separation of Concerns**: Scraped profits kept separate from trading capital
 - **Portfolio Tracking**: Displays both available cash and total cash value
 
 ### Example Flow
+
 ```python
 # User sets 20% profit scraping preference
 # Trade: Buy BTC at $50,000, Sell at $55,000 = $5,000 profit
@@ -302,6 +343,7 @@ The system includes intelligent profit-taking to secure gains while maintaining 
 ```
 
 ## Contributing
+
 Pull requests are welcome! Please open an issue first to discuss your proposed change. Make sure to:
 
 - Run `make lint test` and fix any CI failures.

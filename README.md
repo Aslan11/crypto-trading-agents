@@ -1,6 +1,6 @@
 # Crypto Durable Trading Agents
 
-A 24×7 multi-agent crypto trading stack built on Temporal and Model Context Protocol (MCP) with integrated LLM as Judge performance optimization. Every `@mcp.tool()` is backed by a deterministic Temporal workflow, providing exactly-once execution, automatic retries and full replay for audit and compliance.
+A 24×7 multi-agent crypto trading stack built on Temporal and Model Context Protocol (MCP) with integrated LLM as Judge performance optimization. Every `@mcp.tool()` is backed by Temporal primitives (workflows, signals, or queries), providing deterministic execution, automatic retries and full replay for audit and compliance.
 
 ## ✨ Key Features
 
@@ -72,7 +72,7 @@ The **Broker Agent** serves as the sole user interface, providing access to all 
   │    │                                    │
   │    │   ┌──────────────────┐             │
   │    │   │ Scheduled Nudges │             │
-  │    │   └──────┬───────────┘             │ provide_user_feedback
+  │    │   └──────┬───────────┘             │ send_user_feedback
   │    │          │      ┌────────────────────────────────────┐
   │    │          ▼      ▼                                    ▼
   │    │   ┌──────────────────┐                      ┌──────────────────┐
@@ -101,7 +101,16 @@ The **Broker Agent** serves as the sole user interface, providing access to all 
 
 ```
 
-### 🔄 LLM as Judge Workflow
+### 🤖 Execution Agent
+
+The execution agent is the core trading decision-maker in the system:
+
+- **Automated Trading**: Receives scheduled nudges every 25 seconds to evaluate market conditions and execute trades
+- **Dynamic Adaptation**: System prompts are continuously updated by the Judge Agent based on performance
+- **User Alignment**: Incorporates user preferences (risk tolerance, trading style) and feedback into decision-making
+- **Portfolio Management**: Queries portfolio status and recent historical ticks before making buy/sell/hold decisions
+
+### 🔄 LLM as Judge Agent
 
 The judge agent continuously monitors performance and automatically optimizes the execution agent:
 
@@ -116,36 +125,44 @@ Each block corresponds to one or more MCP tools (Temporal workflows) described b
 
 ### Core Trading Tools
 
-| Tool (Workflow)                | Purpose                                                          | Typical Triggers                            |
-| ------------------------------ | ---------------------------------------------------------------- | ------------------------------------------- |
-| `subscribe_cex_stream`         | Fan-in ticker data from centralized exchanges                    | Startup, reconnect                          |
-| `start_market_stream`          | Begin streaming market data for selected pairs                   | Auto-started by broker after pair selection |
-| `HistoricalDataLoaderWorkflow` | Load 1-hour historical data for informed startup                 | System initialization                       |
-| `compute_feature_vector`       | Store tick history for queries                                   | Market tick                                 |
-| `place_mock_order`             | Simulate order execution and return a fill                       | Portfolio rebalance                         |
-| `ExecutionLedgerWorkflow`      | Track fills, positions, transaction history, and profit scraping | Fill events                                 |
+| Tool                           | Primitive | Purpose                                                          | Typical Triggers                            |
+| ------------------------------ | --------- | ---------------------------------------------------------------- | ------------------------------------------- |
+| `subscribe_cex_stream`         | Workflow  | Fan-in ticker data from centralized exchanges                    | Startup, reconnect                          |
+| `start_market_stream`          | Workflow  | Begin streaming market data for selected pairs                   | Auto-started by broker after pair selection |
+| `HistoricalDataLoaderWorkflow` | Workflow  | Load 1-hour historical data for informed startup                 | System initialization                       |
+| `place_mock_order`             | Workflow  | Simulate order execution and return a fill                       | Portfolio rebalance                         |
+| `ExecutionLedgerWorkflow`      | Workflow  | Track fills, positions, transaction history, and profit scraping | Fill events                                 |
 
 ### Performance & Analytics Tools
 
-| Tool (Workflow)           | Purpose                                     | Typical Triggers          |
-| ------------------------- | ------------------------------------------- | ------------------------- |
-| `get_transaction_history` | Retrieve filtered transaction history       | User queries, evaluations |
-| `get_performance_metrics` | Calculate returns, Sharpe ratio, win rates  | Performance analysis      |
-| `get_risk_metrics`        | Analyze position concentration and leverage | Risk monitoring           |
-| `get_portfolio_status`    | Current cash, positions, and P&L            | User queries              |
+| Tool                      | Primitive | Purpose                                     | Typical Triggers          |
+| ------------------------- | --------- | ------------------------------------------- | ------------------------- |
+| `get_transaction_history` | Query     | Retrieve filtered transaction history       | User queries, evaluations |
+| `get_performance_metrics` | Query     | Calculate returns, Sharpe ratio, win rates  | Performance analysis      |
+| `get_risk_metrics`        | Query     | Analyze position concentration and leverage | Risk monitoring           |
+| `get_portfolio_status`    | Query     | Current cash, positions, and P&L            | User queries              |
 
 ### Judge Agent Tools
 
-| Tool (Workflow)                  | Purpose                                     | Typical Triggers               |
-| -------------------------------- | ------------------------------------------- | ------------------------------ |
-| `trigger_performance_evaluation` | Force immediate performance evaluation      | User request, poor performance |
-| `get_judge_evaluations`          | Retrieve recent performance evaluations     | User queries                   |
-| `get_prompt_history`             | View prompt evolution and version history   | System monitoring              |
-| `JudgeAgentWorkflow`             | Manage evaluation state and prompt versions | Judge agent lifecycle          |
+| Tool                             | Primitive | Purpose                                     | Typical Triggers               |
+| -------------------------------- | --------- | ------------------------------------------- | ------------------------------ |
+| `trigger_performance_evaluation` | Signal    | Force immediate performance evaluation      | User request, poor performance |
+| `get_judge_evaluations`          | Query     | Retrieve recent performance evaluations     | User queries                   |
+| `get_prompt_history`             | Query     | View prompt evolution and version history   | System monitoring              |
+| `JudgeAgentWorkflow`             | Workflow  | Manage evaluation state and prompt versions | Judge agent lifecycle          |
 
-### Agent Logging Tools
+### User Interaction Tools
 
-| Tool (Workflow)          | Purpose                                         | Typical Triggers     |
+| Tool                   | Primitive | Purpose                                    | Typical Triggers   |
+| ---------------------- | --------- | ------------------------------------------ | ------------------ |
+| `set_user_preferences` | Signal    | Update trading preferences (risk, style)   | User configuration |
+| `get_user_preferences` | Query     | Retrieve current user trading preferences  | Agent decisions    |
+| `send_user_feedback`   | Signal    | Send feedback to execution or judge agents | User interaction   |
+| `get_pending_feedback` | Query     | Retrieve unprocessed user feedback         | Agent processing   |
+
+### Agent Workflows
+
+| Workflow Name            | Purpose                                         | Typical Triggers     |
 | ------------------------ | ----------------------------------------------- | -------------------- |
 | `ExecutionAgentWorkflow` | Individual execution agent logging and state    | Agent decisions      |
 | `JudgeAgentWorkflow`     | Individual judge agent logging and evaluations  | Performance analysis |

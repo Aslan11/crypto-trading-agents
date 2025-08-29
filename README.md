@@ -212,15 +212,15 @@ The quickest way to see the stack in action is to run the included `run_stack.sh
 ./run_stack.sh
 ```
 
-This starts the Temporal dev server, Python worker, MCP server and several sample agents. Each component runs in its own `tmux` pane so you can watch log output as orders flow through the system. Detach from the session with `Ctrl-b d` and reattach anytime by running the script again.
+This starts the Temporal dev server, Python worker, MCP server and several sample agents. Each component runs in its own `tmux` pane so you can watch log output as orders flow through the system. Detach from the session with `Ctrl-b d` and reattach anytime by running the script again. Shutdown is as simple as ctrl+c in any tmux pane and then entering `tmux kill-server`
 
 ### Walking through the demo
 
-1. With the tmux session running, open a new terminal window.
-2. When prompted for trading pairs, tell the broker agent **"BTC/USD, ETH/USD, SOL/USD"** (recommended 3-5 pairs for optimal performance).
+1. Run the shell script `./run_stack.sh`
+2. When prompted for trading pairs, tell the broker agent **"BTC/USD, ETH/USD, DOGE/USD"** (recommended 2-4 pairs for optimal performance).
 3. `start_market_stream` automatically loads 1 hour of historical data, then spawns a `subscribe_cex_stream` workflow that broadcasts each ticker to its `ComputeFeatureVector` child.
 4. The execution agent wakes up periodically via a scheduled workflow and analyzes market data to decide whether to trade using `place_mock_order`.
-5. Filled orders are recorded in the `ExecutionLedgerWorkflow` with automatic profit scraping if configured.
+5. Filled orders are recorded in the `ExecutionLedgerWorkflow` with automatic profit scraping.
 6. The judge agent monitors performance autonomously (10-minute startup delay) and can be queried through the broker:
    - **"How is the system performing?"** - Triggers evaluation and shows metrics
    - **"What's the transaction history?"** - Shows recent trades and fills

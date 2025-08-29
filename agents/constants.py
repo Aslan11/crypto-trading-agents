@@ -35,3 +35,12 @@ NUDGE_SCHEDULE_ID = "ensemble-nudge"
 BROKER_AGENT = "BrokerAgent"
 EXECUTION_AGENT = "ExecutionAgent"
 JUDGE_AGENT = "JudgeAgent"
+
+# Market Data Stream Configuration
+STREAM_CONTINUE_EVERY = 3600
+STREAM_HISTORY_LIMIT = 9000
+
+# Feature Vector Configuration
+VECTOR_WINDOW_SEC = 300
+VECTOR_CONTINUE_EVERY = 3600
+VECTOR_HISTORY_LIMIT = 9000

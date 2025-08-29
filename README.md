@@ -54,47 +54,47 @@ The **Broker Agent** serves as the sole user interface, providing access to all 
            │  - Trading       │                  • Stream Market Data
            │  - Analytics     │                  • Portfolio Status
   ┌────────┤  - Evaluation    │─────────────┐    • Transaction History
-  |        └──────┬───────────┘             |    • User Feedback
-  |               |                         |
-  |               │ start_market_stream     |
-  |               ▼                         |
-  |        ┌──────────────────┐             |
-  |        │ Market Stream WF │             |
-  |        └──────┬───────────┘             |
-  |               │                         |
-  |               ▼                         |
-  |        ┌──────────────────┐             |
-  |    ┌──►| Feature Vectors  │             |
-  |    |   └──────────────────┘             |
-  |    |                                    |
-  |    |                                    |
-  |    | get_historical_ticks               |
-  |    |                                    |
-  |    |   ┌──────────────────┐             |
-  |    |   │ Scheduled Nudges │             |
-  |    |   └──────┬───────────┘             | provide_user_feedback
-  |    |          │      ┌────────────────────────────────────┐
-  |    |          ▼      ▼                                    ▼
-  |    |   ┌──────────────────┐                      ┌──────────────────┐
-  |    |   │ Execution Agent  │◄─────────────────────┤  Judge Agent     │
-  |    └───│ - Dynamic Prompts│ get_prompt_history   │ - LLM as Judge   │
-  |        │ - Risk Management│ update_system_prompt │ - Performance    │
-  |        │ - Order Execution│                      │   Evaluation     │
-  |        └──────┬───────────┘                      │ - Prompt Updates │
-  |               │ place_mock_order                 └───────┬──────────┘
-  |               ▼                                          │
-  |        ┌──────────────────┐                              │
-  |        │ Mock Order WF    │      get_performance_metrics │
-  |        └──────┬───────────┘                              │
-  |               │ fills                                    │
-  |               ▼                                          │
-  |        ┌──────────────────┐     ┌──────────────────┐     │
-  |        │ Execution Ledger │────►│ Performance      │◄────┘
-  |        │ - Transactions   │     │ Analytics        │
-  |        │ - P&L Tracking   │     │ - Sharpe Ratio   │
-  |        │ - Risk Metrics   │     │ - Drawdown       │
-  |        └──────────────────┘     │ - Decision Qual. │
-  |                 ▲               └──────────────────┘
+  │        └──────┬───────────┘             │    • User Feedback
+  │               │                         │
+  │               │ start_market_stream     │
+  │               ▼                         │
+  │        ┌──────────────────┐             │
+  │        │ Market Stream WF │             │
+  │        └──────┬───────────┘             │
+  │               │                         │
+  │               ▼                         │
+  │        ┌──────────────────┐             │
+  │    ┌──►│ Feature Vectors  │             │
+  │    │   └──────────────────┘             │
+  │    │                                    │
+  │    │                                    │
+  │    │ get_historical_ticks               │
+  │    │                                    │
+  │    │   ┌──────────────────┐             │
+  │    │   │ Scheduled Nudges │             │
+  │    │   └──────┬───────────┘             │ provide_user_feedback
+  │    │          │      ┌────────────────────────────────────┐
+  │    │          ▼      ▼                                    ▼
+  │    │   ┌──────────────────┐                      ┌──────────────────┐
+  │    │   │ Execution Agent  │◄─────────────────────┤  Judge Agent     │
+  │    └───│ - Dynamic Prompts│ get_prompt_history   │ - LLM as Judge   │
+  │        │ - Risk Management│ update_system_prompt │ - Performance    │
+  │        │ - Order Execution│                      │   Evaluation     │
+  │        └──────┬───────────┘                      │ - Prompt Updates │
+  │               │ place_mock_order                 └───────┬──────────┘
+  │               ▼                                          │
+  │        ┌──────────────────┐                              │
+  │        │ Mock Order WF    │      get_performance_metrics │
+  │        └──────┬───────────┘                              │
+  │               │ fills                                    │
+  │               ▼                                          │
+  │        ┌──────────────────┐     ┌──────────────────┐     │
+  │        │ Execution Ledger │────►│ Performance      │◄────┘
+  │        │ - Transactions   │     │ Analytics        │
+  │        │ - P&L Tracking   │     │ - Sharpe Ratio   │
+  │        │ - Risk Metrics   │     │ - Drawdown       │
+  │        └──────────────────┘     │ - Decision Qual. │
+  │                 ▲               └──────────────────┘
   └─────────────────┘
    get_portfolio_status
    get_transaction_history
